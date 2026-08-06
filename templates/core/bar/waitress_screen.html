@@ -650,6 +650,30 @@
       });
   };
 
+  // ── Confirm pickup (READY → SERVED, waitress's own side of the two-way
+  //    acknowledgment) ─────────────────────────────────────────────────────
+  window.confirmPickup = function(orderId, btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳...';
+    var fd = new FormData();
+    fd.append('csrfmiddlewaretoken', CSRF);
+    fetch('/bar/orders/' + orderId + '/pickup/', { method: 'POST', body: fd })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) { loadMyOrders(); showToast('Umepokea agizo ✓'); }
+        else {
+          btn.disabled = false;
+          btn.textContent = '✓ Nimepokea';
+          showToast(d.error || 'Imeshindikana', false);
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        btn.textContent = '✓ Nimepokea';
+        showToast('Hitilafu ya mtandao.', false);
+      });
+  };
+
   // ── Cancel order ───────────────────────────────────────────────────────────
   window.cancelOrder = function(orderId, anchorEl) {
     if (!confirm('Futa agizo hili?')) return;
@@ -687,6 +711,15 @@
           var cancelBtn = cancelStatuses.indexOf(o.status) >= 0
             ? '<button style="background:transparent;border:none;color:#c0395a;font-size:.72rem;cursor:pointer;padding:0;" onclick="window.cancelOrder(' + o.id + ', this)">Futa</button>'
             : '';
+          // 2026-08-06 two-way acknowledgment redesign (Monsoon Inn) — once
+          // the bartender marks an order READY she's notified in-app, and
+          // can now confirm she's actually collected it from her OWN
+          // screen instead of only the bartender being able to mark it
+          // SERVED. Either side completing the handoff notifies the other
+          // (see _notify_order_progress in core/order_views.py).
+          var pickupBtn = (o.status === 'READY')
+            ? '<button style="background:rgba(93,222,122,.12);border:1px solid rgba(93,222,122,.4);color:#5dde7a;font-size:.72rem;cursor:pointer;padding:.15rem .5rem;border-radius:6px;" onclick="window.confirmPickup(' + o.id + ', this)">✓ Nimepokea</button>'
+            : '';
           // 2026-08-05 table-service redesign: once served, this order's
           // items live on the table's own tab (settled via cash/mpesa/
           // split/debt on Bar Board, not a payment method picked here) —
@@ -705,6 +738,7 @@
             + '</div>'
             + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:.35rem;">'
             + '<span class="status-badge status-' + o.status + '">' + statusLabel(o.status) + '</span>'
+            + pickupBtn
             + cancelBtn
             + '</div>'
             + '</div>';

@@ -240,6 +240,91 @@ def table_order_queue_api(request):
     return JsonResponse({'orders': result, 'pending_count': pending_count})
 
 
+def _notify_order_progress(order, new_status, actor, up):
+    """2026-08-06 live redesign request (Monsoon Inn) — Roy: the waitress↔
+    bartender flow should work like real non-verbal communication — an
+    order is placed, the bartender sees and acknowledges it, prepares it,
+    acknowledges it's ready, the WAITRESS is told it's ready and should go
+    collect it, and both sides end up knowing the same thing happened.
+    Before this, PENDING→ACCEPTED and ACCEPTED→READY were silent status
+    flips the waitress only ever discovered by polling her own screen
+    every 20s — no active notification either way, so "acknowledgment"
+    only ever existed as an implicit possibility, not a real signal.
+
+    Fires the missing two acknowledgments (ACCEPTED, READY) to the
+    waitress, and a closing confirmation on SERVED to whichever side did
+    NOT perform the pickup — either the bartender hands it over and taps
+    "✓ Toa" on the queue drawer, or the waitress collects it herself and
+    taps "✓ Nimepokea" on her own screen (see confirm_order_pickup below);
+    either action reaches the same SERVED state, but the OTHER side is
+    always told once it happens, so the handoff is confirmed to both
+    parties, not just enacted unilaterally by whichever one got there
+    first.
+    """
+    from .models import Notification
+    from accounts.models import UserProfile as _UP
+
+    who_label = actor.get_full_name() or actor.username
+    is_waitress_actor = order.waitress_id and order.waitress_id == actor.id
+
+    if new_status == 'ACCEPTED':
+        if order.waitress_id and not is_waitress_actor:
+            Notification.objects.create(
+                user=order.waitress,
+                title='👀 Agizo Limeonekana',
+                message=f"{who_label} ameona agizo la {order.table_label} na anaandaa sasa.",
+                notification_type='info', link_url='/bar/orders/',
+            )
+        return
+
+    if new_status == 'READY':
+        if order.waitress_id and not is_waitress_actor:
+            Notification.objects.create(
+                user=order.waitress,
+                title='🔔 Agizo Liko Tayari',
+                message=f"Agizo la {order.table_label} liko tayari — nenda uchukue kwenye counter.",
+                notification_type='warning', link_url='/bar/orders/',
+            )
+        return
+
+    if new_status == 'SERVED':
+        if is_waitress_actor:
+            # She confirmed pickup herself — let the bar side (on-shift bar
+            # staff + owner/manager, station-scoped) know the handoff is
+            # genuinely done, not just left assumed.
+            from .views import scoped_on_shift_targets
+            targets = scoped_on_shift_targets(order.business, sources=['bar'])
+            for target_up in targets.values():
+                if target_up.user_id == actor.id:
+                    continue
+                Notification.objects.create(
+                    user=target_up.user,
+                    title='✅ Agizo Limechukuliwa',
+                    message=f"{who_label} amechukua agizo la {order.table_label} kwenye counter.",
+                    notification_type='info', link_url='/bar/orders/',
+                )
+            for m_up in _UP.objects.filter(
+                business=order.business, role__in=['owner', 'manager']
+            ).exclude(user_id=actor.id).select_related('user'):
+                Notification.objects.create(
+                    user=m_up.user,
+                    title='✅ Agizo Limechukuliwa',
+                    message=f"{who_label} amechukua agizo la {order.table_label} kwenye counter.",
+                    notification_type='info', link_url='/bar/orders/',
+                )
+        elif order.waitress_id:
+            # Bar staff handed it over directly — confirm back to the
+            # waitress that it's on its way / already delivered, matching
+            # the same "both sides told" contract as the ACCEPTED/READY
+            # acknowledgments above.
+            Notification.objects.create(
+                user=order.waitress,
+                title='✅ Agizo Limetolewa',
+                message=f"{who_label} ametoa agizo la {order.table_label} kwenye counter.",
+                notification_type='info', link_url='/bar/orders/',
+            )
+
+
 def _notify_order_cancelled(order, cancelled_by, reason, was_mid_prep):
     """2026-07-24 wording/accountability audit: cancelling a table order used to be
     a bare status flip on BOTH cancel paths (the waitress-side cancel_table_order()
@@ -312,6 +397,7 @@ def update_table_order(request, order_id):
         update_fields.append('served_at')
         order.save(update_fields=update_fields)
         _create_transactions_for_order(order, up)
+        _notify_order_progress(order, new_status, request.user, up)
     elif new_status == 'CANCELLED':
         reason = (request.POST.get('reason') or '').strip()[:200]
         order.cancel_reason = reason
@@ -322,8 +408,50 @@ def update_table_order(request, order_id):
         _notify_order_cancelled(order, request.user, reason, was_mid_prep)
     else:
         order.save(update_fields=update_fields)
+        if new_status in ('ACCEPTED', 'READY'):
+            _notify_order_progress(order, new_status, request.user, up)
 
     return JsonResponse({'ok': True, 'new_status': new_status})
+
+
+# ── Waitress confirms pickup (READY → SERVED) ─────────────────────────────────
+
+@login_required
+@require_POST
+def confirm_order_pickup(request, order_id):
+    """The waitress-side half of the two-way acknowledgment protocol —
+    same READY→SERVED transition update_table_order()'s bar-board '✓ Toa'
+    button already performs, but initiated from HER OWN screen once she's
+    actually collected the order, rather than only ever being something
+    the bartender does unilaterally. Either action reaches SERVED; the
+    OTHER side is always notified via _notify_order_progress() either way
+    (see its own docstring), so the handoff is confirmed to both parties
+    regardless of who taps first — matching Roy's own framing: "both
+    parties confirm the same."
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    try:
+        order = TableOrder.objects.prefetch_related(
+            'items__item', 'items__preset'
+        ).get(id=order_id, business=up.business)
+    except TableOrder.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'Agizo halikupatikana'}, status=404)
+
+    if order.status != 'READY':
+        return JsonResponse({
+            'ok': False,
+            'error': 'Agizo hili si tayari kwa kuchukuliwa bado.',
+        }, status=400)
+
+    order.status = 'SERVED'
+    order.served_at = timezone.now()
+    order.save(update_fields=['status', 'updated_at', 'served_at'])
+    _create_transactions_for_order(order, up)
+    _notify_order_progress(order, 'SERVED', request.user, up)
+    return JsonResponse({'ok': True, 'new_status': 'SERVED'})
 
 
 def _resolve_table_tab(business, table_label, served_by):

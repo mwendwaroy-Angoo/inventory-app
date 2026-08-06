@@ -118,6 +118,7 @@ from core.order_views import (
     update_table_order,
     cancel_table_order,
     my_orders_api,
+    confirm_order_pickup,
 )
 from core.kitchen_views import (
     deplete_kitchen_batch,
@@ -480,6 +481,7 @@ urlpatterns = [
     path("bar/orders/mine/",                  my_orders_api,          name="my_orders_api"),
     path("bar/orders/<int:order_id>/update/", update_table_order,     name="update_table_order"),
     path("bar/orders/<int:order_id>/cancel/", cancel_table_order,     name="cancel_table_order"),
+    path("bar/orders/<int:order_id>/pickup/", confirm_order_pickup,   name="confirm_order_pickup"),
 
     # ── Kitchen / Grill side venture ─────────────────────────────────────────
     path("kitchen/",                  kitchen_board,               name="kitchen_board"),

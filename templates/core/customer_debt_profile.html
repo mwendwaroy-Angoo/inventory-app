@@ -703,7 +703,8 @@
                         <div class="d-flex gap-2 flex-wrap">
                             <div>
                                 <input type="radio" class="btn-check" name="debt_source" id="ds_bar" value="bar"
-                                       onchange="window._debtLedgerChange()" checked>
+                                       onchange="window._debtLedgerChange()"
+                                       {% if bar_data.outstanding > 0 and kitchen_data.outstanding <= 0 %}checked{% endif %}>
                                 <label class="btn btn-sm" for="ds_bar"
                                        style="background:rgba(200,117,42,0.15); border:1px solid rgba(200,117,42,0.4); color:#C8752A;">
                                     🍺 {% trans 'Bar' %} (KES {{ bar_data.outstanding|floatformat:0 }})
@@ -711,12 +712,16 @@
                             </div>
                             <div>
                                 <input type="radio" class="btn-check" name="debt_source" id="ds_kitchen" value="kitchen"
-                                       onchange="window._debtLedgerChange()">
+                                       onchange="window._debtLedgerChange()"
+                                       {% if kitchen_data.outstanding > 0 and bar_data.outstanding <= 0 %}checked{% endif %}>
                                 <label class="btn btn-sm" for="ds_kitchen"
                                        style="background:rgba(74,222,128,0.1); border:1px solid rgba(74,222,128,0.3); color:#4ade80;">
                                     🍗 {% trans 'Kitchen' %} (KES {{ kitchen_data.outstanding|floatformat:0 }})
                                 </label>
                             </div>
+                        </div>
+                        <div id="dsSelectError" style="color:#f87171; font-size:0.78rem; margin-top:0.4rem; display:none;">
+                            {% trans 'Chagua Bar au Kitchen kabla ya kuendelea — hii huamua deni gani litapunguzwa.' %}
                         </div>
                     </div>
                     {% endif %}
@@ -821,12 +826,23 @@
 {% if scope == 'all' and has_kitchen or bar_data.outstanding > 0 and kitchen_data.outstanding > 0 %}
 window._debtLedgerChange = function() {
     var dsBar = document.getElementById('ds_bar');
-    var isBar = dsBar && dsBar.checked;
-    var out = isBar ? {{ bar_data.outstanding|default:0 }} : {{ kitchen_data.outstanding|default:0 }};
+    var dsKitchen = document.getElementById('ds_kitchen');
+    var errEl = document.getElementById('dsSelectError');
+    if (errEl) errEl.style.display = 'none';
     var amtInput = document.getElementById('amountInput');
     var dispEl   = document.getElementById('modalOutstandingDisplay');
-    if (amtInput) { amtInput.max = out; amtInput.value = out.toFixed(2); }
-    if (dispEl)   dispEl.textContent = out.toFixed(2);
+    if (dsBar && dsBar.checked) {
+        var barOut = {{ bar_data.outstanding|default:0 }};
+        if (amtInput) { amtInput.max = barOut; amtInput.value = barOut.toFixed(2); }
+        if (dispEl)   dispEl.textContent = barOut.toFixed(2);
+    } else if (dsKitchen && dsKitchen.checked) {
+        var kOut = {{ kitchen_data.outstanding|default:0 }};
+        if (amtInput) { amtInput.max = kOut; amtInput.value = kOut.toFixed(2); }
+        if (dispEl)   dispEl.textContent = kOut.toFixed(2);
+    }
+    // Neither checked (2026-08-06 fix: no more hard-coded "Bar" default) —
+    // leave the amount/display fields as-is; the form's own submit guard
+    // below blocks submission until the payer makes an explicit choice.
 };
 
 /* Pre-select ledger AND pre-fill the exact outstanding amount in one tap */
@@ -870,6 +886,20 @@ document.addEventListener('DOMContentLoaded', function() {
     if (recordForm && recordBtn) {
         var _recordSubmitted = false;
         recordForm.addEventListener('submit', function (e) {
+            // 2026-08-06 fix (Monsoon Inn) — the ledger selector no longer
+            // pre-checks "Bar" by default, so require an explicit choice
+            // whenever the selector is actually on the page (both ledgers
+            // have something owed) instead of letting the browser submit
+            // with neither radio checked, which the backend would then
+            // reject anyway — catch it here first with a clear inline hint.
+            var dsBar = document.getElementById('ds_bar');
+            var dsKitchen = document.getElementById('ds_kitchen');
+            if (dsBar && dsKitchen && !dsBar.checked && !dsKitchen.checked) {
+                e.preventDefault();
+                var errEl = document.getElementById('dsSelectError');
+                if (errEl) errEl.style.display = 'block';
+                return;
+            }
             if (_recordSubmitted) { e.preventDefault(); return; }
             _recordSubmitted = true;
             recordBtn.disabled = true;
@@ -893,9 +923,19 @@ window._sendDebtStk = function() {
 
     var phone  = (document.getElementById('stkPhone') || {}).value || '';
     var amount = (document.getElementById('amountInput') || {}).value || '';
-    var source = 'bar';
+    var dsBar = document.getElementById('ds_bar');
     var dsKitchen = document.getElementById('ds_kitchen');
-    if (dsKitchen && dsKitchen.checked) source = 'kitchen';
+    var source = 'bar';
+    if (dsKitchen && dsKitchen.checked) {
+        source = 'kitchen';
+    } else if (dsBar && dsKitchen && !dsBar.checked && !dsKitchen.checked) {
+        // 2026-08-06 fix — same "must explicitly choose" guard as the plain
+        // Record Payment submit, for the STK Push path too (no longer
+        // silently defaults to Bar when the ledger selector is on screen).
+        var errEl = document.getElementById('dsSelectError');
+        if (errEl) errEl.style.display = 'block';
+        return;
+    }
 
     var statusEl = document.getElementById('stk-poll-status');
     function setStatus(msg, color) {

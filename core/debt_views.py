@@ -624,7 +624,34 @@ def record_debt_payment(request, customer_id):
         debt_source_override = pending['debt_source']
 
     if scope == 'all':
-        debt_source = debt_source_override or request.POST.get('debt_source', 'bar')
+        # 2026-08-06 live report (Monsoon Inn) — Roy: "reconciliation should
+        # be automated per counter station." The ledger-selector radio in
+        # customer_debt_profile.html used to hard-code "Bar" as pre-checked
+        # regardless of which ledger the customer actually owed — a manager
+        # who forgot to switch it silently recorded a genuine KITCHEN
+        # payment tagged source='bar', leaving the kitchen sub-ledger's own
+        # unpaid items (and its own outstanding tile) untouched while the
+        # money vanished into the wrong bucket. debt_source used to default
+        # to 'bar' via request.POST.get(..., 'bar') too, which made the
+        # "please specify" validation below unreachable dead code — any
+        # missing/blank submission silently became a valid 'bar' choice
+        # instead of ever raising the error it was written to raise.
+        # Fixed: only auto-resolve when there is genuinely nothing to
+        # choose between (no kitchen module at all, or only one of the two
+        # ledgers actually has anything owed) — otherwise require an
+        # explicit choice, exactly like the template's own JS now enforces
+        # client-side.
+        debt_source = debt_source_override or request.POST.get('debt_source')
+        if not debt_source:
+            if not getattr(business, 'has_kitchen', False):
+                debt_source = 'bar'
+            else:
+                bar_out = _get_customer_debt_data(customer, business, 'bar')['outstanding']
+                kitchen_out = _get_customer_debt_data(customer, business, 'kitchen')['outstanding']
+                if bar_out > 0 and kitchen_out <= 0:
+                    debt_source = 'bar'
+                elif kitchen_out > 0 and bar_out <= 0:
+                    debt_source = 'kitchen'
         if debt_source not in ('bar', 'kitchen'):
             messages.error(request, _('Please specify whether this payment is for Bar or Kitchen debt.'))
             return redirect('customer_debt_profile', customer_id=customer_id)

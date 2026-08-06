@@ -1283,6 +1283,124 @@ class DebtScopeHelperTest(TestCase):
         self.assertEqual(_debt_scope(profile, biz), 'all')
 
 
+class RecordDebtPaymentDebtSourceRequiredTest(TestCase):
+    """2026-08-06 live report (Monsoon Inn) — the ledger-selector radio used
+    to hard-code "Bar" pre-checked, and the backend's own default
+    (request.POST.get('debt_source', 'bar')) silently converted a missing
+    choice into 'bar' too — meaning the "please specify" validation could
+    never actually fire, and a manager who forgot to switch the radio would
+    silently record a genuine kitchen payment against the bar sub-ledger.
+    Fixed: only auto-resolve when unambiguous (no kitchen module, or only
+    one ledger actually has anything owed); otherwise require an explicit
+    debt_source and error out instead of defaulting to 'bar'.
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Source Required Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='dsr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.customer = Customer.objects.create(business=self.biz, name='Dual Ledger Customer')
+
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='DSR-1',
+            description='Keg Gold', unit='cup', selling_price=Decimal('80'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, material_no='DSR-2',
+            description='Chipo', unit='plate', selling_price=Decimal('100'),
+        )
+
+    def _credit_txn(self, item, amount):
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='credit',
+            recipient=self.customer.name,
+        )
+
+    def test_missing_debt_source_errors_when_both_ledgers_owe(self):
+        import uuid
+        """Both ledgers have real debt — omitting debt_source must be
+        rejected outright, never silently recorded as 'bar' (the exact
+        Monsoon Inn failure mode: a kitchen payment landing on the bar
+        ledger because nobody explicitly switched the radio)."""
+        self._credit_txn(self.bar_item, Decimal('80'))
+        self._credit_txn(self.kitchen_item, Decimal('100'))
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '50', 'payment_method': 'cash',
+            'idempotency_token': f'dsr-{uuid.uuid4()}',
+            # debt_source deliberately omitted
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(CustomerDebtPayment.objects.filter(customer=self.customer).count(), 0)
+
+    def test_missing_debt_source_auto_resolves_when_only_kitchen_owes(self):
+        import uuid
+        """Only kitchen has any debt — the payment can unambiguously be
+        auto-tagged 'kitchen' even with no explicit radio choice."""
+        self._credit_txn(self.kitchen_item, Decimal('100'))
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '50', 'payment_method': 'cash',
+            'idempotency_token': f'dsr-{uuid.uuid4()}',
+        })
+        self.assertEqual(resp.status_code, 302)
+        pay = CustomerDebtPayment.objects.get(customer=self.customer)
+        self.assertEqual(pay.source, 'kitchen')
+
+    def test_missing_debt_source_auto_resolves_when_only_bar_owes(self):
+        import uuid
+        self._credit_txn(self.bar_item, Decimal('80'))
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '30', 'payment_method': 'cash',
+            'idempotency_token': f'dsr-{uuid.uuid4()}',
+        })
+        self.assertEqual(resp.status_code, 302)
+        pay = CustomerDebtPayment.objects.get(customer=self.customer)
+        self.assertEqual(pay.source, 'bar')
+
+    def test_explicit_debt_source_still_works(self):
+        import uuid
+        self._credit_txn(self.bar_item, Decimal('80'))
+        self._credit_txn(self.kitchen_item, Decimal('100'))
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '50', 'payment_method': 'cash', 'debt_source': 'kitchen',
+            'idempotency_token': f'dsr-{uuid.uuid4()}',
+        })
+        self.assertEqual(resp.status_code, 302)
+        pay = CustomerDebtPayment.objects.get(customer=self.customer)
+        self.assertEqual(pay.source, 'kitchen')
+
+    def test_no_kitchen_business_still_defaults_to_bar_with_no_source(self):
+        import uuid
+        biz2 = Business.objects.create(name='No Kitchen Debt Biz', has_kitchen=False)
+        store2 = Store.objects.create(business=biz2, name='Shop')
+        owner2 = User.objects.create_user(username='dsr_owner2', password='x')
+        UserProfile.objects.create(user=owner2, business=biz2, role='owner')
+        cust2 = Customer.objects.create(business=biz2, name='Simple Customer')
+        item2 = Item.objects.create(
+            business=biz2, store=store2, material_no='DSR-3',
+            description='Sukari', unit='kg', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=biz2, item=item2, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='credit',
+            recipient=cust2.name,
+        )
+        self.client.force_login(owner2)
+        resp = self.client.post(f'/debt/{cust2.id}/payment/', {
+            'amount_paid': '50', 'payment_method': 'cash',
+            'idempotency_token': f'dsr-{uuid.uuid4()}',
+        })
+        self.assertEqual(resp.status_code, 302)
+        pay = CustomerDebtPayment.objects.get(customer=cust2)
+        self.assertEqual(pay.source, 'bar')
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Sprint K2a — Per-counter M-Pesa resolver
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4744,11 +4862,14 @@ class ActivityBasedAutoCloseTest(TestCase):
 class AutoCloseInactivityThresholdTest(TestCase):
     """2026-08-02 live follow-up: Roy asked for the safety-net window itself
     to drop from 8h to 3h, now that force-close-on-behalf-of covers the
-    'owner wants it closed right now' case directly."""
+    'owner wants it closed right now' case directly. 2026-08-06 same-day
+    regression: 3h proved too aggressive — a genuinely still-active
+    waitress shift auto-closed unexpectedly at Monsoon Inn. Raised to 6h,
+    a middle ground between the original 8 and the over-tightened 3."""
 
-    def test_threshold_is_three_hours(self):
+    def test_threshold_is_six_hours(self):
         from core.shift_views import _SHIFT_AUTO_CLOSE_INACTIVITY_HOURS
-        self.assertEqual(_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS, 3)
+        self.assertEqual(_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS, 6)
 
 
 class CloseShiftOnBehalfOfTest(TestCase):
@@ -12673,6 +12794,97 @@ class TableOrderCancelReasonTest(TestCase):
         self.assertNotIn('cannot be cancelled', resp2.json().get('error', ''))
 
 
+class TableOrderTwoWayAcknowledgmentTest(TestCase):
+    """2026-08-06 live redesign request (Monsoon Inn) — Roy: the order flow
+    between waitress and bartender should work like real non-verbal
+    communication — order placed → bartender sees/acknowledges → prepares
+    → acknowledges ready → the SYSTEM tells the waitress it's ready and she
+    should go collect it → both parties confirm the same. Before this,
+    PENDING→ACCEPTED and ACCEPTED→READY were silent status flips with no
+    active notification, and only the bartender could ever mark SERVED."""
+
+    def setUp(self):
+        from core.models import TableOrder
+        self.TableOrder = TableOrder
+        self.biz = Business.objects.create(name='Ack Flow Biz')
+        self.owner = User.objects.create_user(username='ack_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bartender = User.objects.create_user(username='ack_bartender', password='x')
+        UserProfile.objects.create(user=self.bartender, business=self.biz, role='staff')
+        self.waitress = User.objects.create_user(username='ack_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+
+    def _make_order(self, status='PENDING'):
+        return self.TableOrder.objects.create(
+            business=self.biz, table_label='T5', waitress=self.waitress, status=status,
+        )
+
+    def test_accepted_notifies_the_waitress(self):
+        order = self._make_order()
+        self.client.force_login(self.bartender)
+        resp = self.client.post(f'/bar/orders/{order.id}/update/', {'status': 'ACCEPTED'})
+        self.assertTrue(resp.json()['ok'])
+        notif = Notification.objects.filter(user=self.waitress, title__icontains='Limeonekana').first()
+        self.assertIsNotNone(notif, "Waitress must be acknowledged that the bartender has seen the order")
+        self.assertIn('T5', notif.message)
+
+    def test_ready_notifies_the_waitress_to_collect(self):
+        order = self._make_order(status='ACCEPTED')
+        self.client.force_login(self.bartender)
+        resp = self.client.post(f'/bar/orders/{order.id}/update/', {'status': 'READY'})
+        self.assertTrue(resp.json()['ok'])
+        notif = Notification.objects.filter(user=self.waitress, title__icontains='Tayari').first()
+        self.assertIsNotNone(notif, "Waitress must be told the order is ready for pickup")
+        self.assertIn('T5', notif.message)
+
+    def test_waitress_confirms_own_pickup_via_dedicated_endpoint(self):
+        order = self._make_order(status='READY')
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/orders/{order.id}/pickup/')
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['new_status'], 'SERVED')
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'SERVED')
+        self.assertIsNotNone(order.served_at)
+
+    def test_pickup_confirmation_notifies_bar_side(self):
+        order = self._make_order(status='READY')
+        Shift.objects.create(
+            business=self.biz,
+            store=Store.objects.create(business=self.biz, name='Bar'),
+            staff=self.bartender, status='OPEN', station='bar',
+            opening_float=Decimal('0'),
+        )
+        self.client.force_login(self.waitress)
+        self.client.post(f'/bar/orders/{order.id}/pickup/')
+        notif = Notification.objects.filter(user=self.bartender, title__icontains='Limechukuliwa').first()
+        self.assertIsNotNone(notif, "On-shift bar staff must be told the waitress collected the order")
+        notif_owner = Notification.objects.filter(user=self.owner, title__icontains='Limechukuliwa').first()
+        self.assertIsNotNone(notif_owner)
+
+    def test_pickup_confirmation_blocked_when_not_ready(self):
+        order = self._make_order(status='ACCEPTED')
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/orders/{order.id}/pickup/')
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        order.refresh_from_db()
+        self.assertEqual(order.status, 'ACCEPTED')
+
+    def test_bartender_direct_serve_notifies_waitress(self):
+        """The bartender can still hand the order over directly (✓ Toa on
+        the queue drawer) — the other side of the same two-way contract:
+        the waitress is told it was served, not left to only find out by
+        polling."""
+        order = self._make_order(status='READY')
+        self.client.force_login(self.bartender)
+        resp = self.client.post(f'/bar/orders/{order.id}/update/', {'status': 'SERVED'})
+        self.assertTrue(resp.json()['ok'])
+        notif = Notification.objects.filter(user=self.waitress, title__icontains='Limetolewa').first()
+        self.assertIsNotNone(notif, "Waitress must be told the bartender served the order directly")
+
+
 class TableOrderBillsOntoTableTabTest(TestCase):
     """2026-08-05 live request: "design and architect the waiter/waitress
     section... check all ways an order might be placed when it comes to
@@ -18404,6 +18616,96 @@ class HomeDashboardStaleTabsBannerTest(TestCase):
         self.assertNotIn('bado wazi tangu siku iliyopita', resp.content.decode())
 
 
+class HomeDashboardStaleTabsQsStationFilterTest(TestCase):
+    """2026-08-06 live report (Monsoon Inn) — Roy: "geuza deni reminder or
+    unpaid bar tabs are being sent to the kitchen staff." Quick Sell ('qs')
+    tabs have no station of their own and are always in the candidate set
+    regardless of viewer station (Quick Sell is a general POS, unrestricted
+    by design for write access) — but a purely-bar-drinks 'qs' tab reminder
+    has no business showing up on a kitchen-only staffer's dashboard, and
+    vice versa. Only a 'qs' tab whose entries actually touch the viewer's
+    own station should surface here."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='QS Station Filter Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='qssf_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_staff = User.objects.create_user(username='qssf_barstaff', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='qssf_kitchenstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='QSSF-1',
+            description='Keg Gold', unit='cup', selling_price=Decimal('80'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, material_no='QSSF-2',
+            description='Chipo', unit='plate', selling_price=Decimal('100'),
+        )
+
+        yesterday_open = timezone.now() - timedelta(days=1)
+
+        self.qs_bar_only_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Dush', status='OPEN', source='qs',
+        )
+        BarTab.objects.filter(id=self.qs_bar_only_tab.id).update(opened_at=yesterday_open)
+        bar_txn = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('80'), payment_method='credit',
+            recipient='Dush',
+        )
+        BarTabEntry.objects.create(
+            tab=self.qs_bar_only_tab, transaction=bar_txn, description='Keg Gold',
+            amount=Decimal('80'), payment_method='credit',
+        )
+
+        self.qs_kitchen_only_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Matai', status='OPEN', source='qs',
+        )
+        BarTab.objects.filter(id=self.qs_kitchen_only_tab.id).update(opened_at=yesterday_open)
+        kitchen_txn = Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='credit',
+            recipient='Matai',
+        )
+        BarTabEntry.objects.create(
+            tab=self.qs_kitchen_only_tab, transaction=kitchen_txn, description='Chipo',
+            amount=Decimal('100'), payment_method='credit',
+        )
+
+        self.qs_empty_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Mugambi', status='OPEN', source='qs',
+        )
+        BarTab.objects.filter(id=self.qs_empty_tab.id).update(opened_at=yesterday_open)
+
+    def test_bar_only_staff_sees_bar_qs_tab_not_kitchen_qs_tab(self):
+        self.client.force_login(self.bar_staff)
+        content = self.client.get('/').content.decode()
+        self.assertIn('Dush', content)
+        self.assertNotIn('Matai', content)
+
+    def test_kitchen_only_staff_sees_kitchen_qs_tab_not_bar_qs_tab(self):
+        self.client.force_login(self.kitchen_staff)
+        content = self.client.get('/').content.decode()
+        self.assertIn('Matai', content)
+        self.assertNotIn('Dush', content)
+
+    def test_owner_sees_both_qs_tabs(self):
+        self.client.force_login(self.owner)
+        content = self.client.get('/').content.decode()
+        self.assertIn('Dush', content)
+        self.assertIn('Matai', content)
+
+    def test_empty_qs_tab_visible_to_both_stations(self):
+        self.client.force_login(self.bar_staff)
+        self.assertIn('Mugambi', self.client.get('/').content.decode())
+        self.client.force_login(self.kitchen_staff)
+        self.assertIn('Mugambi', self.client.get('/').content.decode())
+
+
 # ── Per-preset sale-time cost attribution + custom-price presets (2026-07-28) ──
 # Roy's live design question: one shared "Kuku" item sells wings/legs/drumsticks
 # via presets, but a chicken LEG split in half and sold at the SAME price as a
@@ -19752,6 +20054,72 @@ class SplitPaidTransactionPaymentMethodSyncTest(TestCase):
         data = _reconcile(shift)
         self.assertEqual(data['mpesa_sales'], 40.0)
         self.assertEqual(data['credit_sales'], 10.0)
+
+
+class DebtPaymentSourceAuditAndReassignCommandsTest(TestCase):
+    """2026-08-06 live fix companion (Monsoon Inn) — audit_debt_payment_ledger_split
+    (read-only diagnostic) + reassign_debt_payment_source (safe single-record
+    correction), the tools handed to Roy for correcting any historical
+    CustomerDebtPayment mistagged 'bar'/'kitchen' by the pre-fix hard-coded
+    ledger-selector default."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Reassign Debt Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='rdb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.customer = Customer.objects.create(business=self.biz, name='Ledger Split Customer')
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='RDB-1',
+            description='Keg Gold', unit='cup', selling_price=Decimal('80'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, material_no='RDB-2',
+            description='Chipo', unit='plate', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='credit',
+            recipient=self.customer.name,
+        )
+        self.payment = CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('50'),
+            payment_method='cash', source='bar', recorded_by=self.owner,
+        )
+
+    def test_audit_command_lists_owner_recorded_payment(self):
+        from django.core.management import call_command
+        from io import StringIO
+        out = StringIO()
+        call_command('audit_debt_payment_ledger_split', '--business=Reassign Debt Biz', stdout=out)
+        output = out.getvalue()
+        self.assertIn('Ledger Split Customer', output)
+        self.assertIn(f'#{self.payment.id}', output)
+        self.assertIn("tagged 'bar'", output)
+
+    def test_reassign_moves_payment_to_kitchen(self):
+        from django.core.management import call_command
+        call_command('reassign_debt_payment_source', str(self.payment.id), 'kitchen')
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.source, 'kitchen')
+
+    def test_reassign_dry_run_does_not_save(self):
+        from django.core.management import call_command
+        call_command('reassign_debt_payment_source', str(self.payment.id), 'kitchen', '--dry-run')
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.source, 'bar')
+
+    def test_reassign_same_source_is_a_no_op(self):
+        from django.core.management import call_command
+        call_command('reassign_debt_payment_source', str(self.payment.id), 'bar')
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.source, 'bar')
+
+    def test_reassign_unknown_payment_raises(self):
+        from django.core.management import call_command, CommandError
+        with self.assertRaises(CommandError):
+            call_command('reassign_debt_payment_source', '999999', 'kitchen')
 
 
 class BackfillSplitPaidTxnPaymentMethodTest(TestCase):
@@ -24521,3 +24889,127 @@ class MaintenanceTicketTest(TestCase):
         self.assertEqual(resp.status_code, 302)
         ticket.refresh_from_db()
         self.assertEqual(ticket.status, 'OPEN')
+
+
+class OverlappingShiftReconcileCapTest(TestCase):
+    """2026-08-06 live report (Monsoon Inn) — bartender Susan opened at
+    float=0 and sold KES 490 cash before waitress Sarah arrived and opened
+    her OWN shift on the same bar station with float=490 (correctly
+    declaring what was already in the till). From that moment both shifts
+    were OPEN concurrently. Before this fix, _reconcile() summed every sale
+    in each shift's own uncapped [started_at, now] window independently, so
+    every sale made AFTER Sarah opened was counted toward BOTH shifts —
+    Susan's own live "Cash" figure kept climbing past what she was still
+    actually responsible for. _capped_shift_end() caps an older shift's
+    window at the moment a newer same-station shift opens; this locks that
+    fix in directly against _reconcile()'s own output (not just the
+    Z-report's already-fixed day-level dedup from 2026-07-26).
+    """
+
+    def _setup(self):
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='Handover Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='HB-1',
+            description='Handover Beer', unit='bottle',
+            selling_price=Decimal('490'), cost_price=Decimal('100'),
+        )
+        susan = User.objects.create_user(username='susan_bt', password='x')
+        UserProfile.objects.create(user=susan, business=business, role='staff')
+        sarah = User.objects.create_user(username='sarah_wt', password='x')
+        UserProfile.objects.create(user=sarah, business=business, role='waitress')
+
+        now = timezone.now()
+        susan_start = now - timedelta(hours=3)
+        # Susan sells 490 cash before Sarah ever arrives.
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('490'),
+            payment_method='cash', created_at=susan_start + timedelta(minutes=5),
+        )
+        susan_shift = Shift.objects.create(
+            business=business, store=store, staff=susan, station='bar',
+            opening_float=Decimal('0'), started_at=susan_start,
+        )
+        # Sarah arrives, correctly declares the 490 already in the till as
+        # her own opening float, and opens her own shift on the same station.
+        sarah_start = now - timedelta(hours=2)
+        sarah_shift = Shift.objects.create(
+            business=business, store=store, staff=sarah, station='bar',
+            opening_float=Decimal('490'), started_at=sarah_start,
+        )
+        # Both shifts now OPEN concurrently. 1680 more cash sold after the handover.
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('1680'),
+            payment_method='cash', created_at=sarah_start + timedelta(minutes=10),
+        )
+        return business, susan_shift, sarah_shift, _reconcile
+
+    def test_older_shift_stops_accruing_after_handover(self):
+        _business, susan_shift, _sarah_shift, _reconcile = self._setup()
+        rec = _reconcile(susan_shift)
+        # Susan's own window must be capped at Sarah's start — only her own
+        # pre-handover 490, never the 1680 sold afterward under Sarah's watch.
+        self.assertAlmostEqual(rec['cash_sales'], 490.0, places=1)
+        self.assertAlmostEqual(rec['expected_cash'], 490.0, places=1)
+
+    def test_newer_shift_counts_only_its_own_sales(self):
+        _business, _susan_shift, sarah_shift, _reconcile = self._setup()
+        rec = _reconcile(sarah_shift)
+        # Sarah's own window starts at her own started_at — she never re-counts
+        # Susan's pre-handover 490 (that's Susan's own sale, not hers), but her
+        # own float already correctly declares it separately.
+        self.assertAlmostEqual(rec['cash_sales'], 1680.0, places=1)
+        self.assertAlmostEqual(rec['expected_cash'], float(sarah_shift.opening_float) + 1680.0, places=1)
+
+    def test_combined_total_across_both_shifts_is_not_doubled(self):
+        _business, susan_shift, sarah_shift, _reconcile = self._setup()
+        susan_rec = _reconcile(susan_shift)
+        sarah_rec = _reconcile(sarah_shift)
+        # 490 (Susan's own sale) + 1680 (Sarah's own sale) = 2170 total ever
+        # sold — each shilling attributed to exactly one shift, never both.
+        self.assertAlmostEqual(susan_rec['cash_sales'] + sarah_rec['cash_sales'], 2170.0, places=1)
+
+    def test_owner_shift_is_never_capped(self):
+        """An owner's own shift isn't tied to one station/handover the same
+        way — _capped_shift_end() must leave it uncapped."""
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='Owner Uncapped Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='OU-1',
+            description='Owner Beer', unit='bottle',
+            selling_price=Decimal('300'), cost_price=Decimal('100'),
+        )
+        owner_user = User.objects.create_user(username='ou_owner', password='x')
+        UserProfile.objects.create(user=owner_user, business=business, role='owner')
+        now = timezone.now()
+        owner_start = now - timedelta(hours=3)
+        owner_shift = Shift.objects.create(
+            business=business, store=store, staff=owner_user, station='bar',
+            opening_float=Decimal('0'), started_at=owner_start,
+        )
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'),
+            payment_method='cash', created_at=owner_start + timedelta(minutes=5),
+        )
+        # A different staffer's later shift on the same station must not cap
+        # the owner's own shift.
+        other = User.objects.create_user(username='ou_other', password='x')
+        UserProfile.objects.create(user=other, business=business, role='staff')
+        Shift.objects.create(
+            business=business, store=store, staff=other, station='bar',
+            opening_float=Decimal('0'), started_at=now - timedelta(hours=2),
+        )
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'),
+            payment_method='cash', created_at=now - timedelta(hours=1),
+        )
+        rec = _reconcile(owner_shift)
+        self.assertAlmostEqual(rec['cash_sales'], 600.0, places=1)

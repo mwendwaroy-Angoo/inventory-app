@@ -577,13 +577,56 @@ def home(request):
                 if show_kitchen:
                     _allowed_sources.add('kitchen')
                 _today_local = timezone.localdate()
-                context['stale_open_tabs'] = list(
+                _candidate_tabs = list(
                     _BarTab.objects.filter(
                         business=business, status='OPEN', source__in=_allowed_sources,
                     ).exclude(opened_at__date=_today_local)
                     .select_related('customer')
-                    .order_by('opened_at')[:20]
+                    .prefetch_related('entries__transaction__item__store')
+                    .order_by('opened_at')[:40]
                 )
+                if show_bar and show_kitchen:
+                    context['stale_open_tabs'] = _candidate_tabs[:20]
+                else:
+                    # 2026-08-06 live report (Monsoon Inn) — Roy: "geuza deni
+                    # reminder or unpaid bar tabs are being sent to the
+                    # kitchen staff." Quick Sell ('qs') tabs have no station
+                    # of their own — they're always in _allowed_sources
+                    # regardless of the viewer's station, since Quick Sell
+                    # is a general POS and every WRITE endpoint on a 'qs'
+                    # tab is deliberately unrestricted (see
+                    # _allowed_tab_sources). But THIS reminder is a
+                    # proactive nudge, not a permission check — a
+                    # kitchen-only staffer has no context to act on a tab
+                    # that's entirely bar drinks (and vice versa). Only
+                    # surface a station-agnostic 'qs' tab here when it
+                    # actually has an item belonging to this viewer's own
+                    # station; a tab opened directly on their own board
+                    # (source='bar'/'kitchen') is always theirs regardless.
+                    _filtered = []
+                    for _t in _candidate_tabs:
+                        if _t.source != 'qs':
+                            _filtered.append(_t)
+                            continue
+                        _entries = list(_t.entries.all())
+                        if not _entries:
+                            _filtered.append(_t)  # nothing sold yet — harmless either way
+                            continue
+                        _has_kitchen_item = any(
+                            e.transaction_id and e.transaction.item_id and e.transaction.item.store_id
+                            and e.transaction.item.store.is_kitchen
+                            for e in _entries
+                        )
+                        _has_bar_item = any(
+                            e.transaction_id and e.transaction.item_id and e.transaction.item.store_id
+                            and not e.transaction.item.store.is_kitchen
+                            for e in _entries
+                        )
+                        if show_kitchen and _has_kitchen_item:
+                            _filtered.append(_t)
+                        elif show_bar and _has_bar_item:
+                            _filtered.append(_t)
+                    context['stale_open_tabs'] = _filtered[:20]
             except Exception:
                 context['stale_open_tabs'] = []
 

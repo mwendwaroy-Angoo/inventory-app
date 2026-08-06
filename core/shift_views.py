@@ -66,6 +66,58 @@ def _detect_overlapping_shift_pairs(shifts):
     return pairs
 
 
+def _capped_shift_end(shift, uncapped_end):
+    """Cap a shift's own reconciliation window at the moment a NEWER shift
+    opens on the same station, if one does — the real fix for the overlap
+    bug _detect_overlapping_shift_pairs() only ever caught at the Z-report's
+    day-total level.
+
+    2026-08-06 live report (Monsoon Inn): bartender Susan opened at float=0
+    and sold KES 490 cash before waitress Sarah arrived and opened her OWN
+    shift with float=490 — correctly declaring what was already in the
+    till. From that moment both shifts were OPEN concurrently on the bar
+    station. _reconcile() summed every sale in [started_at, now] for BOTH
+    shifts independently with no upper bound tied to the other shift's
+    existence, so every sale made after Sarah opened was counted TWICE:
+    once toward Susan's still-open, still-growing window, and again toward
+    Sarah's own fresh one. Susan's own live "Cash" figure (and her eventual
+    shift-close expected_cash) kept climbing well past what she was still
+    actually responsible for — exactly the "app says 2170, we only counted
+    1680" confusion (2170 = 490 + double-counted 1680; the true, undoubled
+    figure is 490 + 1680 = 2170 owed in total across BOTH shifts combined,
+    but Susan's own shift should never have shown more than her own 490 +
+    whatever she rang up before the handover).
+
+    Fix: the moment a newer shift opens on the same station, that IS the
+    real handover point — its own opening_float is an explicit declaration
+    of "everything counted so far" — so the OLDER shift's own window stops
+    accruing new activity right there. The newer shift's window already
+    starts fresh from its own started_at, so every moment in time ends up
+    attributed to EXACTLY ONE shift (the most-recently-opened one covering
+    it) with nothing left uncounted or double-counted. Owner shifts are
+    left uncapped — an owner's shift isn't tied to one station the same way
+    (see _reconcile()'s own "owner shift stays unscoped" exception).
+    """
+    try:
+        staff_role = shift.staff.userprofile.role
+    except Exception:
+        staff_role = 'staff'
+    if staff_role == 'owner':
+        return uncapped_end
+    stn = _shift_station(shift)
+    later = (
+        Shift.objects.filter(
+            business=shift.business,
+            started_at__gt=shift.started_at, started_at__lt=uncapped_end,
+        )
+        .exclude(id=shift.id)
+        .filter(_station_q(stn == 'kitchen'))
+        .order_by('started_at')
+        .first()
+    )
+    return min(uncapped_end, later.started_at) if later else uncapped_end
+
+
 def get_active_staff_shift(user_profile, business, manager_must_have_shift=False):
     """Return the caller's open Shift, or None.
 
@@ -415,6 +467,12 @@ def attribute_variance_shift(business, current_shift, item=None, keg_barrel=None
 def _reconcile(shift):
     """Return a dict of sales totals and cash reconciliation for a shift."""
     end = shift.ended_at or timezone.now()
+    # 2026-08-06 live report (Monsoon Inn, bartender Susan + waitress Sarah) —
+    # cap this shift's own window at the moment a NEWER shift opens on the same
+    # station, if one has, so a still-open OLDER shift stops silently accruing
+    # sales that are also being counted by the newer one. See
+    # _capped_shift_end()'s own docstring for the full incident writeup.
+    end = _capped_shift_end(shift, end)
     # invoice_no='[SVQ]' excludes stock-take variance corrections (2026-07-25 live
     # report, Monsoon Inn) — if a stock take is accepted while a shift happens to be
     # open, its corrective "cash sale" transaction would otherwise inflate this
@@ -853,14 +911,21 @@ def _tapped_barrels_for_business(business):
 
 # ── Auto-close stale shifts ───────────────────────────────────────────────────
 
-_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS = 3   # 2026-08-02, tightened same-day from 8:
-    # Roy's own follow-up — now that the owner can force-close a forgotten
-    # shift on behalf of staff/manager at any time (see close_shift()'s
-    # _can_confirm_shift on-behalf branch), the automatic safety net no
-    # longer needs to wait as long before a genuinely-quiet station gets
-    # swept — 3 hours of zero sales, past closing time, is enough. Hours of
-    # zero sales on a station, past closing time, before the auto-close
-    # safety net fires — replaces the old fixed post-closing-time clock grace (see
+_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS = 6   # 2026-08-06, raised back from 3:
+    # Roy's live Monsoon Inn report the same evening the 3-hour value
+    # shipped: a waitress's genuinely-still-active shift auto-closed with
+    # "cause unknown... we did not close it," forcing a mid-shift reopen
+    # with a guessed float — real friction, not the intended safety net
+    # (which exists for a shift genuinely forgotten, not a quiet lull
+    # during a slow stretch past closing time). 3 hours turned out too
+    # aggressive for a real bar/kitchen's uneven pace. 6 hours is a
+    # middle ground between the original 8 and the over-tightened 3 —
+    # still meaningfully tighter than 8 now that the owner can force-close
+    # a forgotten shift on behalf of staff/manager at any time (see
+    # close_shift()'s _can_confirm_shift on-behalf branch), without
+    # punishing an ordinary slow period. Hours of zero sales on a station,
+    # past closing time, before the auto-close safety net fires —
+    # replaces the old fixed post-closing-time clock grace (see
     # _auto_close_expired_shifts()'s docstring for why).
 
 
