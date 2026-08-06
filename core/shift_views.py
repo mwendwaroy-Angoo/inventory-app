@@ -66,46 +66,49 @@ def _detect_overlapping_shift_pairs(shifts):
     return pairs
 
 
-def _capped_shift_end(shift, uncapped_end):
-    """Cap a shift's own reconciliation window at the moment a NEWER shift
-    opens on the same station, if one does — the real fix for the overlap
-    bug _detect_overlapping_shift_pairs() only ever caught at the Z-report's
-    day-total level.
+def _shift_active_segments(shift, uncapped_end):
+    """Return a list of (start, end) datetime intervals within
+    [shift.started_at, uncapped_end] during which THIS shift is the most-
+    recently-STARTED shift on its station — the set of moments its own
+    reconciliation should actually count.
 
     2026-08-06 live report (Monsoon Inn): bartender Susan opened at float=0
     and sold KES 490 cash before waitress Sarah arrived and opened her OWN
     shift with float=490 — correctly declaring what was already in the
     till. From that moment both shifts were OPEN concurrently on the bar
-    station. _reconcile() summed every sale in [started_at, now] for BOTH
-    shifts independently with no upper bound tied to the other shift's
-    existence, so every sale made after Sarah opened was counted TWICE:
-    once toward Susan's still-open, still-growing window, and again toward
-    Sarah's own fresh one. Susan's own live "Cash" figure (and her eventual
-    shift-close expected_cash) kept climbing well past what she was still
-    actually responsible for — exactly the "app says 2170, we only counted
-    1680" confusion (2170 = 490 + double-counted 1680; the true, undoubled
-    figure is 490 + 1680 = 2170 owed in total across BOTH shifts combined,
-    but Susan's own shift should never have shown more than her own 490 +
-    whatever she rang up before the handover).
+    station, and the original version of this fix (a single hard cap at
+    the moment a newer shift opens) handled exactly that. But the SAME
+    evening surfaced the case that a single cap gets wrong: Sarah's first
+    bar shift (#67) opened at 13:17:39 — 88 seconds after Susan's (#66) —
+    ran until 17:11:03, and then CLOSED. Susan's own shift never closed at
+    all; she stayed open the whole time. A single cap at 13:17:39 froze
+    Susan's window there PERMANENTLY, silently erasing the entire
+    17:11:03–18:14:43 stretch where Susan was once again the ONLY open
+    shift on the counter — showing her a bogus "0h 01m / KES 0" and (since
+    every dashboard revenue tile ultimately reads real Issue transactions
+    the same way) contributing to the "bar revenue reset to 0" report.
 
-    Fix: the moment a newer shift opens on the same station, that IS the
-    real handover point — its own opening_float is an explicit declaration
-    of "everything counted so far" — so the OLDER shift's own window stops
-    accruing new activity right there. The newer shift's window already
-    starts fresh from its own started_at, so every moment in time ends up
-    attributed to EXACTLY ONE shift (the most-recently-opened one covering
-    it) with nothing left uncounted or double-counted. Owner shifts are
-    left uncapped — an owner's shift isn't tied to one station the same way
-    (see _reconcile()'s own "owner shift stays unscoped" exception).
+    Fix: instead of one cap, walk every later same-station shift in order
+    and carve its own [started_at, ended_at-or-now] span OUT of this
+    shift's window — reopening this shift's own attribution the moment
+    that later shift's span ends, if nothing even newer has started by
+    then. This correctly produces MULTIPLE disjoint segments when a
+    handover happens more than once (open → overlap → the newer shift
+    closes → sole attribution resumes → another shift opens → ...),
+    while still behaving exactly like the original single-cap fix for the
+    simple one-handover case. Owner shifts are left fully unsegmented — an
+    owner's shift isn't tied to one station the same way (see
+    _reconcile()'s own "owner shift stays unscoped" exception).
     """
     try:
         staff_role = shift.staff.userprofile.role
     except Exception:
         staff_role = 'staff'
     if staff_role == 'owner':
-        return uncapped_end
+        return [(shift.started_at, uncapped_end)]
+
     stn = _shift_station(shift)
-    later = (
+    later_shifts = list(
         Shift.objects.filter(
             business=shift.business,
             started_at__gt=shift.started_at, started_at__lt=uncapped_end,
@@ -113,9 +116,33 @@ def _capped_shift_end(shift, uncapped_end):
         .exclude(id=shift.id)
         .filter(_station_q(stn == 'kitchen'))
         .order_by('started_at')
-        .first()
     )
-    return min(uncapped_end, later.started_at) if later else uncapped_end
+    if not later_shifts:
+        return [(shift.started_at, uncapped_end)]
+
+    segments = []
+    cursor = shift.started_at
+    for later in later_shifts:
+        if later.started_at > cursor:
+            segments.append((cursor, later.started_at))
+        later_end = later.ended_at or uncapped_end
+        if later_end > cursor:
+            cursor = later_end
+    if cursor < uncapped_end:
+        segments.append((cursor, uncapped_end))
+    return segments
+
+
+def _segments_q(field, segments):
+    """Build a Q object matching `field` falling inside ANY of the given
+    (start, end) segments — the queryset counterpart to
+    _shift_active_segments(), used by _reconcile() so a shift's sales/
+    petty-cash/debt-recovered figures sum across every disjoint segment
+    it's actually responsible for, not just one contiguous range."""
+    q = Q(pk__in=[])  # always-false base case (no segments → no matches)
+    for start, end in segments:
+        q |= Q(**{f'{field}__gte': start, f'{field}__lte': end})
+    return q
 
 
 def get_active_staff_shift(user_profile, business, manager_must_have_shift=False):
@@ -468,21 +495,22 @@ def _reconcile(shift):
     """Return a dict of sales totals and cash reconciliation for a shift."""
     end = shift.ended_at or timezone.now()
     # 2026-08-06 live report (Monsoon Inn, bartender Susan + waitress Sarah) —
-    # cap this shift's own window at the moment a NEWER shift opens on the same
-    # station, if one has, so a still-open OLDER shift stops silently accruing
-    # sales that are also being counted by the newer one. See
-    # _capped_shift_end()'s own docstring for the full incident writeup.
-    end = _capped_shift_end(shift, end)
+    # a shift's own reconciliation window is the UNION of every segment during
+    # which it's the most-recently-started shift on its station, not one
+    # single capped range — see _shift_active_segments()'s own docstring for
+    # the full incident writeup (including the follow-up bug where a single
+    # cap permanently erased a shift's attribution even after the shift that
+    # capped it had itself since closed).
+    segments = _shift_active_segments(shift, end)
     # invoice_no='[SVQ]' excludes stock-take variance corrections (2026-07-25 live
     # report, Monsoon Inn) — if a stock take is accepted while a shift happens to be
     # open, its corrective "cash sale" transaction would otherwise inflate this
     # shift's expected_cash for money the staffer never actually collected during
     # their shift, making an accurate physical count look like a false shortage.
     txns = Transaction.objects.filter(
+        _segments_q('created_at', segments),
         business=shift.business,
         type='Issue',
-        created_at__gte=shift.started_at,
-        created_at__lte=end,
     ).exclude(invoice_no='[SVQ]')
     # Scope to the correct counter so concurrent bar + kitchen shifts don't bleed.
     # 2026-07-28 — uses _shift_station(shift) (explicit field, falling back to
@@ -545,7 +573,7 @@ def _reconcile(shift):
     # Transaction/CustomerDebtPayment. Blank-station rows (pre-migration, or a
     # genuinely business-wide withdrawal with no clear till) are excluded from
     # both stations rather than guessed into one — see PettyCash.station's docstring.
-    _petty_qs = PettyCash.objects.filter(business=shift.business, created_at__gte=shift.started_at, created_at__lte=end)
+    _petty_qs = PettyCash.objects.filter(_segments_q('created_at', segments), business=shift.business)
     if staff_role != 'owner':
         _petty_qs = _petty_qs.filter(station=_shift_stn)
     petty_total = float(_petty_qs.filter(status='approved').aggregate(t=Sum('amount'))['t'] or 0)
@@ -567,8 +595,8 @@ def _reconcile(shift):
     # amount (a false "surplus" once counted, not a shortage).
     from .models import CustomerDebtPayment
     debt_qs = CustomerDebtPayment.objects.filter(
+        _segments_q('paid_at', segments),
         business=shift.business,
-        paid_at__gte=shift.started_at, paid_at__lte=end,
     )
     if staff_role != 'owner':
         debt_qs = debt_qs.filter(source=_shift_stn)
@@ -584,7 +612,11 @@ def _reconcile(shift):
     variance = None
     if shift.closing_cash_counted is not None:
         variance = round(float(shift.closing_cash_counted) - expected_cash, 2)
-    elapsed_secs = int((end - shift.started_at).total_seconds())
+    # Elapsed = sum of this shift's own attributed segments, not a bare
+    # end-minus-start of the full range — a shift with a gap carved out by
+    # a concurrently-open newer shift shouldn't show that gap as "its"
+    # elapsed time either.
+    elapsed_secs = int(sum((seg_end - seg_start).total_seconds() for seg_start, seg_end in segments))
     hours, rem   = divmod(elapsed_secs, 3600)
     mins         = rem // 60
     return {

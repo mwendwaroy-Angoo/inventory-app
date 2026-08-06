@@ -25013,3 +25013,196 @@ class OverlappingShiftReconcileCapTest(TestCase):
         )
         rec = _reconcile(owner_shift)
         self.assertAlmostEqual(rec['cash_sales'], 600.0, places=1)
+
+
+class SegmentedShiftReconcileTest(TestCase):
+    """2026-08-06 same-day follow-up live report (Monsoon Inn) — the
+    single-cap fix above (OverlappingShiftReconcileCapTest) introduced a
+    NEW bug of its own, caught from real production shift data via
+    inspect_shifts_today: bar shift #66 (Susan) opened at 13:16:11; bar
+    shift #67 (Sarah's FIRST shift that day) opened 88 seconds later at
+    13:17:39 and ran until 17:11:03, then CLOSED; Susan's own shift never
+    closed at all. The single hard cap froze Susan's window at 13:17:39
+    PERMANENTLY — showing her "0h 01m / KES 0" on the live dashboard and
+    silently erasing the entire 17:11:03-18:14:43 stretch where Susan was
+    once again the ONLY open shift on the counter (before Sarah opened a
+    SECOND shift, #68, at 18:14:43). _shift_active_segments() replaces the
+    single cap with a proper set of disjoint segments so a shift regains
+    its own attribution once whatever capped it has itself closed, as
+    long as nothing even newer has opened by then.
+    """
+
+    def _mk_shift(self, business, store, staff, started_at, ended_at=None, station='bar'):
+        return Shift.objects.create(
+            business=business, store=store, staff=staff, station=station,
+            opening_float=Decimal('0'), started_at=started_at, ended_at=ended_at,
+            status='CLOSED' if ended_at else 'OPEN',
+        )
+
+    def test_reopened_older_shift_regains_attribution_after_newer_shift_closes(self):
+        """Replicates the exact Monsoon Inn #66/#67/#68 timeline. Susan
+        (older, still open) must get credit for sales made in BOTH of her
+        own uninterrupted stretches — before Sarah's first shift opened,
+        AND after Sarah's first shift closed but before her second one
+        opened — not just the first sliver."""
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='Segment Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='SEG-1',
+            description='Segment Beer', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        susan = User.objects.create_user(username='seg_susan', password='x')
+        UserProfile.objects.create(user=susan, business=business, role='staff')
+        sarah = User.objects.create_user(username='seg_sarah', password='x')
+        UserProfile.objects.create(user=sarah, business=business, role='waitress')
+
+        base = timezone.now() - timedelta(hours=10)
+        susan_start = base  # 13:16:11 equivalent
+        sarah1_start = base + timedelta(seconds=88)   # 13:17:39
+        sarah1_end   = base + timedelta(hours=3, minutes=53, seconds=24)  # 17:11:03
+        sarah2_start = base + timedelta(hours=4, minutes=58, seconds=32)  # 18:14:43
+
+        susan_shift = self._mk_shift(business, store, susan, susan_start)
+        self._mk_shift(business, store, sarah, sarah1_start, ended_at=sarah1_end)
+        self._mk_shift(business, store, sarah, sarah2_start)
+
+        # Sale #1: in Susan's own first sliver (before Sarah's first shift opened)
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+            created_at=susan_start + timedelta(seconds=30),
+        )
+        # Sale #2: during the overlap (Susan open, Sarah's first shift also
+        # open) — must NOT count toward Susan, belongs to Sarah's shift.
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='cash',
+            created_at=sarah1_start + timedelta(hours=1),
+        )
+        # Sale #3: AFTER Sarah's first shift closed, BEFORE her second one
+        # opened — Susan is once again the sole open shift and must get
+        # credit for this (the exact gap the single-cap bug erased).
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'), payment_method='cash',
+            created_at=sarah1_end + timedelta(minutes=30),
+        )
+
+        rec = _reconcile(susan_shift)
+        self.assertAlmostEqual(rec['cash_sales'], 400.0, places=1,
+            msg="Susan must get both her pre-overlap (100) AND post-Sarah-close (300) sales, not just the first sliver")
+        # Elapsed must be the SUM of her two disjoint segments: the ~88s
+        # sliver before Sarah's first shift opened, PLUS the gap between
+        # Sarah's first shift closing and her SECOND shift opening — never
+        # the full ~10h bare end-minus-start, and correctly capped again
+        # once Sarah's second (currently-open) shift starts, since SHE is
+        # now the one presently responsible for the till, even though
+        # Susan's own shift row also remains open the whole time.
+        expected_seg1 = 88.0
+        expected_seg2 = (sarah2_start - sarah1_end).total_seconds()
+        expected_elapsed_mins = int((expected_seg1 + expected_seg2) // 60)
+        self.assertEqual(rec['elapsed_mins'], expected_elapsed_mins)
+        self.assertLess(rec['elapsed_mins'], 10 * 60, "must exclude both the overlap AND the time after Sarah's second shift opened")
+        self.assertGreater(rec['elapsed_mins'], 60, "must include the post-Sarah-close gap, not just the tiny first sliver")
+
+    def test_sale_after_second_newer_shift_opens_belongs_to_that_shift_not_the_original(self):
+        """A sale made after Sarah's SECOND shift (#68) opens must count
+        toward Sarah's second shift, not Susan's — Susan's own attribution
+        correctly stops again once a newer shift reopens on the counter,
+        even though Susan's own Shift row is still OPEN in the database."""
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='Segment Biz 2')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='SEG-3',
+            description='Segment Beer 2', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        susan = User.objects.create_user(username='seg2_susan', password='x')
+        UserProfile.objects.create(user=susan, business=business, role='staff')
+        sarah = User.objects.create_user(username='seg2_sarah', password='x')
+        UserProfile.objects.create(user=sarah, business=business, role='waitress')
+
+        base = timezone.now() - timedelta(hours=10)
+        susan_start  = base
+        sarah1_start = base + timedelta(seconds=88)
+        sarah1_end   = base + timedelta(hours=3, minutes=53)
+        sarah2_start = base + timedelta(hours=4, minutes=58)
+
+        susan_shift = self._mk_shift(business, store, susan, susan_start)
+        self._mk_shift(business, store, sarah, sarah1_start, ended_at=sarah1_end)
+        sarah2_shift = self._mk_shift(business, store, sarah, sarah2_start)
+
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('700'), payment_method='cash',
+            created_at=sarah2_start + timedelta(minutes=10),
+        )
+        susan_rec = _reconcile(susan_shift)
+        sarah2_rec = _reconcile(sarah2_shift)
+        self.assertEqual(susan_rec['cash_sales'], 0.0)
+        self.assertAlmostEqual(sarah2_rec['cash_sales'], 700.0, places=1)
+
+    def test_simple_single_handover_still_behaves_like_a_plain_cap(self):
+        """The common case (one handover, no reopen) must produce the same
+        result the original single-cap fix gave — this is the regression
+        lock against changing behavior for the ordinary scenario while
+        fixing the reopen edge case."""
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='Simple Handover Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='SEG-2',
+            description='Simple Beer', unit='bottle',
+            selling_price=Decimal('50'), cost_price=Decimal('20'),
+        )
+        staff1 = User.objects.create_user(username='seg_staff1', password='x')
+        UserProfile.objects.create(user=staff1, business=business, role='staff')
+        staff2 = User.objects.create_user(username='seg_staff2', password='x')
+        UserProfile.objects.create(user=staff2, business=business, role='staff')
+
+        now = timezone.now()
+        s1_start = now - timedelta(hours=4)
+        s2_start = now - timedelta(hours=2)
+        s1 = self._mk_shift(business, store, staff1, s1_start)
+        self._mk_shift(business, store, staff2, s2_start)
+
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('50'), payment_method='cash',
+            created_at=s1_start + timedelta(minutes=10),
+        )
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('999'), payment_method='cash',
+            created_at=s2_start + timedelta(minutes=10),
+        )
+        rec = _reconcile(s1)
+        self.assertAlmostEqual(rec['cash_sales'], 50.0, places=1)
+
+    def test_segments_helper_directly(self):
+        from core.shift_views import _shift_active_segments
+
+        business = Business.objects.create(name='Segments Helper Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        staff = User.objects.create_user(username='segh_staff', password='x')
+        UserProfile.objects.create(user=staff, business=business, role='staff')
+        other = User.objects.create_user(username='segh_other', password='x')
+        UserProfile.objects.create(user=other, business=business, role='staff')
+
+        base = timezone.now() - timedelta(hours=5)
+        s = self._mk_shift(business, store, staff, base)
+        later_start = base + timedelta(hours=1)
+        later_end = base + timedelta(hours=2)
+        self._mk_shift(business, store, other, later_start, ended_at=later_end)
+
+        uncapped_end = base + timedelta(hours=5)
+        segments = _shift_active_segments(s, uncapped_end)
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0], (base, later_start))
+        self.assertEqual(segments[1], (later_end, uncapped_end))
