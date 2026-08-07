@@ -35,6 +35,34 @@ logger = logging.getLogger(__name__)
 _SITE_URL = 'https://www.dukamwecheche.co.ke'
 
 
+def _flag_stock_shortfall(business, item, shortfall, context):
+    """2026-08-07 live request (Roy: "negative balances should never be
+    there, stock is either or is not") — an M-Pesa STK payment has already
+    been confirmed by Safaricom by the time these settlement callbacks run,
+    so refusing to record the sale would silently drop real, collected
+    money with no trace. Item.capped_deduction() floors the actual stock
+    deduction at zero instead of letting it go negative; this raises the
+    owner-facing exception feed entry for the shortfall so it's never a
+    silent, untraceable gap between what was paid for and what stock could
+    actually cover — reuses the existing BusinessException feed (Maduka
+    Yangu) rather than inventing a new alert shape. Never raises."""
+    if shortfall <= 0:
+        return
+    try:
+        from core.models import BusinessException
+        BusinessException.raise_exception(
+            business, kind='shrinkage', severity='warn',
+            title=f'{item.description} — malipo yalithibitishwa lakini stock haitoshi',
+            detail=(
+                f'{context}: mteja alilipa kwa {shortfall} {item.unit} zaidi ya stock '
+                f'iliyokuwepo. Bakia ya mfumo imezuiwa isishuke chini ya sifuri — kagua '
+                f'stock halisi ya {item.description}.'
+            ),
+        )
+    except Exception:
+        logger.exception('mpesa_views: failed to flag stock shortfall for item %s', item.id)
+
+
 def _sms_receipt_to_payer(payment, receipt):
     """Send an SMS receipt link to the customer who initiated the STK push.
 
@@ -621,9 +649,18 @@ def _settle_kitchen_order_from_payment(payment):
                     # checkout and Quick Sell's STK settlement, above).
                     if preset is not None:
                         qty = Decimal(str(preset.quantity_consumed))
+                    # 2026-08-07 (Roy: "negative balances should never be
+                    # there") — the M-Pesa charge already confirmed by the
+                    # time this callback runs, so refusing outright would
+                    # silently drop a real payment with no record. Cap the
+                    # actual stock deduction at what's available (never
+                    # negative) and flag any shortfall for the owner —
+                    # see Item.capped_deduction()'s own docstring.
+                    deductible, shortfall = item.capped_deduction(qty)
+                    _flag_stock_shortfall(business, item, shortfall, 'Kitchen STK')
                     Transaction.objects.create(
                         business=business, item=item, type='Issue',
-                        qty=-qty, sale_amount=amount,
+                        qty=-deductible, sale_amount=amount,
                         payment_method='mpesa', recipient='',
                         date=timezone.localdate(),
                         preset=preset,
@@ -718,11 +755,19 @@ def _settle_qs_from_payment(payment):
             if preset is not None:
                 qty = Decimal(str(preset.quantity_consumed))
 
+            # 2026-08-07 (Roy: "negative balances should never be there") —
+            # the M-Pesa charge already confirmed by the time this callback
+            # runs, so refusing outright would silently drop a real,
+            # collected payment. Cap the deduction at what's available and
+            # flag any shortfall — see Item.capped_deduction()'s docstring.
+            deductible, shortfall = item.capped_deduction(qty)
+            _flag_stock_shortfall(business, item, shortfall, 'Quick Sell STK')
+
             Transaction.objects.create(
                 business=business,
                 item=item,
                 type='Issue',
-                qty=-qty,
+                qty=-deductible,
                 sale_amount=sale_amount,
                 payment_method='mpesa',
                 recipient='',
@@ -852,11 +897,17 @@ def _fulfill_order(order):
     """Create Issue transactions for a paid order (auto-deduct stock)."""
     today = timezone.localtime(timezone.now()).date()
     for line in order.lines.select_related('item'):
+        # 2026-08-07 (Roy: "negative balances should never be there") —
+        # payment for this order already confirmed by the time fulfillment
+        # runs; cap the deduction rather than let it go negative, and flag
+        # any shortfall for the owner. See Item.capped_deduction().
+        deductible, shortfall = line.item.capped_deduction(line.quantity)
+        _flag_stock_shortfall(order.business, line.item, shortfall, 'Order Fulfillment')
         txn = Transaction.objects.create(
             item=line.item,
             date=today,
             type='Issue',
-            qty=-line.quantity,
+            qty=-deductible,
             invoice_no=order.order_number,
             recipient=order.customer_name,
             business=order.business,
@@ -1322,12 +1373,18 @@ def confirm_prompt(request, prompt_id):
         qty_decimal = Decimal(qty_int)
 
     today = timezone.localtime(timezone.now()).date()
+    # 2026-08-07 (Roy: "negative balances should never be there") — this
+    # M-Pesa payment already landed before staff reconciles it here, so
+    # refusing outright would leave a real, received payment unrecorded.
+    # Cap the deduction and flag any shortfall — see Item.capped_deduction().
+    deductible, shortfall = item.capped_deduction(qty_decimal)
+    _flag_stock_shortfall(profile.business, item, shortfall, 'Payment Confirmation')
     # sale_amount = the actual M-Pesa receipt amount — ensures revenue() is accurate
     txn = Transaction.objects.create(
         item=item,
         date=today,
         type='Issue',
-        qty=-qty_decimal,
+        qty=-deductible,
         sale_amount=prompt.amount,
         invoice_no=prompt.mpesa_receipt or f"MPESA-{prompt.id}",
         recipient=prompt.phone,
@@ -1381,9 +1438,12 @@ def confirm_prompt(request, prompt_id):
     except Exception:
         pass
 
+    message = f"Logged: {float(qty_decimal):g}x {line_label} — KES {float(prompt.amount):,.0f}"
+    if shortfall > 0:
+        message += f" (⚠️ stock ilikuwa pungufu la {shortfall:g} — imewekwa alama kwa mmiliki)"
     return JsonResponse({
         'success': True,
-        'message': f"Logged: {float(qty_decimal):g}x {line_label} — KES {float(prompt.amount):,.0f}",
+        'message': message,
         'receipt_url': f"/r/{receipt_obj.token}/",
     })
 

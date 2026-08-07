@@ -800,6 +800,41 @@ class Item(models.Model):
         item actually causes the harm this exists to prevent."""
         return self.current_balance() - self.reserved_qty()
 
+    def capped_deduction(self, requested_qty):
+        """2026-08-07 live request (Roy: "negative balances should never be
+        there, stock is either or is not") — the shared floor-at-zero
+        helper for every code path that deducts stock AFTER the point where
+        blocking the sale outright is no longer an option (an M-Pesa STK
+        payment already confirmed, a table order already physically
+        served). Quick Sell's own live checkout already refuses a sale
+        outright when available_balance() is insufficient — that pattern
+        stays as-is for anything still interactive (see quick_sell(),
+        _kitchen_checkout()'s plain-item branch). This is for the *other*
+        half: a real audit (2026-08-07) found several settlement/
+        confirmation paths (STK callbacks, confirm_prompt, table-order
+        SERVED conversion) that created a stock-deducting Transaction with
+        NO balance check anywhere in their lifetime — the actual root
+        cause of a plain item's balance drifting to e.g. -99 while a hard
+        block existed elsewhere in the app.
+
+        Returns (deductible, shortfall) — deductible is what can actually
+        come off the shelf without the balance going negative (never more
+        than requested_qty, never enough to push available_balance() below
+        zero); shortfall is requested_qty - deductible (0 when stock was
+        sufficient). Callers must still create their Transaction for the
+        FULL requested_qty's revenue/receipt — the money already moved or
+        the item was already served — but should use `deductible` as the
+        Transaction's qty and raise a BusinessException(kind='shrinkage')
+        for any non-zero shortfall so the owner can investigate rather than
+        the balance silently going negative with no trace of why.
+        """
+        available = self.available_balance()
+        if available < 0:
+            available = Decimal('0')
+        deductible = min(Decimal(str(requested_qty)), available)
+        shortfall = Decimal(str(requested_qty)) - deductible
+        return deductible, shortfall
+
     def variant_summary(self):
         """UBA §8.2 (Sprint A1) — for a parent Item's stock-list collapse
         row: total balance across all its variant children, and their price

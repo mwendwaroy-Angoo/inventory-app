@@ -181,6 +181,28 @@ def decide_approval(request, approval_id):
     denial_reason = request.POST.get('denial_reason', '').strip()
 
     if decision == 'approve':
+        # 2026-08-07 live request (Roy: "negative balances should never be
+        # there") — the request was balance-checked at request_sale_
+        # approval() time, but approval can come hours later; stock may
+        # have genuinely drained in between (a real TOCTOU gap found in
+        # the same audit that traced a plain item's balance to -99).
+        # Re-check right here, at the only other point this Transaction can
+        # actually be created, and refuse rather than let it go negative.
+        item = approval.item
+        if item.available_balance() < approval.quantity:
+            messages.error(
+                request,
+                _(
+                    'Haiwezekani kuidhinisha — %(item_description)s ina %(available)s pekee '
+                    'sasa, si %(requested)s iliyoombwa. Stock imebadilika tangu ombi lilipofanywa.'
+                )
+                % {
+                    'item_description': item.description,
+                    'available': item.available_balance(),
+                    'requested': approval.quantity,
+                },
+            )
+            return redirect('pending_approvals')
         txn = Transaction.objects.create(
             item=approval.item,
             type='Issue',

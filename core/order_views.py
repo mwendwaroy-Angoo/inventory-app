@@ -579,11 +579,21 @@ def _create_transactions_for_order(order, up):
             if oi.preset:
                 stock_qty = qty * Decimal(str(oi.preset.quantity_consumed))
             amount = qty * oi.unit_price
+            # 2026-08-07 (Roy: "negative balances should never be there") —
+            # the item was already physically served to the customer by
+            # the time an order reaches SERVED; refusing to record it here
+            # would leave a real, already-consumed item invisible to
+            # stock. Cap the deduction and flag any shortfall instead — see
+            # Item.capped_deduction().
+            deductible_qty, shortfall_qty = oi.item.capped_deduction(stock_qty)
+            if shortfall_qty > 0:
+                from .mpesa_views import _flag_stock_shortfall
+                _flag_stock_shortfall(business, oi.item, shortfall_qty, 'Table Order Served')
             txn = Transaction.objects.create(
                 business=business,
                 item=oi.item,
                 type='Issue',
-                qty=-stock_qty,
+                qty=-deductible_qty,
                 sale_amount=amount,
                 payment_method='credit',
                 recipient=order.table_label,

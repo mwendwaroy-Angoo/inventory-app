@@ -760,6 +760,26 @@ def _kitchen_checkout(request, up, business, is_owner):
             # the identical client-trust gap.
             if sale_preset is not None:
                 qty = Decimal(str(sale_preset.quantity_consumed))
+            # 2026-08-07 live request (Roy: "negative balances should never
+            # be there") — this plain-item branch was the one live-checkout
+            # gap without a balance guard (Quick Sell's own direct checkout
+            # already has this same check). Refused outright, matching
+            # Quick Sell's pattern exactly — nothing has been paid or
+            # served yet at this point in the request, so blocking is safe.
+            if item.available_balance() < qty:
+                from core.models import BusinessException
+                try:
+                    BusinessException.raise_exception(
+                        business, kind='shrinkage', severity='info',
+                        title=f'{item.description} — imeshindikana kuuzwa, stock haitoshi',
+                        detail=(
+                            f'Jaribio la kuuza {qty} {item.unit} lakini {item.available_balance()} '
+                            f'{item.unit} tu ipo kwenye mfumo.'
+                        ),
+                    )
+                except Exception:
+                    pass
+                continue
             txn = Transaction.objects.create(
                 business=business,
                 item=item,

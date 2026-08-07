@@ -20812,6 +20812,7 @@ class PartialPaymentDebtCheckoutTest(TestCase):
             business=self.biz, store=self.kitchen_store, description='PDC Chipo',
             material_no='PDC-KIT-01', unit='Plate', selling_price=Decimal('180'),
         )
+        Transaction.objects.create(business=self.biz, item=item, type='Receipt', qty=Decimal('10'))
         Shift.objects.create(
             business=self.biz, store=self.kitchen_store, staff=self.owner,
             status='OPEN', opening_float=Decimal('0'), station='kitchen',
@@ -25957,3 +25958,161 @@ class OwnerConsumptionCorrectionAndSettlementTest(TestCase):
         self.assertTrue(r1.json()['ok'])
         self.assertTrue(r2.json()['ok'])
         self.assertTrue(r2.json().get('already_void'))
+
+
+class NegativeBalanceNeverAllowedTest(TestCase):
+    """2026-08-07 live report (Roy: a bottled Soda showed "Out of Stock" in
+    Quick Sell while physically present — balance had drifted to -99 even
+    though Quick Sell's own live checkout already blocks overselling).
+    Audit found several settlement/confirmation paths with NO balance
+    check anywhere in their lifetime: M-Pesa STK settlement callbacks,
+    staff reconciling a stray payment, Order fulfillment, and SERVED
+    table-order conversion. Roy's directive: "negative balances should
+    never be there, stock is either or is not." Two treatments: paths
+    still interactive BEFORE money/goods move (Kitchen Board direct
+    checkout, restricted-item approval) hard-block, matching Quick Sell's
+    own proven pattern; paths where money already changed hands or the
+    item was already physically served (every STK settlement callback,
+    Order fulfillment, table-order SERVED) cap the deduction at zero and
+    flag the shortfall via BusinessException instead of silently dropping
+    a confirmed payment."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Neg Balance Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Liquor Store', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='nb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='nb_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff', can_access_kitchen=True)
+        self.soda = Item.objects.create(
+            business=self.biz, store=self.store, description='Soda 500ml',
+            material_no='NB-SODA', unit='Pcs', selling_price=Decimal('100'),
+        )
+        # Only 2 in stock — every scenario below asks for more than that.
+        Transaction.objects.create(business=self.biz, item=self.soda, type='Receipt', qty=Decimal('2'))
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku',
+            material_no='NB-KUKU', unit='Pcs', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('2'))
+        Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'), station='kitchen',
+        )
+
+    # ── Item.capped_deduction() — direct unit tests ──────────────────────
+    def test_capped_deduction_sufficient_stock_no_shortfall(self):
+        deductible, shortfall = self.soda.capped_deduction(Decimal('2'))
+        self.assertEqual(deductible, Decimal('2'))
+        self.assertEqual(shortfall, Decimal('0'))
+
+    def test_capped_deduction_insufficient_stock_caps_and_flags(self):
+        deductible, shortfall = self.soda.capped_deduction(Decimal('5'))
+        self.assertEqual(deductible, Decimal('2'))
+        self.assertEqual(shortfall, Decimal('3'))
+
+    def test_capped_deduction_already_negative_balance_deducts_nothing(self):
+        Transaction.objects.create(business=self.biz, item=self.soda, type='Issue', qty=Decimal('-10'))
+        deductible, shortfall = self.soda.capped_deduction(Decimal('3'))
+        self.assertEqual(deductible, Decimal('0'))
+        self.assertEqual(shortfall, Decimal('3'))
+
+    # ── STK settlement callbacks — cap, never negative, flag raised ──────
+    def test_settle_qs_from_payment_never_goes_negative(self):
+        from core.mpesa_views import _settle_qs_from_payment
+        from core.models import Payment, BusinessException
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('500'), phone='0700000000',
+            status='completed',
+            qs_cart=[{'item_id': self.soda.id, 'qty': 5, 'amount': 500, 'description': 'Soda'}],
+        )
+        _settle_qs_from_payment(payment)
+        self.assertGreaterEqual(self.soda.current_balance(), 0)
+        self.assertEqual(self.soda.current_balance(), 0)
+        self.assertTrue(BusinessException.objects.filter(business=self.biz, kind='shrinkage').exists())
+
+    def test_settle_kitchen_order_from_payment_never_goes_negative(self):
+        from core.mpesa_views import _settle_kitchen_order_from_payment
+        from core.models import Payment, BusinessException
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('500'), phone='0700000000',
+            status='completed',
+            kitchen_cart=[{'item_id': self.kuku.id, 'qty': 5, 'amount': 500, 'description': 'Kuku'}],
+        )
+        _settle_kitchen_order_from_payment(payment)
+        self.assertGreaterEqual(self.kuku.current_balance(), 0)
+        self.assertTrue(BusinessException.objects.filter(business=self.biz, kind='shrinkage').exists())
+
+    def test_fulfill_order_never_goes_negative(self):
+        from core.mpesa_views import _fulfill_order
+        from core.models import Order, OrderLine, BusinessException
+        order = Order.objects.create(
+            business=self.biz, customer_name='Mteja', customer_phone='0700000000',
+            status='paid',
+        )
+        OrderLine.objects.create(order=order, item=self.soda, quantity=5, unit_price=Decimal('100'))
+        _fulfill_order(order)
+        self.assertGreaterEqual(self.soda.current_balance(), 0)
+        self.assertTrue(BusinessException.objects.filter(business=self.biz, kind='shrinkage').exists())
+
+    def test_confirm_prompt_never_goes_negative_and_reports_shortfall(self):
+        from core.models import PendingTransactionPrompt, BusinessException
+        prompt = PendingTransactionPrompt.objects.create(
+            business=self.biz, phone='0700000000', amount=Decimal('500'), status='pending',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/mpesa/prompt/{prompt.id}/confirm/', {
+            'item_id': self.soda.id, 'qty': '5',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.soda.refresh_from_db()
+        self.assertGreaterEqual(self.soda.current_balance(), 0)
+        self.assertIn('pungufu', resp.json()['message'])
+        self.assertTrue(BusinessException.objects.filter(business=self.biz, kind='shrinkage').exists())
+
+    def test_served_table_order_never_goes_negative(self):
+        from core.models import TableOrder, TableOrderItem, BusinessException
+        from accounts.models import UserProfile as _UP
+        waitress = User.objects.create_user(username='nb_waitress', password='x')
+        _UP.objects.create(user=waitress, business=self.biz, role='waitress')
+        order = TableOrder.objects.create(
+            business=self.biz, table_label='Table 9', waitress=waitress,
+            status='ACCEPTED', payment_method='cash',
+        )
+        TableOrderItem.objects.create(
+            order=order, item=self.soda, quantity=Decimal('5'),
+            unit_price=Decimal('100'), item_name='Soda',
+        )
+        from core.order_views import _create_transactions_for_order
+        up = _UP.objects.get(user=waitress)
+        _create_transactions_for_order(order, up)
+        self.assertGreaterEqual(self.soda.current_balance(), 0)
+        self.assertTrue(BusinessException.objects.filter(business=self.biz, kind='shrinkage').exists())
+
+    # ── Live, interactive checkouts — hard block instead ─────────────────
+    def test_kitchen_checkout_refuses_oversell(self):
+        import uuid
+        self.client.force_login(self.staff)
+        resp = self.client.post('/kitchen/', {
+            'cart': json.dumps([{'item_id': self.kuku.id, 'qty': 5, 'amount': 500, 'description': 'Kuku'}]),
+            'payment_method': 'cash',
+            'idempotency_token': f'nb-kb-{uuid.uuid4()}',
+        })
+        data = resp.json()
+        self.assertFalse(data.get('ok'), data)
+        self.assertEqual(self.kuku.current_balance(), 2)
+
+    def test_decide_approval_refuses_when_stock_ran_out_since_request(self):
+        from core.models import ItemSaleApproval
+        approval = ItemSaleApproval.objects.create(
+            business=self.biz, item=self.soda, requested_by=self.staff,
+            quantity=2, payment_method='cash', status='pending',
+        )
+        # Stock drains to 0 between the request and the owner's decision.
+        Transaction.objects.create(business=self.biz, item=self.soda, type='Issue', qty=Decimal('-2'))
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/approvals/{approval.id}/decide/', {'decision': 'approve'})
+        approval.refresh_from_db()
+        self.assertEqual(approval.status, 'pending')
+        self.assertGreaterEqual(self.soda.current_balance(), 0)
