@@ -179,7 +179,9 @@
         <div style="margin-top:.5rem; display:flex; gap:.4rem; flex-wrap:wrap;">
           <button class="confirm-btn" style="font-size:.75rem;" onclick="reviewOpeningVariance({{ s.id }}, 'acknowledged', this)">✓ Thibitisha (imeelezeka)</button>
           <button class="confirm-btn" style="font-size:.75rem; border-color:#c0395a; color:#c0395a;" onclick="reviewOpeningVariance({{ s.id }}, 'flagged', this)">🔍 Weka Alama</button>
+          <button class="confirm-btn" style="font-size:.75rem; border-color:#5da8f0; color:#5da8f0;" onclick="recheckOpeningVariance({{ s.id }}, this)">🔄 Angalia Upya (baada ya mauzo ya nyuma)</button>
         </div>
+        <div id="ov-recheck-{{ s.id }}"></div>
         {% endif %}
       </div>
       {% endif %}
@@ -341,6 +343,48 @@ function reviewOpeningVariance(shiftId, status, btn) {
       }
     })
     .catch(() => { alert('Network error'); btn.disabled = false; });
+}
+
+// 2026-08-06 — recompute a shift's frozen opening-variance snapshot against
+// TODAY's more-complete data (e.g. a bartender's sales, backdated after the
+// fact via Add Transaction's "Ilifanyika wakati mwingine?" toggle, that
+// didn't exist yet when this shift originally opened). Read-only — never
+// overwrites the original record, just shows a side-by-side comparison so
+// the owner/manager can decide with full information before acknowledging
+// or flagging. Station-agnostic view, same /bar/ prefix regardless (see
+// editShiftFloatHist above for the same convention).
+function recheckOpeningVariance(shiftId, btn) {
+  btn.disabled = true;
+  var box = document.getElementById('ov-recheck-' + shiftId);
+  box.innerHTML = '<div style="font-size:.75rem;color:#888;margin-top:.4rem;">Inahesabu upya...</div>';
+  fetch('/bar/shift/' + shiftId + '/opening-variance-recheck/', { method: 'GET', credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(d => {
+      btn.disabled = false;
+      if (!d.ok) {
+        box.innerHTML = '<div style="font-size:.75rem;color:#c0395a;margin-top:.4rem;">' + (d.error || 'Imeshindikana') + '</div>';
+        return;
+      }
+      var fmt = function (n) { return (n >= 0 ? '+' : '') + 'KES ' + Math.round(n).toLocaleString(); };
+      var html = '<div style="margin-top:.4rem; padding:.5rem .65rem; background:rgba(93,168,240,.06); ' +
+        'border:1px solid rgba(93,168,240,.25); border-radius:6px; font-size:.78rem;">' +
+        '<div style="color:#5da8f0; font-weight:600; margin-bottom:.25rem;">🔄 Baada ya kuhesabu upya na data ya sasa</div>' +
+        '<div style="color:var(--pearl);">Tofauti ya awali: <strong>' + fmt(d.original_variance) + '</strong></div>' +
+        '<div style="color:var(--pearl);">Tofauti baada ya kuhesabu upya: <strong style="color:' +
+        (d.fully_explained ? '#5dde7a' : '#f0a840') + ';">' + fmt(d.recomputed_variance) + '</strong></div>';
+      if (d.fully_explained) {
+        html += '<div style="color:#5dde7a; margin-top:.25rem;">✓ Tofauti hii sasa imeelezeka kabisa na mauzo/malipo yaliyoongezwa baadaye (KES ' +
+          Math.round(Math.abs(d.explained_amount)) + ' yamehesabiwa).</div>';
+      } else if (Math.abs(d.explained_amount) > 1) {
+        html += '<div style="color:#f0a840; margin-top:.25rem;">Sehemu ya tofauti (KES ' + Math.round(Math.abs(d.explained_amount)) +
+          ') sasa imeelezeka, lakini bado kuna kiasi kisichoelezeka.</div>';
+      } else {
+        html += '<div style="color:#888; margin-top:.25rem;">Hakuna kilichobadilika — hakuna mauzo/malipo mapya yaliyoongezwa kwa muda huo.</div>';
+      }
+      html += '</div>';
+      box.innerHTML = html;
+    })
+    .catch(() => { btn.disabled = false; box.innerHTML = '<div style="font-size:.75rem;color:#c0395a;margin-top:.4rem;">Network error</div>'; });
 }
 
 // 2026-07-30 — "staff forgot to input cash at hand" fix. This page renders

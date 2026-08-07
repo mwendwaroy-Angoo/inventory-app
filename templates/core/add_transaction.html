@@ -520,6 +520,9 @@
                 <div class="form-text" style="color:#888; font-size:.75rem; margin-top:.3rem;">
                   {% trans 'Ikiwa imejazwa, transaction itaingia kwenye reconciliation ya shift iliyokuwa wazi wakati huo.' %}
                 </div>
+                <div id="backdateNowWarning" style="display:none; margin-top:.4rem; font-size:.75rem; color:#ff9800;">
+                  ⚠️ {% trans 'Wakati huu ni karibu na SASA HIVI. Hakikisha umeweka wakati HALISI mauzo yalipofanyika (jana, mfano), la sivyo hii haitasaidia kutenganisha hesabu ya leo.' %}
+                </div>
               </div>
             </div>
 
@@ -646,8 +649,27 @@ window._toggleBackdate = function() {
     section.style.display = isHidden ? 'block' : 'none';
     if (!isHidden) {
         document.getElementById('backdatedAt').value = '';
+        var w = document.getElementById('backdateNowWarning');
+        if (w) w.style.display = 'none';
     }
 };
+
+// 2026-08-06 — the whole point of backdating is to keep an entry OUT of
+// today's shift/revenue figures; a staffer who toggles this on but leaves
+// the picker at (or very near) the current moment defeats that purpose
+// silently — the entry would land right back in today's window anyway.
+// Non-blocking nudge only, never prevents submission.
+document.addEventListener('DOMContentLoaded', function () {
+    var input = document.getElementById('backdatedAt');
+    var warn = document.getElementById('backdateNowWarning');
+    if (!input || !warn) return;
+    input.addEventListener('change', function () {
+        if (!input.value) { warn.style.display = 'none'; return; }
+        var picked = new Date(input.value);
+        var diffMins = Math.abs((Date.now() - picked.getTime()) / 60000);
+        warn.style.display = (diffMins < 5) ? 'block' : 'none';
+    });
+});
 
 $(document).ready(function () {
 

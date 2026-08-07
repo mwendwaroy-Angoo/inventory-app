@@ -22,7 +22,7 @@ from django.db.models.functions import Abs, Coalesce
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
     BusinessException, Item, KegBarrel, KegWeightReading, PettyCash, Shift,
@@ -2165,6 +2165,69 @@ def review_opening_variance(request, shift_id):
         logger.exception('review_opening_variance: notify failed for shift %s', shift.id)
 
     return JsonResponse({'ok': True, 'message': msg, 'is_reversal': is_reversal})
+
+
+@login_required
+@require_GET
+def recheck_opening_variance(request, shift_id):
+    """Read-only: recompute what this shift's opening-cash variance would
+    look like if calculated NOW, using today's more-complete data, without
+    touching the original frozen record.
+
+    2026-08-06 live scenario (Monsoon Inn): a bartender sells but doesn't
+    post the sales at the time; a waitress arrives, opens her own shift,
+    and (honestly) counts more cash than the system expects because that
+    unposted cash is physically sitting there — a real opening-variance
+    flag with an innocent cause. Once the bartender later backdates her
+    missed sales via Add Transaction's "Ilifanyika wakati mwingine?"
+    toggle (setting created_at to when the sale actually happened, before
+    the waitress's own shift.started_at), till_expected_cash() — a live
+    query — already picks that transaction up automatically. But
+    Shift.expected_opening_cash/opening_variance are ONE-TIME snapshots
+    taken the instant the waitress opened, frozen before the backdated
+    entry existed, so they stay stale forever unless something re-checks
+    them.
+
+    till_expected_cash(..., as_of=shift.started_at) already supports this
+    exactly: every internal sum filters by created_at__lte=as_of, so a
+    later-inserted but correctly-backdated transaction is included in the
+    recompute even though it didn't exist yet when the original snapshot
+    was taken. Deliberately does NOT overwrite shift.expected_opening_cash/
+    opening_variance — those stay as the honest historical record of what
+    was known at the time; this is a side-by-side comparison for a human
+    (owner/manager) to decide with, same "explain, don't auto-absolve"
+    principle as every other reconciliation feature in this app.
+    """
+    up = _get_up(request)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+
+    shift = get_object_or_404(Shift, id=shift_id, business=up.business)
+    if shift.expected_opening_cash is None:
+        return JsonResponse({'ok': False, 'error': 'Hakuna kiasi kilichotarajiwa kilichorekodiwa kwa shift hii'}, status=400)
+
+    station = _shift_station(shift)
+    recomputed = till_expected_cash(up.business, station, as_of=shift.started_at)
+    if not recomputed['anchor_established']:
+        return JsonResponse({'ok': False, 'error': 'Haiwezekani kuhesabu upya — hakuna nukta ya kuanzia bado.'}, status=400)
+
+    banked = shift.banked_amount or Decimal('0')
+    recomputed_expected = Decimal(str(recomputed['expected_cash'])) - banked
+    recomputed_variance = shift.opening_float - recomputed_expected
+
+    original_variance = shift.opening_variance or Decimal('0')
+    explained = original_variance - recomputed_variance  # how much of the original gap this accounts for
+
+    return JsonResponse({
+        'ok': True,
+        'original_expected': float(shift.expected_opening_cash),
+        'original_variance': float(original_variance),
+        'recomputed_expected': float(recomputed_expected),
+        'recomputed_variance': float(recomputed_variance),
+        'explained_amount': float(explained),
+        'fully_explained': abs(recomputed_variance) < Decimal('1'),
+        'breakdown': recomputed['breakdown'],
+    })
 
 
 # ── Edit opening float (2026-07-30, live request) ──────────────────────────────

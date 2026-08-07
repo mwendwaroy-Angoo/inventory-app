@@ -25573,3 +25573,107 @@ class SettledByAccountabilityTrailTest(TestCase):
         found = [e for t in data['tabs'] for e in t['entries'] if e['id'] == entry.id]
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]['settled_by_name'], 'sb_waitress')
+
+
+class RecheckOpeningVarianceTest(TestCase):
+    """2026-08-06 live scenario (Monsoon Inn) — a bartender sells but doesn't
+    post the sale at the time; a waitress arrives, opens her own shift, and
+    honestly counts more cash than the system expects because that unposted
+    cash is physically sitting there. Once the bartender later backdates her
+    missed sale (Add Transaction's "Ilifanyika wakati mwingine?" toggle),
+    the LIVE till figure already picks it up automatically — but the
+    waitress's own frozen opening_variance snapshot doesn't, since it was
+    computed before that backdated entry existed. recheck_opening_variance
+    recomputes it against today's more-complete data without overwriting
+    the original record."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Recheck OV Biz', has_kitchen=False)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='rov_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bartender = User.objects.create_user(username='rov_bartender', password='x')
+        UserProfile.objects.create(user=self.bartender, business=self.biz, role='staff')
+        self.waitress = User.objects.create_user(username='rov_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, material_no='ROV-1',
+            description='Beer', unit='Pcs', selling_price=Decimal('500'),
+        )
+        self.t0 = timezone.now() - timedelta(hours=3)
+
+        # Anchor: bartender's earlier shift closed with a real physical count.
+        self.anchor_shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bartender,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+            started_at=self.t0 - timedelta(hours=2), ended_at=self.t0,
+            closing_cash_counted=Decimal('1000'),
+        )
+
+        # Waitress opens her shift 1 hour after the anchor, honestly counting
+        # 1500 (1000 base + the bartender's unposted 500 sale sitting in cash).
+        self.t1 = self.t0 + timedelta(hours=1)
+        self.waitress_shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.waitress,
+            status='OPEN', station='bar', opening_float=Decimal('1500'),
+            started_at=self.t1,
+            expected_opening_cash=Decimal('1000'),  # what till_expected_cash said BEFORE the backdate
+            opening_variance=Decimal('500'),  # 1500 counted - 1000 expected
+        )
+
+    def _recheck(self, user):
+        self.client.force_login(user)
+        return self.client.get(f'/bar/shift/{self.waitress_shift.id}/opening-variance-recheck/')
+
+    def test_owner_or_manager_only(self):
+        resp = self._recheck(self.bartender)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_no_expected_opening_cash_returns_error(self):
+        s = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.waitress,
+            status='OPEN', station='bar', opening_float=Decimal('0'), started_at=self.t1,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/bar/shift/{s.id}/opening-variance-recheck/')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_variance_unexplained_before_backdated_entry(self):
+        resp = self._recheck(self.owner)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertAlmostEqual(data['recomputed_variance'], 500.0, places=1)
+        self.assertFalse(data['fully_explained'])
+
+    def test_backdated_sale_fully_explains_the_variance(self):
+        # Bartender later posts the missed sale, backdated to BEFORE the
+        # waitress's shift ever opened (between the anchor and t1).
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='cash',
+            recorded_by=self.bartender, created_at=self.t0 + timedelta(minutes=30),
+        )
+        resp = self._recheck(self.owner)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertAlmostEqual(data['recomputed_variance'], 0.0, places=1)
+        self.assertTrue(data['fully_explained'])
+        self.assertAlmostEqual(data['explained_amount'], 500.0, places=1)
+        # Original frozen record must be untouched
+        self.waitress_shift.refresh_from_db()
+        self.assertEqual(self.waitress_shift.opening_variance, Decimal('500'))
+
+    def test_backdated_sale_after_waitress_opened_does_not_explain_it(self):
+        # Posted with created_at AFTER the waitress's shift opened — this is
+        # exactly the "forgot to actually backdate" mistake; it must NOT
+        # retroactively explain her opening variance.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='cash',
+            recorded_by=self.bartender, created_at=self.t1 + timedelta(minutes=10),
+        )
+        resp = self._recheck(self.owner)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertAlmostEqual(data['recomputed_variance'], 500.0, places=1)
+        self.assertFalse(data['fully_explained'])
