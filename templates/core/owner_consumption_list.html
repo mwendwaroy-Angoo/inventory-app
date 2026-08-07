@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Mmiliki Alichukua{% endblock %}
+
+{% block extra_css %}
+<style>
+.oc-card {
+  background:#2a2a2a; border:1px solid #3a3a3a; border-radius:10px;
+  padding:.75rem 1rem; margin-bottom:.55rem;
+  display:flex; align-items:flex-start; gap:.75rem; flex-wrap:wrap;
+}
+.oc-badge {
+  display:inline-block; border-radius:20px; padding:.2rem .65rem;
+  font-size:.72rem; font-weight:600; white-space:nowrap;
+}
+.oc-badge.unpaid { background:rgba(255,152,0,.12); color:#ff9800; border:1px solid rgba(255,152,0,.3); }
+.oc-badge.paid    { background:rgba(76,175,80,.12); color:#4caf50; border:1px solid rgba(76,175,80,.3); }
+.oc-badge.void    { background:rgba(136,136,136,.12); color:#888; border:1px solid rgba(136,136,136,.3); }
+.oc-actions { display:flex; gap:.4rem; margin-top:.45rem; flex-wrap:wrap; }
+.oc-btn {
+  border-radius:6px; font-size:.78rem; padding:.3rem .65rem; cursor:pointer; border:1px solid;
+}
+.oc-btn-void { background:rgba(192,57,90,.1); border-color:rgba(192,57,90,.3); color:#c0395a; }
+.oc-btn-settle { background:rgba(93,168,240,.1); border-color:rgba(93,168,240,.3); color:#5da8f0; }
+#oc-toast {
+  position:fixed; bottom:1.25rem; left:50%; transform:translateX(-50%) translateY(120%);
+  background:#2a2a2a; border:1px solid #c9a84c; border-radius:10px;
+  padding:.65rem 1.1rem; color:#f0ece4; font-size:.85rem; max-width:90vw;
+  box-shadow:0 4px 18px rgba(0,0,0,.4); z-index:2000;
+  transition:transform .25s ease; text-align:center;
+}
+#oc-toast.show { transform:translateX(-50%) translateY(0); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="page-title mb-1">🥃 Mmiliki Alichukua</h1>
+    <div style="color:#b0b0b0; font-size:.85rem;">
+      Bidhaa alizochukua mmiliki bila malipo — sahihisha hitilafu au rekodi malipo hapa.
+    </div>
+  </div>
+</div>
+
+{% if not rows %}
+<div class="text-center py-5" style="color:#555;">
+  <div style="font-size:2rem; margin-bottom:.5rem;">🥃</div>
+  Hakuna rekodi za Mmiliki Alichukua bado.
+</div>
+{% else %}
+{% for row in rows %}
+{% with txn=row.txn %}
+<div class="oc-card" id="oc-entry-{{ txn.id }}">
+  <div style="flex:1; min-width:180px;">
+    <div style="color:#f0ece4; font-weight:600; font-size:.92rem;">
+      {{ txn.item.description }} — {{ txn.qty|floatformat:"-2" }} {{ txn.item.unit }}
+    </div>
+    <div style="color:#b0b0b0; font-size:.82rem; margin-top:.1rem;">{{ txn.recipient }}</div>
+    <div style="color:#555; font-size:.75rem; margin-top:.25rem;">
+      Imeandikwa na <strong style="color:#b0b0b0;">{{ txn.recorded_by.get_full_name|default:txn.recorded_by.username }}</strong>
+      — {{ txn.created_at|date:"d M, H:i" }}
+    </div>
+    {% if row.settlement %}
+    <div style="color:#4caf50; font-size:.78rem; margin-top:.3rem;">
+      ✓ Mmiliki amelipa KES {{ row.settlement.sale_amount|floatformat:0 }} ({{ row.settlement.payment_method }})
+      — {{ row.settlement.created_at|date:"d M, H:i" }}
+    </div>
+    {% endif %}
+  </div>
+  <div>
+    {% if row.settlement %}
+      <span class="oc-badge paid">✓ Imelipwa</span>
+    {% else %}
+      <span class="oc-badge unpaid">Haijalipwa</span>
+    {% endif %}
+  </div>
+  {% if not row.settlement %}
+  <div class="oc-actions" style="width:100%;">
+    {% if is_owner_or_manager %}
+    <button class="oc-btn oc-btn-settle" onclick="window.ocSettle({{ txn.id }}, this)">💰 Mmiliki Amelipa</button>
+    {% endif %}
+    {% if is_owner_or_manager or row.is_own %}
+    <button class="oc-btn oc-btn-void" onclick="window.ocVoid({{ txn.id }}, this)">✕ Futa (Hitilafu)</button>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endwith %}
+{% endfor %}
+{% endif %}
+
+<div id="oc-toast"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function ocToast(msg) {
+  var t = document.getElementById('oc-toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function () { t.classList.remove('show'); }, 3200);
+}
+
+window.ocVoid = function (txnId, btn) {
+  var reason = window.prompt('Sababu ya kufuta (hiari) — mfano: "Nilibonyeza item isiyo sahihi"');
+  if (reason === null) return;  // cancelled — never forces a reason
+  btn.disabled = true;
+  var body = new URLSearchParams({ reason: reason, csrfmiddlewaretoken: '{{ csrf_token }}' });
+  fetch('/stock/owner-consumption/' + txnId + '/void/', { method: 'POST', body: body, credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      btn.disabled = false;
+      if (d.ok) {
+        ocToast(d.message || 'Imefutwa.');
+        setTimeout(function () { location.reload(); }, 900);
+      } else {
+        alert(d.error || 'Imeshindikana');
+      }
+    })
+    .catch(function () { alert('Network error'); btn.disabled = false; });
+};
+
+window.ocSettle = function (txnId, btn) {
+  var amount = window.prompt('Mmiliki amelipa kiasi gani? (KES)');
+  if (amount === null || amount.trim() === '') return;
+  var method = window.prompt('Njia ya malipo — andika "cash" au "mpesa"', 'cash');
+  if (method === null) return;
+  method = method.trim().toLowerCase();
+  if (method !== 'cash' && method !== 'mpesa') method = 'cash';
+  btn.disabled = true;
+  var token = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+  var body = new URLSearchParams({
+    amount: amount.trim(), payment_method: method,
+    idempotency_token: token, csrfmiddlewaretoken: '{{ csrf_token }}',
+  });
+  fetch('/stock/owner-consumption/' + txnId + '/settle/', { method: 'POST', body: body, credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      btn.disabled = false;
+      if (d.ok) {
+        ocToast(d.message || 'Imerekodiwa.');
+        setTimeout(function () { location.reload(); }, 900);
+      } else {
+        alert(d.error || 'Imeshindikana');
+      }
+    })
+    .catch(function () { alert('Network error'); btn.disabled = false; });
+};
+</script>
+{% endblock %}

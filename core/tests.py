@@ -25820,3 +25820,140 @@ class QuickSellCatchUpBackdateTest(TestCase):
         window_start = station_revenue_window_start(self.biz, is_kitchen=False)
         today_revenue = _window_revenue(self.biz, is_kitchen=False, start=window_start, end=timezone.now())
         self.assertEqual(today_revenue, 0)
+
+
+class OwnerConsumptionCorrectionAndSettlementTest(TestCase):
+    """2026-08-07 live request — Roy: "no trail for mmiliki alichukuwa
+    whereby in the instance a staff made a mistake they cannot correct or
+    follow up on it and then there is no way for the owner to pay for what
+    he was given." Covers the new list page, void (correction), and settle
+    (repayment) actions."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='OC Correction Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='occ_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='occ_staff', password='x')
+        self.staff_up = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.other_staff = User.objects.create_user(username='occ_other', password='x')
+        UserProfile.objects.create(user=self.other_staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Whisky',
+            material_no='OCC-01', unit='pcs', selling_price=Decimal('500'),
+            cost_price=Decimal('300'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'))
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+
+    def _record(self, actor, qty='2'):
+        import uuid
+        self.client.force_login(actor)
+        self.client.post('/stock/owner-consumption/', {
+            'item_id': self.item.id, 'qty': qty, 'note': 'test',
+            'idempotency_token': f'occ-rec-{uuid.uuid4()}',
+        })
+        return Transaction.objects.filter(
+            business=self.biz, item=self.item, type='OwnerConsumption',
+        ).exclude(invoice_no='[OC-VOID]').latest('id')
+
+    def test_list_page_loads_and_shows_entry(self):
+        self._record(self.staff)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/owner-consumption/list/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Whisky')
+
+    def test_recorder_can_void_own_mistake(self):
+        before_balance = self.item.current_balance()
+        txn = self._record(self.staff)
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/stock/owner-consumption/{txn.id}/void/', {'reason': 'Nilikosea item'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('0'))
+        self.assertEqual(txn.invoice_no, '[OC-VOID]')
+        self.assertEqual(self.item.current_balance(), before_balance)
+
+    def test_other_staff_cannot_void_someone_elses_entry(self):
+        txn = self._record(self.staff)
+        self.client.force_login(self.other_staff)
+        resp = self.client.post(f'/stock/owner-consumption/{txn.id}/void/', {'reason': 'x'})
+        self.assertEqual(resp.status_code, 403)
+        txn.refresh_from_db()
+        self.assertNotEqual(txn.qty, Decimal('0'))
+
+    def test_owner_can_void_any_entry(self):
+        txn = self._record(self.staff)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/owner-consumption/{txn.id}/void/', {'reason': 'Owner correction'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('0'))
+
+    def test_staff_cannot_settle_payment(self):
+        import uuid
+        txn = self._record(self.staff)
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/stock/owner-consumption/{txn.id}/settle/', {
+            'amount': '1000', 'payment_method': 'cash', 'idempotency_token': f'occ-settle-{uuid.uuid4()}',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_owner_can_settle_payment_and_it_counts_as_revenue(self):
+        import uuid
+        txn = self._record(self.staff)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/owner-consumption/{txn.id}/settle/', {
+            'amount': '1000', 'payment_method': 'cash', 'idempotency_token': f'occ-settle-{uuid.uuid4()}',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        settlement = Transaction.objects.get(settles_transaction=txn)
+        self.assertEqual(settlement.type, 'Issue')
+        self.assertEqual(settlement.qty, Decimal('0'))
+        self.assertEqual(settlement.sale_amount, Decimal('1000'))
+        self.assertEqual(settlement.payment_method, 'cash')
+        # Real revenue — flows through revenue() like any ordinary sale.
+        self.assertEqual(settlement.revenue(), 1000.0)
+        # No additional stock movement — it already left at consumption time.
+        self.assertEqual(settlement.cost(), 0)
+
+    def test_cannot_settle_twice(self):
+        import uuid
+        txn = self._record(self.staff)
+        self.client.force_login(self.owner)
+        self.client.post(f'/stock/owner-consumption/{txn.id}/settle/', {
+            'amount': '1000', 'payment_method': 'cash', 'idempotency_token': f'occ-settle-{uuid.uuid4()}',
+        })
+        resp = self.client.post(f'/stock/owner-consumption/{txn.id}/settle/', {
+            'amount': '1000', 'payment_method': 'cash', 'idempotency_token': f'occ-settle-{uuid.uuid4()}',
+        })
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(Transaction.objects.filter(settles_transaction=txn).count(), 1)
+
+    def test_cannot_void_a_settled_entry(self):
+        import uuid
+        txn = self._record(self.staff)
+        self.client.force_login(self.owner)
+        self.client.post(f'/stock/owner-consumption/{txn.id}/settle/', {
+            'amount': '1000', 'payment_method': 'cash', 'idempotency_token': f'occ-settle-{uuid.uuid4()}',
+        })
+        resp = self.client.post(f'/stock/owner-consumption/{txn.id}/void/', {'reason': 'x'})
+        self.assertEqual(resp.status_code, 409)
+        txn.refresh_from_db()
+        self.assertNotEqual(txn.qty, Decimal('0'))
+
+    def test_void_is_idempotent(self):
+        txn = self._record(self.staff)
+        self.client.force_login(self.owner)
+        r1 = self.client.post(f'/stock/owner-consumption/{txn.id}/void/', {'reason': 'x'})
+        r2 = self.client.post(f'/stock/owner-consumption/{txn.id}/void/', {'reason': 'x'})
+        self.assertTrue(r1.json()['ok'])
+        self.assertTrue(r2.json()['ok'])
+        self.assertTrue(r2.json().get('already_void'))

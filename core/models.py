@@ -1080,6 +1080,19 @@ class Transaction(models.Model):
         related_name='recorded_transactions',
         help_text='The staff member or owner who recorded this transaction. Null for async/system-generated transactions.',
     )
+    settles_transaction = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL, related_name='settlements',
+        help_text=(
+            "2026-08-07 live request — 'no way for the owner to pay for what he was "
+            "given through Mmiliki Alichukua'. Set ONLY on the real, revenue-bearing "
+            "Issue transaction (qty=0 — the stock already left at consumption time, "
+            "this only records money coming in) created when an OwnerConsumption draw "
+            "is settled — points back at the original draw. Presence of any row in "
+            "`<draw>.settlements` IS the paid flag; no separate boolean needed. Generic "
+            "field name/self-FK (not owner-consumption-specific) in case a future "
+            "settlement flow needs the same shape."
+        ),
+    )
 
     def revenue(self):
         # UBA §5.2 — a stock-transfer leg (type='Transfer', see the Draw-type

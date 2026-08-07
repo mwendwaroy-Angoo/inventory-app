@@ -309,7 +309,12 @@ from core.staff_request_views import (
     review_staff_request,
     create_instruction,
 )
-from core.owner_consumption_views import record_owner_consumption
+from core.owner_consumption_views import (
+    record_owner_consumption,
+    owner_consumption_list,
+    void_owner_consumption,
+    settle_owner_consumption,
+)
 from core.reset_views import (
     reset_sales_intro,
     reset_sales_backup_download,
@@ -392,6 +397,9 @@ urlpatterns = [
     path("stock/items/<int:item_id>/adjust/",        adjust_stock_balance, name="adjust_stock_balance"),
     path("stock/adjustment/<int:txn_id>/toggle-no-loss/", toggle_adjustment_no_loss, name="toggle_adjustment_no_loss"),
     path("stock/owner-consumption/", record_owner_consumption, name="record_owner_consumption"),
+    path("stock/owner-consumption/list/", owner_consumption_list, name="owner_consumption_list"),
+    path("stock/owner-consumption/<int:txn_id>/void/", void_owner_consumption, name="void_owner_consumption"),
+    path("stock/owner-consumption/<int:txn_id>/settle/", settle_owner_consumption, name="settle_owner_consumption"),
     path("stock/reset-sales/", reset_sales_intro, name="reset_sales_intro"),
     path("stock/reset-sales/backup/", reset_sales_backup_download, name="reset_sales_backup_download"),
     path("stock/reset-sales/confirm/", reset_sales_confirm, name="reset_sales_confirm"),
