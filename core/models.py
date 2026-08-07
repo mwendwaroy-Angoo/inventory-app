@@ -1200,6 +1200,18 @@ class Transaction(models.Model):
                 recipient=txn.recipient, invoice_no=txn.invoice_no,
                 recorded_by=staff_user or txn.recorded_by,
                 date=txn.date,
+                # created_at copied from the original (2026-08-07 fix, found
+                # while wiring Quick Sell's checkout-time backdate feature):
+                # without this the split-off remainder always defaulted to
+                # "now" regardless of when/how the original sale itself was
+                # dated, silently landing in TODAY's shift/revenue window even
+                # when the original transaction was correctly backdated —
+                # exactly defeating a backdate+split combination at checkout.
+                # Also more correct for the pre-existing Recent-Payments
+                # correction flow: a split-off portion should read as having
+                # happened at the same time as the sale it was split from,
+                # not at correction-click time.
+                created_at=txn.created_at,
                 keg_barrel_id=txn.keg_barrel_id,
                 produce_bunch_id=txn.produce_bunch_id,
                 kitchen_batch_id=txn.kitchen_batch_id,

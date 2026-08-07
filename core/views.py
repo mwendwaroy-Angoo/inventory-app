@@ -3159,6 +3159,27 @@ def quick_sell(request):
         is_tab_sale = (payment_method_raw == "tab")
         payment_method_qs = "credit" if is_tab_sale else payment_method_raw
 
+        # 2026-08-07 live request — catch-up posting for a WHOLE cart at once,
+        # without the slow one-item-at-a-time Add Transaction form ("no time
+        # for that long process when the items are too many"). One backdated
+        # timestamp applied to every plain item in THIS checkout, reusing the
+        # same fast search-and-tap cart flow staff already know. Only makes
+        # sense for a direct, already-completed cash/mpesa sale — never a
+        # Tab (an open running bill, not something "already happened") or
+        # Credit/Deni (its own separate, more sensitive flow). Same parse
+        # shape as add_transaction()'s own backdated_at.
+        qs_backdated_at = None
+        if payment_method_qs in ("cash", "mpesa"):
+            _bd_raw = request.POST.get("backdated_at", "").strip()
+            if _bd_raw:
+                try:
+                    from datetime import datetime as _dt
+                    _naive = _dt.strptime(_bd_raw, "%Y-%m-%dT%H:%M")
+                    from django.utils import timezone as _tz
+                    qs_backdated_at = _tz.make_aware(_naive, _tz.get_current_timezone())
+                except Exception:
+                    qs_backdated_at = None
+
         # 2026-08-06 live request (Monsoon Inn) — Roy: a waitress may take
         # orders and clear bills (cash/mpesa/STK/tabs) on either counter,
         # but must never be the one to PLACE a debt — that decision goes
@@ -3430,6 +3451,7 @@ def quick_sell(request):
                 recipient=credit_recipient if payment_method_qs == "credit" else "",
                 recorded_by=request.user,
                 preset=sale_preset,
+                **({"created_at": qs_backdated_at} if qs_backdated_at else {}),
             )
             created_txn_ids.append(last_transaction.id)
             recorded.append(

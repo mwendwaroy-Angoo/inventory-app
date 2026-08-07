@@ -25677,3 +25677,146 @@ class RecheckOpeningVarianceTest(TestCase):
         self.assertTrue(data['ok'], data)
         self.assertAlmostEqual(data['recomputed_variance'], 500.0, places=1)
         self.assertFalse(data['fully_explained'])
+
+
+class WaitressQuickSellAccessTest(TestCase):
+    """2026-08-07 live request (Monsoon Inn) — the waitress navbar had no
+    Quick Sell/Bar Orders link at all, even though the view itself was
+    already open to any staff (only debt-creation is role-blocked there).
+    A waitress should be able to search for drinks and check out exactly
+    like bar counter staff."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WQS Biz', has_kitchen=False)
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='wqs_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='wqs_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, material_no='WQS-1',
+            description='Tusker', unit='Pcs', selling_price=Decimal('250'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('50'),
+        )
+
+    def test_waitress_navbar_shows_quick_sell_link(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/')
+        self.assertContains(resp, '/quick-sell/')
+
+    def test_waitress_can_load_quick_sell_and_search_items(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/quick-sell/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Tusker')
+
+    def test_waitress_can_checkout_cash_sale_via_quick_sell(self):
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        self.client.force_login(self.waitress)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1}]),
+            'payment_method': 'cash',
+            'idempotency_token': 'wqs-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(
+            Transaction.objects.filter(business=self.biz, item=self.item, payment_method='cash').exists()
+        )
+
+
+class QuickSellCatchUpBackdateTest(TestCase):
+    """2026-08-07 live request — "no time for [Add Transaction's] long
+    process when the items are too many": one backdated timestamp applied
+    to a WHOLE Quick Sell cart at checkout, reusing the fast search-and-tap
+    flow instead of one item at a time. Must correctly land in the right
+    day's shift/revenue window, not today's, and must never apply to a
+    Tab/Deni sale."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='QS Backdate Biz', has_kitchen=False)
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='qsbd_owner', password='x')
+        self.owner_up = UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, material_no='QSBD-1',
+            description='Beer', unit='Pcs', selling_price=Decimal('200'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('50'),
+        )
+        self.yesterday = timezone.now() - timedelta(days=1)
+
+    def _iso(self, dt):
+        return timezone.localtime(dt).strftime('%Y-%m-%dT%H:%M')
+
+    def test_backdated_cash_sale_uses_the_given_timestamp(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 2}]),
+            'payment_method': 'cash',
+            'backdated_at': self._iso(self.yesterday),
+            'idempotency_token': 'qsbd-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
+        self.assertEqual(timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+                          timezone.localtime(self.yesterday).strftime('%Y-%m-%d %H:%M'))
+
+    def test_no_backdate_uses_now(self):
+        self.client.force_login(self.owner)
+        before = timezone.now()
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1}]),
+            'payment_method': 'cash',
+            'idempotency_token': 'qsbd-2',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
+        self.assertGreaterEqual(txn.created_at, before)
+
+    def test_backdate_ignored_for_credit(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1}]),
+            'payment_method': 'credit', 'recipient': 'Mteja X',
+            'backdated_at': self._iso(self.yesterday),
+            'idempotency_token': 'qsbd-3',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
+        # Credit sales ignore backdated_at entirely — created_at stays "now".
+        self.assertGreater(txn.created_at, self.yesterday + timedelta(hours=1))
+
+    def test_backdated_sale_split_payment_remainder_inherits_timestamp(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1}]),
+            'payment_method': 'cash',
+            'backdated_at': self._iso(self.yesterday),
+            'split_amount': '80', 'split_method': 'mpesa',
+            'idempotency_token': 'qsbd-4',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txns = Transaction.objects.filter(business=self.biz, item=self.item, type='Issue').order_by('id')
+        self.assertEqual(txns.count(), 2)
+        for t in txns:
+            self.assertEqual(timezone.localtime(t.created_at).strftime('%Y-%m-%d %H:%M'),
+                              timezone.localtime(self.yesterday).strftime('%Y-%m-%d %H:%M'))
+
+    def test_backdated_sale_excluded_from_todays_revenue_window(self):
+        from core.shift_views import station_revenue_window_start, _window_revenue
+        self.client.force_login(self.owner)
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1}]),
+            'payment_method': 'cash',
+            'backdated_at': self._iso(self.yesterday),
+            'idempotency_token': 'qsbd-5',
+        })
+        window_start = station_revenue_window_start(self.biz, is_kitchen=False)
+        today_revenue = _window_revenue(self.biz, is_kitchen=False, start=window_start, end=timezone.now())
+        self.assertEqual(today_revenue, 0)

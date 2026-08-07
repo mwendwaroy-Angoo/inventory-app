@@ -1030,6 +1030,34 @@
               </div>
             </div>
             {% endif %}
+            <!-- 2026-08-07 live request — catch-up posting for a WHOLE cart at
+                 once, without the slow one-item-at-a-time Add Transaction form.
+                 Applies ONE backdated timestamp to every plain item in this
+                 checkout — shown only for a direct Cash/M-Pesa sale (never
+                 Tab/Deni, which are running/open bills, not already-completed
+                 sales). Search + tap items in exactly the same fast flow as a
+                 live sale, then tag the whole thing with the real sale time. -->
+            <div id="qsBackdateRow" style="display:none; margin-bottom:0.6rem;">
+              <button type="button" id="qsBackdateToggleBtn" onclick="window.qsToggleBackdate()"
+                      style="width:100%; background:rgba(255,152,0,.08); border:1px solid rgba(255,152,0,.3);
+                             border-radius:6px; color:#ff9800; font-size:.78rem; padding:.4rem .6rem; cursor:pointer;">
+                🕐 Haya ni Mauzo ya Nyuma (jana n.k.)
+              </button>
+              <div id="qsBackdateInputs" style="display:none; margin-top:.4rem;">
+                <label style="color:#b0b0b0; font-size:.75rem; display:block; margin-bottom:.25rem;">
+                  Tarehe na saa halisi ya mauzo haya
+                </label>
+                <input type="datetime-local" id="qsBackdatedAtInput"
+                       style="width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                              color:var(--pearl); padding:.45rem .7rem; font-size:.85rem;">
+                <div style="font-size:.72rem; color:#666; margin-top:.25rem;">
+                  Itaingia kwenye hesabu ya SIKU HIYO, si ya leo — kitakachotarajiwa kwenye counter na mauzo ya leo hayataguswa.
+                </div>
+                <div id="qsBackdateNowWarning" style="display:none; margin-top:.3rem; font-size:.72rem; color:#ff9800;">
+                  ⚠️ Wakati huu ni karibu na sasa hivi — hakikisha ni wakati HALISI mauzo yalipofanyika.
+                </div>
+              </div>
+            </div>
             <!-- Customer / tab name — shown for both Tab and Credit/Deni -->
             <div id="qsCreditCustomerRow" style="display:none; margin-bottom:0.6rem;">
               <label id="qsCustomerRowLabel" style="color:var(--gold); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.07em; display:block; margin-bottom:0.3rem;">
@@ -1074,6 +1102,7 @@
     <input type="hidden" name="split_amount" id="qsSplitAmountData" value="">
     <input type="hidden" name="split_method" id="qsSplitMethodData" value="">
     <input type="hidden" name="partial_credit_amount" id="qsPartialCreditAmountData" value="">
+    <input type="hidden" name="backdated_at" id="qsBackdatedAtData" value="">
     <input type="hidden" name="idempotency_token" id="qsIdemToken" value="">
 </form>
 
@@ -1764,6 +1793,19 @@
             if (pcRow) {
                 pcRow.style.display = (this.value === 'cash' || this.value === 'mpesa') ? 'block' : 'none';
             }
+            // 2026-08-07 — backdate row: same visibility rule (direct
+            // cash/mpesa only), reset whenever the method changes so a stale
+            // backdate from a previous selection never carries through.
+            var bdRow = document.getElementById('qsBackdateRow');
+            var bdInputs = document.getElementById('qsBackdateInputs');
+            var bdInput = document.getElementById('qsBackdatedAtInput');
+            var bdWarn = document.getElementById('qsBackdateNowWarning');
+            if (bdInput) bdInput.value = '';
+            if (bdInputs) bdInputs.style.display = 'none';
+            if (bdWarn) bdWarn.style.display = 'none';
+            if (bdRow) {
+                bdRow.style.display = (this.value === 'cash' || this.value === 'mpesa') ? 'block' : 'none';
+            }
         });
     });
 
@@ -1776,6 +1818,28 @@
             if (input) input.focus();
         }
     };
+
+    window.qsToggleBackdate = function () {
+        var inputs = document.getElementById('qsBackdateInputs');
+        if (!inputs) return;
+        inputs.style.display = inputs.style.display === 'none' ? 'block' : 'none';
+        if (inputs.style.display === 'block') {
+            var input = document.getElementById('qsBackdatedAtInput');
+            if (input) input.focus();
+        }
+    };
+
+    (function () {
+        var bdInput = document.getElementById('qsBackdatedAtInput');
+        var bdWarn = document.getElementById('qsBackdateNowWarning');
+        if (!bdInput || !bdWarn) return;
+        bdInput.addEventListener('change', function () {
+            if (!bdInput.value) { bdWarn.style.display = 'none'; return; }
+            var picked = new Date(bdInput.value);
+            var diffMins = Math.abs((Date.now() - picked.getTime()) / 60000);
+            bdWarn.style.display = (diffMins < 5) ? 'block' : 'none';
+        });
+    })();
 
     // UBA P0-A — "Lipa kidogo": toggling this also reveals the customer-name
     // row (a credit remainder needs someone to collect from), same as
@@ -1874,6 +1938,17 @@
         }
         document.getElementById('qsSplitAmountData').value = splitAmountVal;
         document.getElementById('qsSplitMethodData').value = splitMethodVal;
+        // 2026-08-07 — catch-up posting: one backdated timestamp applied to
+        // the whole cart, only meaningful for a direct cash/mpesa sale.
+        var backdatedAtVal = '';
+        if (pm === 'cash' || pm === 'mpesa') {
+            var bdInputs = document.getElementById('qsBackdateInputs');
+            var bdInput = document.getElementById('qsBackdatedAtInput');
+            if (bdInputs && bdInputs.style.display !== 'none' && bdInput && bdInput.value) {
+                backdatedAtVal = bdInput.value;
+            }
+        }
+        document.getElementById('qsBackdatedAtData').value = backdatedAtVal;
         document.getElementById('qsCartData').value = JSON.stringify(cart);
         document.getElementById('qsPaymentMethodData').value = pm;
         document.getElementById('qsIdemToken').value =
