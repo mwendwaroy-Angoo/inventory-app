@@ -658,6 +658,13 @@ def _kitchen_checkout(request, up, business, is_owner):
 
     receipt_lines = []
     total = Decimal('0')
+    # 2026-08-08 live report (Roy — "balances are funny... when staff is
+    # selling") — the insufficient-stock guard below used to `continue`
+    # completely silently: staff's tap simply did nothing, with zero
+    # explanation anywhere, easily read as "the system is confused" even
+    # though the deduction math itself was already correct. Every skip now
+    # gets a plain, visible reason returned to the client.
+    skipped = []
     # For tabs → 'credit'; for direct credit → 'credit'; for cash/mpesa → as-is
     txn_pm = 'credit' if (active_tab or payment_method == 'credit') else payment_method
     txn_recipient = credit_name if payment_method == 'credit' else (tab_customer or '')
@@ -768,17 +775,22 @@ def _kitchen_checkout(request, up, business, is_owner):
             # served yet at this point in the request, so blocking is safe.
             if item.available_balance() < qty:
                 from core.models import BusinessException
+                available_now = item.available_balance()
                 try:
                     BusinessException.raise_exception(
                         business, kind='shrinkage', severity='info',
                         title=f'{item.description} — imeshindikana kuuzwa, stock haitoshi',
                         detail=(
-                            f'Jaribio la kuuza {qty} {item.unit} lakini {item.available_balance()} '
+                            f'Jaribio la kuuza {qty} {item.unit} lakini {available_now} '
                             f'{item.unit} tu ipo kwenye mfumo.'
                         ),
                     )
                 except Exception:
                     pass
+                skipped.append({
+                    'description': desc or item.description,
+                    'reason': f'Stock haitoshi — {available_now} {item.unit} tu ipo (ulijaribu {qty}).',
+                })
                 continue
             txn = Transaction.objects.create(
                 business=business,
@@ -804,6 +816,12 @@ def _kitchen_checkout(request, up, business, is_owner):
             total += amount
 
     if not receipt_lines:
+        if skipped:
+            return JsonResponse({
+                'ok': False,
+                'error': skipped[0]['description'] + ': ' + skipped[0]['reason'],
+                'skipped': skipped,
+            }, status=400)
         return JsonResponse({'ok': False, 'error': 'No valid items'}, status=400)
 
     # 2026-07-31 — partial payment now / remainder as debt (food_tab only).
@@ -1060,6 +1078,7 @@ def _kitchen_checkout(request, up, business, is_owner):
         'receipt_number': receipt_number,
         'merged_tab': bool(merge_tab_id and active_tab),
         'partial_debt': partial_debt_result,
+        'skipped': skipped,
     })
 
 
@@ -1848,6 +1867,50 @@ def discard_kitchen_batch(request, batch_id):
     reason = (request.POST.get('reason') or '').strip() or 'Chakula kimemwagwa / kimeoza'
     batch.discard(reason)
     return JsonResponse({'ok': True, 'batch': _batch_to_dict(batch)})
+
+
+@login_required
+@require_POST
+def deplete_kitchen_portion_item(request, item_id):
+    """2026-08-08 live request (Roy — chicken specifically) — a PORTION-mode
+    kitchen item (e.g. Kuku sold by cut) has no revenue-envelope the way
+    KitchenBatch/ProduceBunch items do, so it never had an "Imekwisha"
+    equivalent when the system's tracked balance shows leftover stock that
+    physically isn't there anymore. Same shift-gated tier as
+    kbDepleteBatch/kbDiscardBatch (any staff, not owner-only — this is a
+    sale-completion action, not a financial correction).
+
+    Zeroes the balance via a NO-LOSS adjustment ([ADJ-NOLOSS] — the exact
+    same convention adjust_stock_balance()'s own toggle uses), never a
+    genuine Wastage entry — the point of this button is "the book balance
+    was never physically real" (most likely cause: the per-preset cut
+    tracking being fixed in this same round), not a real financial loss to
+    record. Correctly excluded from wastage_loss/net_profit/staff
+    wastage_kes by the exact same exclusion every other [ADJ-NOLOSS] row
+    already gets."""
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+
+    try:
+        item = Item.objects.get(id=item_id, business=business, store__is_kitchen=True)
+    except Item.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'Item haikupatikana'}, status=404)
+
+    balance = item.current_balance()
+    if balance <= 0:
+        return JsonResponse({'ok': True, 'already_zero': True, 'new_balance': str(balance)})
+
+    Transaction.objects.create(
+        business=business, item=item, type='Wastage', qty=-balance,
+        invoice_no='[ADJ-NOLOSS]', recipient='Imekwisha — si hasara halisi',
+        recorded_by=request.user,
+    )
+    actor_name = request.user.get_full_name() or request.user.username
+    return JsonResponse({
+        'ok': True, 'new_balance': '0',
+        'message': f'{item.description}: {actor_name} amesema imekwisha ({balance} {item.unit} imeondolewa, si hasara).',
+    })
 
 
 @login_required

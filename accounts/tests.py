@@ -479,3 +479,56 @@ class SafeBusinessDeleteTest(TestCase):
         resp = self.client.get('/admin/accounts/business/')
         self.assertEqual(resp.status_code, 200)
         self.assertNotIn(b'value="delete_selected"', resp.content)
+
+
+class OperatingHours247ToggleTest(TestCase):
+    """2026-08-08 live request (Roy): a friendly "24/7" toggle in Business
+    Settings. No new model field — Business.is_open() and
+    _auto_close_expired_shifts() already treat blank opening_time/
+    closing_time as "always open, never auto-close" (see their own
+    docstrings); the toggle is pure front-end (clears the three Operating
+    Hours inputs before submit). This locks in the server-side half: the
+    form must accept and save a genuinely blank submission, and the
+    resulting business must report is_open() == True."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(
+            name='247 Toggle Biz',
+            opening_time='08:00', closing_time='18:00',
+        )
+        self.owner = User.objects.create_user(username='t247_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_submitting_blank_hours_saves_as_none_and_business_is_always_open(self):
+        resp = self.client.post('/business/edit/', {
+            'name': self.biz.name,
+            'opening_time': '', 'closing_time': '', 'is_open_override': '',
+            'delivery_radius_km': '5', 'delivery_fee': '0', 'delivery_fee_per_km': '0',
+            'min_order_amount': '0', 'min_order_per_km': '0',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.biz.refresh_from_db()
+        self.assertIsNone(self.biz.opening_time)
+        self.assertIsNone(self.biz.closing_time)
+        self.assertIsNone(self.biz.is_open_override)
+        self.assertTrue(self.biz.is_open())
+
+    def test_auto_close_never_fires_once_hours_are_blank(self):
+        from core.shift_views import _auto_close_expired_shifts
+        self.biz.opening_time = None
+        self.biz.closing_time = None
+        self.biz.save(update_fields=['opening_time', 'closing_time'])
+        self.assertEqual(_auto_close_expired_shifts(self.biz), [])
+
+    def test_specific_hours_still_saved_and_respected_when_not_247(self):
+        resp = self.client.post('/business/edit/', {
+            'name': self.biz.name,
+            'opening_time': '09:00', 'closing_time': '17:00', 'is_open_override': '',
+            'delivery_radius_km': '5', 'delivery_fee': '0', 'delivery_fee_per_km': '0',
+            'min_order_amount': '0', 'min_order_per_km': '0',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.biz.refresh_from_db()
+        self.assertEqual(str(self.biz.opening_time), '09:00:00')
+        self.assertEqual(str(self.biz.closing_time), '17:00:00')

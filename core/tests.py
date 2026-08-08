@@ -24897,14 +24897,24 @@ class OverlappingShiftReconcileCapTest(TestCase):
     float=0 and sold KES 490 cash before waitress Sarah arrived and opened
     her OWN shift on the same bar station with float=490 (correctly
     declaring what was already in the till). From that moment both shifts
-    were OPEN concurrently. Before this fix, _reconcile() summed every sale
-    in each shift's own uncapped [started_at, now] window independently, so
-    every sale made AFTER Sarah opened was counted toward BOTH shifts —
-    Susan's own live "Cash" figure kept climbing past what she was still
-    actually responsible for. _capped_shift_end() caps an older shift's
-    window at the moment a newer same-station shift opens; this locks that
-    fix in directly against _reconcile()'s own output (not just the
-    Z-report's already-fixed day-level dedup from 2026-07-26).
+    were OPEN concurrently. Before the original fix, _reconcile() summed
+    every sale in each shift's own uncapped [started_at, now] window
+    independently, so every sale made AFTER Sarah opened was counted toward
+    BOTH shifts — Susan's own live "Cash" figure kept climbing past what she
+    was still actually responsible for.
+
+    2026-08-08 SAME-DAY REVERSAL, live report — Roy's own direct
+    clarification: a waitress joining an already-open bar counter is a
+    concurrent HELPER, "she is not starting one," and must never reset or
+    cap the bartender's own revenue attribution the way this test originally
+    assumed a genuine handover would. The scenario and figures below are
+    kept verbatim (real production numbers) but the expected SPLIT changes:
+    Susan (the real till custodian) now keeps ALL of it continuously,
+    Sarah's own declared float is recorded but she accrues zero independent
+    cash accountability for a period a real custodian shift already covers
+    — see _shift_active_segments()'s waitress-subtraction logic. The
+    combined-total-not-doubled invariant this test was really guarding
+    still holds, just attributed differently.
     """
 
     def _setup(self):
@@ -24949,29 +24959,32 @@ class OverlappingShiftReconcileCapTest(TestCase):
         )
         return business, susan_shift, sarah_shift, _reconcile
 
-    def test_older_shift_stops_accruing_after_handover(self):
+    def test_bartender_keeps_accruing_through_and_after_waitress_joining(self):
+        """2026-08-08 reversal: a waitress joining is never a handover —
+        Susan must keep BOTH her pre-arrival 490 AND the 1680 sold while
+        Sarah's shift is also open, uninterrupted."""
         _business, susan_shift, _sarah_shift, _reconcile = self._setup()
         rec = _reconcile(susan_shift)
-        # Susan's own window must be capped at Sarah's start — only her own
-        # pre-handover 490, never the 1680 sold afterward under Sarah's watch.
-        self.assertAlmostEqual(rec['cash_sales'], 490.0, places=1)
-        self.assertAlmostEqual(rec['expected_cash'], 490.0, places=1)
+        self.assertAlmostEqual(rec['cash_sales'], 2170.0, places=1)
+        self.assertAlmostEqual(rec['expected_cash'], 2170.0, places=1)
 
-    def test_newer_shift_counts_only_its_own_sales(self):
+    def test_waitress_own_shift_claims_zero_while_a_real_custodian_is_open(self):
+        """Sarah's declared float (490) is recorded on her own shift, but she
+        accrues ZERO independent cash accountability for the 1680 sold while
+        Susan's real till-custodian shift is concurrently open — otherwise
+        the same physical cash would be "expected" from two different people
+        at once."""
         _business, _susan_shift, sarah_shift, _reconcile = self._setup()
         rec = _reconcile(sarah_shift)
-        # Sarah's own window starts at her own started_at — she never re-counts
-        # Susan's pre-handover 490 (that's Susan's own sale, not hers), but her
-        # own float already correctly declares it separately.
-        self.assertAlmostEqual(rec['cash_sales'], 1680.0, places=1)
-        self.assertAlmostEqual(rec['expected_cash'], float(sarah_shift.opening_float) + 1680.0, places=1)
+        self.assertAlmostEqual(rec['cash_sales'], 0.0, places=1)
+        self.assertAlmostEqual(rec['expected_cash'], float(sarah_shift.opening_float), places=1)
 
     def test_combined_total_across_both_shifts_is_not_doubled(self):
         _business, susan_shift, sarah_shift, _reconcile = self._setup()
         susan_rec = _reconcile(susan_shift)
         sarah_rec = _reconcile(sarah_shift)
-        # 490 (Susan's own sale) + 1680 (Sarah's own sale) = 2170 total ever
-        # sold — each shilling attributed to exactly one shift, never both.
+        # 2170 total ever sold — each shilling attributed to exactly one
+        # shift (now all Susan's, the real custodian), never both.
         self.assertAlmostEqual(susan_rec['cash_sales'] + sarah_rec['cash_sales'], 2170.0, places=1)
 
     def test_owner_shift_is_never_capped(self):
@@ -25057,8 +25070,14 @@ class SegmentedShiftReconcileTest(TestCase):
         )
         susan = User.objects.create_user(username='seg_susan', password='x')
         UserProfile.objects.create(user=susan, business=business, role='staff')
+        # 2026-08-08 live report (Roy): a WAITRESS shift-open must never cap
+        # another shift's attribution (see WaitressShiftDoesNotCapRevenueTest
+        # below) — only a genuine counter handover does. Sarah here plays
+        # that genuine-handover role, so kept as an ordinary bartender
+        # ('staff'), matching the real Monsoon Inn incident this test
+        # replicates (two people relieving each other on the same till).
         sarah = User.objects.create_user(username='seg_sarah', password='x')
-        UserProfile.objects.create(user=sarah, business=business, role='waitress')
+        UserProfile.objects.create(user=sarah, business=business, role='staff')
 
         base = timezone.now() - timedelta(hours=10)
         susan_start = base  # 13:16:11 equivalent
@@ -25125,8 +25144,11 @@ class SegmentedShiftReconcileTest(TestCase):
         )
         susan = User.objects.create_user(username='seg2_susan', password='x')
         UserProfile.objects.create(user=susan, business=business, role='staff')
+        # Genuine handover (see comment on the sibling test above) — kept as
+        # an ordinary bartender, not a waitress, since a waitress must never
+        # cap another shift's attribution as of the 2026-08-08 fix.
         sarah = User.objects.create_user(username='seg2_sarah', password='x')
-        UserProfile.objects.create(user=sarah, business=business, role='waitress')
+        UserProfile.objects.create(user=sarah, business=business, role='staff')
 
         base = timezone.now() - timedelta(hours=10)
         susan_start  = base
@@ -25207,6 +25229,147 @@ class SegmentedShiftReconcileTest(TestCase):
         self.assertEqual(len(segments), 2)
         self.assertEqual(segments[0], (base, later_start))
         self.assertEqual(segments[1], (later_end, uncapped_end))
+
+
+class WaitressShiftDoesNotCapRevenueTest(TestCase):
+    """2026-08-08 live report (Roy): "waitress shift opening when the bar
+    tender was already there is resetting the bar revenue... the waitress
+    should not have an effect on the revenue collection." A waitress
+    joining an already-open bar counter is a concurrent HELPER sharing the
+    same till, never a replacement/handover the way one bartender relieving
+    another is — so her shift-open must never cap the bartender's own
+    already-open attribution window. Only a genuine counter handover (any
+    non-waitress role opening later) still caps, per
+    SegmentedShiftReconcileTest above."""
+
+    def _mk_shift(self, business, store, staff, started_at, ended_at=None, station='bar'):
+        return Shift.objects.create(
+            business=business, store=store, staff=staff, station=station,
+            opening_float=Decimal('0'), started_at=started_at, ended_at=ended_at,
+            status='CLOSED' if ended_at else 'OPEN',
+        )
+
+    def test_waitress_opening_does_not_cap_bartenders_segment(self):
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='WaitressNoCap Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='WNC-1',
+            description='WNC Beer', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        bartender = User.objects.create_user(username='wnc_bartender', password='x')
+        UserProfile.objects.create(user=bartender, business=business, role='staff')
+        waitress = User.objects.create_user(username='wnc_waitress', password='x')
+        UserProfile.objects.create(user=waitress, business=business, role='waitress')
+
+        base = timezone.now() - timedelta(hours=4)
+        bartender_shift = self._mk_shift(business, store, bartender, base)
+        # Waitress opens her own shift on the SAME station an hour later —
+        # while the bartender is still open, nobody handed anything over.
+        waitress_start = base + timedelta(hours=1)
+        self._mk_shift(business, store, waitress, waitress_start)
+
+        # Sale made AFTER the waitress opened — must still count toward the
+        # bartender's own shift, since her opening must never cap his window.
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('700'), payment_method='cash',
+            created_at=waitress_start + timedelta(minutes=30),
+        )
+        rec = _reconcile(bartender_shift)
+        self.assertAlmostEqual(rec['cash_sales'], 700.0, places=1,
+            msg="A waitress opening her own shift must never cap/reset the bartender's revenue attribution")
+
+    def test_a_real_handover_by_another_bartender_still_caps(self):
+        """Regression lock: the fix is scoped to waitress role only — a real
+        second bartender opening still caps the first one's window exactly
+        as SegmentedShiftReconcileTest already proves."""
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='RealHandover Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='RH-1',
+            description='RH Beer', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        b1 = User.objects.create_user(username='rh_b1', password='x')
+        UserProfile.objects.create(user=b1, business=business, role='staff')
+        b2 = User.objects.create_user(username='rh_b2', password='x')
+        UserProfile.objects.create(user=b2, business=business, role='staff')
+
+        base = timezone.now() - timedelta(hours=4)
+        b1_shift = self._mk_shift(business, store, b1, base)
+        b2_start = base + timedelta(hours=1)
+        self._mk_shift(business, store, b2, b2_start)
+
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('700'), payment_method='cash',
+            created_at=b2_start + timedelta(minutes=30),
+        )
+        rec = _reconcile(b1_shift)
+        self.assertEqual(rec['cash_sales'], 0.0,
+            msg="A genuine bartender-to-bartender handover must still cap the earlier shift's window")
+
+
+class WaitressOpeningFloatVarianceDisregardedTest(TestCase):
+    """2026-08-08 live report (Roy): a waitress's opening-float count is
+    inclusive of the bartender's own unrecorded cash sales, so comparing it
+    against till_expected_cash() produces a confusing, meaningless
+    "variance" that isn't really hers to explain. Roy's own framing asked
+    directly whether to disregard it entirely or make it compulsory at
+    clock-out; disregarding entirely was chosen — the float is still
+    recorded for her own record, just never compared/flagged."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WOF Biz', has_kitchen=False)
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='wof_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='wof_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+        self.bartender = User.objects.create_user(username='wof_bartender', password='x')
+        UserProfile.objects.create(user=self.bartender, business=self.biz, role='staff')
+
+        # Establish a real anchor so till_expected_cash() has something to
+        # compare against — without this the None-path would mask the bug.
+        # A SEPARATE staffer closes this anchor shift, since open_shift()
+        # refuses a second shift (even CLOSED) for the same staff member —
+        # self.bartender/self.waitress each need to open their OWN fresh one.
+        anchor_staff = User.objects.create_user(username='wof_anchor', password='x')
+        UserProfile.objects.create(user=anchor_staff, business=self.biz, role='staff')
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=anchor_staff,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('1000'),
+        )
+
+    def test_waitress_opening_float_never_flagged_even_with_large_gap(self):
+        self.client.force_login(self.waitress)
+        # 2500 counted vs an expected ~1000 — would trip the >500 alert for
+        # any other role, but must be silently disregarded for a waitress.
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '2500'})
+        self.assertEqual(resp.status_code, 200)
+        shift = Shift.objects.get(business=self.biz, staff=self.waitress, status='OPEN')
+        self.assertEqual(shift.opening_float, Decimal('2500'))
+        self.assertIsNone(shift.expected_opening_cash)
+        self.assertIsNone(shift.opening_variance)
+
+    def test_bartender_opening_float_still_compared_normally(self):
+        """Regression lock: the disregard is scoped to waitress role only —
+        an ordinary bartender opening still gets the real comparison."""
+        self.client.force_login(self.bartender)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '2500'})
+        self.assertEqual(resp.status_code, 200)
+        shift = Shift.objects.get(business=self.biz, staff=self.bartender, status='OPEN')
+        self.assertIsNotNone(shift.expected_opening_cash)
+        self.assertIsNotNone(shift.opening_variance)
+        self.assertAlmostEqual(float(shift.opening_variance), 1500.0, places=1)
 
 
 class InspectTillBreakdownCommandTest(TestCase):
@@ -26116,3 +26279,303 @@ class NegativeBalanceNeverAllowedTest(TestCase):
         approval.refresh_from_db()
         self.assertEqual(approval.status, 'pending')
         self.assertGreaterEqual(self.soda.current_balance(), 0)
+
+
+class DepleteKitchenPortionItemTest(TestCase):
+    """2026-08-08 live request (Roy): kitchen chicken tiles (portion-mode,
+    e.g. Kuku sold via presets) had no "Imekwisha" (sold out) function —
+    only KitchenBatch/ProduceBunch envelope items had one. Zeroes the
+    balance via a NO-LOSS adjustment ([ADJ-NOLOSS]) since nothing was
+    actually lost — the tile is simply being marked sold out for the day.
+    Same shift-gated tier as kbDepleteBatch/kbDiscardBatch (any staff with
+    an open shift, not owner-only)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Portion Deplete Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kpd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kitchen_staff = User.objects.create_user(username='kpd_kstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=self.kitchen_staff, station='kitchen', status='OPEN')
+
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='KPD-KUKU', unit='Pcs', selling_price=Decimal('150'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('7'),
+        )
+
+    def test_owner_can_deplete_portion_item(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/kitchen/item/{self.kuku.id}/deplete/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['new_balance'], '0')
+        self.assertEqual(self.kuku.current_balance(), 0)
+
+    def test_shift_staff_can_deplete_portion_item(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/kitchen/item/{self.kuku.id}/deplete/')
+        self.assertTrue(resp.json()['ok'])
+        self.assertEqual(self.kuku.current_balance(), 0)
+
+    def test_deplete_creates_no_loss_adjustment_not_real_wastage(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/kitchen/item/{self.kuku.id}/deplete/')
+        txn = Transaction.objects.filter(
+            business=self.biz, item=self.kuku, type='Wastage',
+        ).order_by('-id').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.invoice_no, '[ADJ-NOLOSS]')
+        self.assertEqual(txn.qty, Decimal('-7'))
+
+    def test_already_zero_is_a_no_op(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Issue', qty=Decimal('-7'),
+        )
+        self.assertEqual(self.kuku.current_balance(), 0)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/kitchen/item/{self.kuku.id}/deplete/')
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertTrue(data.get('already_zero'))
+        self.assertEqual(
+            Transaction.objects.filter(business=self.biz, item=self.kuku, type='Wastage').count(), 0,
+        )
+
+    def test_cross_business_item_rejected(self):
+        other_biz = Business.objects.create(name='Other Biz KPD')
+        other_store = Store.objects.create(business=other_biz, name='Kitchen', is_kitchen=True)
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Other Kuku',
+            material_no='OTHER-KUKU', unit='Pcs', selling_price=Decimal('150'),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/kitchen/item/{other_item.id}/deplete/')
+        self.assertEqual(resp.status_code, 404)
+
+
+class KitchenCheckoutSkippedItemFeedbackTest(TestCase):
+    """2026-08-08 live report (Roy): "balances are funny... when staff is
+    selling." Investigated the full chicken-preset selling pipeline
+    (frontend tap handlers, cart serialization, server-side balance
+    computation, authoritative preset-based deduction) end to end and
+    found no role-specific divergence — the deduction math is uniform and
+    server-authoritative for both staff and owner. The one concrete,
+    addressable gap found: an insufficient-stock cart line was silently
+    `continue`d with zero feedback to staff, easily read as "the system is
+    confused." Every skip now returns a plain, visible reason."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Skip Feedback Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='ksf_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='KSF-KUKU', unit='Pcs', selling_price=Decimal('150'),
+        )
+        self.soda = Item.objects.create(
+            business=self.biz, store=self.store, description='Soda',
+            material_no='KSF-SODA', unit='Pcs', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('2'))
+        Transaction.objects.create(business=self.biz, item=self.soda, type='Receipt', qty=Decimal('10'))
+        self.client.force_login(self.owner)
+
+    def test_oversell_reports_reason_in_error_and_skipped_list(self):
+        import json
+        cart = json.dumps([{'item_id': self.kuku.id, 'qty': 5, 'amount': 750, 'description': 'Kuku'}])
+        resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.assertIn('Stock haitoshi', data.get('error', ''))
+        self.assertEqual(len(data.get('skipped', [])), 1)
+        self.assertIn('Kuku', data['skipped'][0]['description'])
+
+    def test_partial_cart_sells_available_items_and_reports_skipped_one(self):
+        import json
+        cart = json.dumps([
+            {'item_id': self.soda.id, 'qty': 2, 'amount': 100, 'description': 'Soda'},
+            {'item_id': self.kuku.id, 'qty': 5, 'amount': 750, 'description': 'Kuku'},
+        ])
+        resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertEqual(len(data.get('skipped', [])), 1)
+        self.assertIn('Kuku', data['skipped'][0]['description'])
+        self.assertEqual(self.soda.current_balance(), 8)
+        self.assertEqual(self.kuku.current_balance(), 2)
+
+    def test_fully_sellable_cart_has_empty_skipped_list(self):
+        import json
+        cart = json.dumps([{'item_id': self.soda.id, 'qty': 2, 'amount': 100, 'description': 'Soda'}])
+        resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertEqual(data.get('skipped', []), [])
+
+
+class EditProduceBunchCostTest(TestCase):
+    """2026-08-08 live request (Roy): no way existed to correct a
+    ProduceBunch's cost (e.g. a gunia ya viazi whose cost wasn't entered
+    correctly at receiving time). Mirrors edit_kitchen_batch_target's
+    exact pattern — owner/manager only, since cost_price/target_revenue
+    drive realized_markup()/remaining()/discard()'s wastage math. Unlike
+    KitchenBatch, ProduceBunch's cost is never mirrored into
+    item.cost_price (that mirror is a KitchenBatch-specific exception)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='PB Edit Cost Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='pbec_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='pbec_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='pbec_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Viazi (Gunia)',
+            material_no='PBEC-VIAZI', unit='Gorogoro', selling_price=Decimal('80'),
+            is_produce=True, produce_mode='BUNCH', cost_price=Decimal('0'),
+        )
+        self.bunch = ProduceBunch.objects.create(
+            item=self.item, business=self.biz, size='LARGE', kind='sack',
+            cost_price=Decimal('1200'), target_revenue=Decimal('2000'),
+        )
+
+    def test_owner_can_correct_bunch_cost(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/edit-cost/', {'cost_price': '1500'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.bunch.refresh_from_db()
+        self.assertEqual(self.bunch.cost_price, Decimal('1500'))
+        self.assertIn('1,200', self.bunch.note)
+        self.assertIn('1,500', self.bunch.note)
+        self.assertIn('pbec_owner', self.bunch.note)
+
+    def test_does_not_mirror_into_item_cost_price(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/stock/produce/bunch/{self.bunch.id}/edit-cost/', {'cost_price': '1500'})
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('0'))
+
+    def test_can_also_correct_target_revenue(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/edit-cost/', {
+            'cost_price': '1500', 'target_revenue': '2600',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.bunch.refresh_from_db()
+        self.assertEqual(self.bunch.target_revenue, Decimal('2600'))
+
+    def test_manager_can_correct_bunch_cost(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/edit-cost/', {'cost_price': '1300'})
+        self.assertTrue(resp.json()['ok'])
+
+    def test_staff_cannot_correct_bunch_cost(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/edit-cost/', {'cost_price': '1300'})
+        self.assertEqual(resp.status_code, 403)
+        self.bunch.refresh_from_db()
+        self.assertEqual(self.bunch.cost_price, Decimal('1200'))
+
+    def test_cannot_edit_a_depleted_bunch(self):
+        self.bunch.status = 'DEPLETED'
+        self.bunch.save(update_fields=['status'])
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/edit-cost/', {'cost_price': '1300'})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_rejects_non_positive_cost(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/edit-cost/', {'cost_price': '0'})
+        self.assertEqual(resp.status_code, 400)
+        resp2 = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/edit-cost/', {'cost_price': '-5'})
+        self.assertEqual(resp2.status_code, 400)
+
+    def test_rejects_non_numeric_cost(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/produce/bunch/{self.bunch.id}/edit-cost/', {'cost_price': 'abc'})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_cross_business_bunch_rejected(self):
+        other_biz = Business.objects.create(name='Other PB Biz')
+        other_store = Store.objects.create(business=other_biz, name='Main')
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Other Viazi',
+            material_no='OTHER-VIAZI', unit='Gorogoro', selling_price=Decimal('80'),
+            is_produce=True, produce_mode='BUNCH',
+        )
+        other_bunch = ProduceBunch.objects.create(
+            item=other_item, business=other_biz, size='LARGE',
+            cost_price=Decimal('1000'), target_revenue=Decimal('1800'),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/produce/bunch/{other_bunch.id}/edit-cost/', {'cost_price': '1300'})
+        self.assertEqual(resp.status_code, 404)
+
+
+class WaitressJoinContinuousBarRevenueTest(TestCase):
+    """2026-08-08 live follow-up (Roy): "the waitress just joined service,
+    she is not starting one so things should go smoothly" — explicit
+    confirmation that revenue must stay ONE continuous stream for the
+    bartender's own shift both BEFORE and AFTER a waitress joins mid-shift,
+    not two separate pieces that need reassembling. Locks in the full
+    session shape end to end (sale before she joins + sale after, in one
+    _reconcile() call)."""
+
+    def test_sales_before_and_after_waitress_joins_both_count_toward_bartender(self):
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='Continuous Revenue Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='CONT-1',
+            description='Continuous Beer', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        bartender = User.objects.create_user(username='cont_bartender', password='x')
+        UserProfile.objects.create(user=bartender, business=business, role='staff')
+        waitress = User.objects.create_user(username='cont_waitress', password='x')
+        UserProfile.objects.create(user=waitress, business=business, role='waitress')
+
+        base = timezone.now() - timedelta(hours=5)
+        bartender_shift = Shift.objects.create(
+            business=business, store=store, staff=bartender, station='bar',
+            opening_float=Decimal('0'), started_at=base, status='OPEN',
+        )
+        waitress_join = base + timedelta(hours=2)
+        Shift.objects.create(
+            business=business, store=store, staff=waitress, station='bar',
+            opening_float=Decimal('0'), started_at=waitress_join, status='OPEN',
+        )
+
+        # Sale BEFORE the waitress joined.
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('400'), payment_method='cash',
+            created_at=base + timedelta(minutes=30),
+        )
+        # Sale AFTER the waitress joined — must count just the same, no reset.
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('600'), payment_method='mpesa',
+            created_at=waitress_join + timedelta(hours=1),
+        )
+
+        rec = _reconcile(bartender_shift)
+        self.assertAlmostEqual(rec['cash_sales'], 400.0, places=1)
+        self.assertAlmostEqual(rec['mpesa_sales'], 600.0, places=1)
+        self.assertAlmostEqual(rec['confirmed_sales'], 1000.0, places=1,
+            msg="Revenue before AND after a waitress joins must be one continuous total for the bartender's shift")
+        # Elapsed time must span the whole 5h uninterrupted — no segment gap.
+        self.assertGreater(rec['elapsed_mins'], 4 * 60)

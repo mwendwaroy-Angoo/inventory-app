@@ -50,7 +50,7 @@ from core.views import (
     next_material_no,
 )
 from core.ussd import ussd_callback
-from core.produce_views import produce_board, receive_bunches, discard_bunch
+from core.produce_views import produce_board, receive_bunches, discard_bunch, edit_bunch_cost
 from core.keg_views import (
     bar_board,
     bar_board_api,
@@ -124,6 +124,7 @@ from core.order_views import (
 from core.kitchen_views import (
     deplete_kitchen_batch,
     discard_kitchen_batch,
+    deplete_kitchen_portion_item,
     edit_kitchen_batch_target,
     kitchen_batch_receive,
     kitchen_board,
@@ -423,6 +424,7 @@ urlpatterns = [
     path("stock/produce/board/", produce_board, name="produce_board"),
     path("stock/produce/receive/", receive_bunches, name="receive_bunches"),
     path("stock/produce/bunch/<int:bunch_id>/discard/", discard_bunch, name="discard_bunch"),
+    path("stock/produce/bunch/<int:bunch_id>/edit-cost/", edit_bunch_cost, name="edit_bunch_cost"),
     # ── Bar & Club Module — keg lifecycle + bar board ─────────────────────────
     path("bar/", bar_board, name="bar_board"),
     path("bar/daily-report/", bar_daily_report, name="bar_daily_report"),
@@ -504,6 +506,7 @@ urlpatterns = [
     path("kitchen/batch/receive/",                kitchen_batch_receive,        name="kitchen_batch_receive"),
     path("kitchen/batch/<int:batch_id>/deplete/", deplete_kitchen_batch,        name="deplete_kitchen_batch"),
     path("kitchen/batch/<int:batch_id>/discard/", discard_kitchen_batch,        name="discard_kitchen_batch"),
+    path("kitchen/item/<int:item_id>/deplete/", deplete_kitchen_portion_item,   name="deplete_kitchen_portion_item"),
     path("kitchen/batch/<int:batch_id>/edit-target/", edit_kitchen_batch_target, name="edit_kitchen_batch_target"),
     path("kitchen/consumable/add/",               kitchen_consumable_add,       name="kitchen_consumable_add"),
     path("kitchen/consumable/pool/",              kitchen_consumable_pool_api,  name="kitchen_consumable_pool_api"),

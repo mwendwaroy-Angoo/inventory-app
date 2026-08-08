@@ -1832,6 +1832,15 @@
         'padding:0; line-height:1; font-size:.75rem; background:rgba(201,168,76,.12); color:#c9a84c; ' +
         'border:1px solid rgba(201,168,76,.3); border-radius:50%;" title="Bei Maalum — kiasi/ukubwa tofauti na kawaida" ' +
         'onclick="event.stopPropagation(); customPriceTileClick(' + item.id + ')">✏️</button>';
+      // 2026-08-08 live request (Roy — chicken specifically): a plain
+      // portion item has no envelope, so it never had an "Imekwisha"
+      // action the way KitchenBatch tiles do when the tracked balance
+      // shows leftover stock that physically isn't there. Hidden when
+      // already at/below zero — nothing left to zero out.
+      var depleteBtn = oos ? '' :
+        '<button class="btn btn-sm" style="width:100%;margin-top:.3rem;font-size:.68rem;padding:.15rem .3rem;' +
+        'background:rgba(255,255,255,.04);border:1px solid #555;border-radius:5px;color:#b0b0b0;cursor:pointer;" ' +
+        'onclick="event.stopPropagation(); kbDepletePortionItem(' + item.id + ',\'' + (item.name || '').replace(/'/g, "\\'") + '\')">✓ Imekwisha</button>';
       html += '<div class="kb-tile' + (oos?' out-of-stock':'') + '" onclick="tileClick(' + item.id + ')"' +
               ' data-item-id="' + item.id + '" style="position:relative;">' +
               customPriceBtn +
@@ -1839,6 +1848,7 @@
               '<div class="kb-tile-price">' + priceStr + '</div>' +
               '<div class="kb-tile-stock ' + stockCls + '">' + stockLbl + '</div>' +
               restockBtn +
+              depleteBtn +
               '</div>';
     });
     grid.innerHTML = html;
@@ -2453,6 +2463,13 @@
             msg = '💰 Sasa: KES ' + fmt(d.partial_debt.cash) +
               (d.partial_debt.mpesa ? ' + KES ' + fmt(d.partial_debt.mpesa) + ' M-Pesa' : '') +
               ' · 🔴 Deni: KES ' + fmt(d.partial_debt.remainder) + ' — ' + d.partial_debt.customer_name;
+          }
+          // 2026-08-08 — a preset skipped for insufficient stock used to
+          // vanish from the cart with no explanation at all. Now surfaced
+          // as a second, longer-lived toast right after the success one.
+          if (d.skipped && d.skipped.length) {
+            var skipMsg = '⚠️ ' + d.skipped.map(function(s){ return s.description + ': ' + s.reason; }).join(' · ');
+            setTimeout(function(){ showToast(skipMsg, 5000); }, 1200);
           }
           showToast(msg, 3500);
           var pdToggleReset = document.getElementById('kb-partial-debt-toggle');
@@ -4979,6 +4996,19 @@
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (d.ok) { showToast('✓ Batch imefungwa — ' + itemName); setTimeout(function(){ location.reload(); }, 1000); }
+        else       { showToast('❌ ' + (d.error || 'Hitilafu'), 3000); }
+      })
+      .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });
+  };
+
+  window.kbDepletePortionItem = function(itemId, itemName) {
+    if (!confirm(itemName + ' — thibitisha imekwisha (stock iliyobaki itaondolewa, si hasara)?')) return;
+    var body = new URLSearchParams();
+    body.append('csrfmiddlewaretoken', CSRF);
+    fetch('/kitchen/item/' + itemId + '/deplete/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) { showToast(d.message || ('✓ Imekwisha — ' + itemName)); setTimeout(function(){ location.reload(); }, 1000); }
         else       { showToast('❌ ' + (d.error || 'Hitilafu'), 3000); }
       })
       .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });

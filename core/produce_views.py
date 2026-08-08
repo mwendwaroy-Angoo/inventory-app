@@ -290,6 +290,88 @@ def receive_bunches(request):
 
 @login_required
 @require_POST
+def edit_bunch_cost(request, bunch_id):
+    """Correct a ProduceBunch's cost_price (and optionally target_revenue)
+    after it was received — e.g. a gunia ya viazi whose cost was never typed
+    in, or was mistyped, at receiving time (2026-08-08 live request).
+
+    Owner/manager only — same tier as edit_kitchen_batch_target, the sibling
+    envelope-cost correction this mirrors. Unlike KitchenBatch, ProduceBunch's
+    cost_price is never mirrored into item.cost_price (that mirror is a
+    KitchenBatch-specific, deliberately-narrow exception documented on
+    open_batch()'s docstring — produce items get item.cost_price from the
+    ordinary receive_bunches()/PORTION-mode Receipt flow instead), so no
+    Item write happens here — only the bunch's own cost_price/target_revenue.
+    """
+    from .views import get_user_profile
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
+    business = up.business
+    if not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya mmiliki/meneja pekee'}, status=403)
+
+    from decimal import InvalidOperation
+    new_cost_raw = (request.POST.get('cost_price') or '').strip()
+    try:
+        new_cost = Decimal(new_cost_raw)
+    except InvalidOperation:
+        return JsonResponse({'ok': False, 'error': 'Nambari batili'}, status=400)
+    if new_cost <= 0:
+        return JsonResponse({'ok': False, 'error': 'Gharama lazima iwe zaidi ya 0'}, status=400)
+
+    target_raw = (request.POST.get('target_revenue') or '').strip()
+    new_target = None
+    if target_raw:
+        try:
+            new_target = Decimal(target_raw)
+        except InvalidOperation:
+            return JsonResponse({'ok': False, 'error': 'Lengo (target) batili'}, status=400)
+        if new_target <= 0:
+            return JsonResponse({'ok': False, 'error': 'Lengo lazima liwe zaidi ya 0'}, status=400)
+
+    from django.db import transaction as _db_txn
+    from django.utils import timezone as _tz
+    with _db_txn.atomic():
+        try:
+            bunch = ProduceBunch.objects.select_for_update().get(
+                id=bunch_id, business=business, status='OPEN',
+            )
+        except ProduceBunch.DoesNotExist:
+            return JsonResponse(
+                {'ok': False, 'error': 'Mzigo haukupatikana au tayari umefungwa'}, status=404,
+            )
+
+        old_cost = bunch.cost_price
+        old_target = bunch.target_revenue
+        when = _tz.localtime(_tz.now()).strftime('%d %b %Y, %H:%M')
+        who = request.user.get_full_name() or request.user.username
+
+        note_bits = [f'Gharama ilibadilishwa kutoka KES {old_cost:,.0f} kwenda KES {new_cost:,.0f}']
+        bunch.cost_price = new_cost
+        update_fields = ['cost_price', 'note']
+        if new_target is not None and new_target != old_target:
+            note_bits.append(f'lengo kutoka KES {old_target:,.0f} kwenda KES {new_target:,.0f}')
+            bunch.target_revenue = new_target
+            update_fields.append('target_revenue')
+
+        bunch.note = (
+            (bunch.note + ' | ' if bunch.note else '')
+            + ', '.join(note_bits) + f' na {who} — {when}'
+        )
+        bunch.save(update_fields=update_fields)
+
+    return JsonResponse({
+        'ok': True,
+        'bunch_id': bunch.id,
+        'cost_price': float(bunch.cost_price),
+        'target_revenue': float(bunch.target_revenue),
+        'message': f'{bunch.item.description}: gharama imesahihishwa kuwa KES {float(new_cost):,.0f}.',
+    })
+
+
+@login_required
+@require_POST
 def discard_bunch(request, bunch_id):
     """Write off a wilted / unsold bunch as wastage."""
     from .views import get_user_profile

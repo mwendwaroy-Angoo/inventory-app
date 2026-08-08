@@ -641,6 +641,12 @@
         <h2>⚡ {% trans 'Quick Sell' %}</h2>
         <div style="display:flex; gap:0.5rem; align-items:center;">
             {% if biz_profile.type == 'bar' %}
+            <a href="{% url 'bar_board' %}"
+               style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.35);
+                      color:#c9a84c; border-radius:8px; padding:4px 12px; font-size:0.82rem;
+                      text-decoration:none; display:inline-block;">
+                🍺 Bar Board
+            </a>
             <button type="button" id="qsTabsBtn"
                     style="position:relative; background:rgba(201,168,76,0.12);
                            border:1px solid rgba(201,168,76,0.3); color:#c9a84c;
@@ -2166,6 +2172,8 @@
             document.getElementById('bunchModalTitle').textContent = '🥬 ' + g.name;
             var body = presetButtons(g.presets, [10, 20, 30, 50]) + customRow();
             if (QS_IS_OWNER && g.oldest_bunch_id) {
+                body += '<div class="qs-discard-link" data-editcost="' + g.oldest_bunch_id + '" data-cost="' + (g.cost_price || 0) + '" style="color:#c9a84c;">'
+                     +  '✏️ {% trans "Edit cost of oldest bunch/sack" %}</div>';
                 body += '<div class="qs-discard-link" data-discard="' + g.oldest_bunch_id + '">'
                      +  '🗑 {% trans "Discard oldest bunch (wilted)" %}</div>';
             }
@@ -2263,7 +2271,33 @@
         }
         var disc = e.target.closest('[data-discard]');
         if (disc) { discardBunch(disc.dataset.discard, disc); }
+        var editc = e.target.closest('[data-editcost]');
+        if (editc) { editBunchCost(editc.dataset.editcost, editc.dataset.cost); }
     });
+
+    function editBunchCost(bunchId, currentCost) {
+        var newCost = prompt('Gharama sahihi ya mzigo huu (KES):', currentCost || '');
+        if (newCost === null) return;
+        newCost = String(newCost).trim();
+        if (!newCost || isNaN(Number(newCost)) || Number(newCost) <= 0) {
+            qsShowToast('Weka nambari sahihi zaidi ya 0.', true);
+            return;
+        }
+        fetch('/stock/produce/bunch/' + bunchId + '/edit-cost/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'cost_price=' + encodeURIComponent(newCost)
+        }).then(function(r) { return r.json(); })
+          .then(function(d) {
+              if (d.ok) {
+                  qsShowToast('✏️ ' + (d.message || 'Gharama imesahihishwa.'));
+              } else {
+                  qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena'), true);
+              }
+              loadGreensBoard();
+          })
+          .catch(function() { qsShowToast('Hitilafu ya mtandao', true); });
+    }
 
     function discardBunch(bunchId, anchorEl) {
         if (!confirm('Tupa mzigo huu kama hasara (umenyauka/haujauzika)?')) return;

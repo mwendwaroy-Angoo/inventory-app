@@ -115,22 +115,84 @@ def _shift_active_segments(shift, uncapped_end):
         )
         .exclude(id=shift.id)
         .filter(_station_q(stn == 'kitchen'))
+        # 2026-08-08 live report (Roy) — "waitress shift opening when the
+        # bartender was already there is resetting the bar revenue...
+        # revenue should reset during a bar-to-bar STAFF shift change, the
+        # waitress should not have an effect." A waitress with cross-
+        # station access joining an already-open counter is a concurrent
+        # HELPER sharing the same till, never a replacement/handover the
+        # way one bartender relieving another is — so her shift-open must
+        # never cap anyone else's already-open attribution on that
+        # station. Only a genuine counter handover (any non-waitress role)
+        # still caps as before.
+        .exclude(staff__userprofile__role='waitress')
         .order_by('started_at')
     )
     if not later_shifts:
-        return [(shift.started_at, uncapped_end)]
+        segments = [(shift.started_at, uncapped_end)]
+    else:
+        segments = []
+        cursor = shift.started_at
+        for later in later_shifts:
+            if later.started_at > cursor:
+                segments.append((cursor, later.started_at))
+            later_end = later.ended_at or uncapped_end
+            if later_end > cursor:
+                cursor = later_end
+        if cursor < uncapped_end:
+            segments.append((cursor, uncapped_end))
 
-    segments = []
-    cursor = shift.started_at
-    for later in later_shifts:
-        if later.started_at > cursor:
-            segments.append((cursor, later.started_at))
-        later_end = later.ended_at or uncapped_end
-        if later_end > cursor:
-            cursor = later_end
-    if cursor < uncapped_end:
-        segments.append((cursor, uncapped_end))
+    # 2026-08-08 same-day follow-up — the exclusion above stops a waitress
+    # from capping anyone ELSE's attribution, but a real cash-accountability
+    # bug would reopen the moment her OWN segment is computed: nothing yet
+    # stops her from ALSO claiming the same sales a concurrently-open real
+    # till custodian (bar/kitchen staff, manager, owner) on her station is
+    # independently accruing — the same physical cash would then be
+    # "expected" twice over, once from each of them, at whichever of the two
+    # shifts closes and gets asked to explain a variance. A waitress is a
+    # concurrent HELPER, never the till custodian (same reasoning as
+    # open_shift() disregarding her opening-float variance entirely) — so
+    # subtract out any stretch a non-waitress shift on her own station
+    # overlaps, leaving her with real accountability only for genuine gaps
+    # where she is the sole person on the counter.
+    if staff_role == 'waitress':
+        custodian_shifts = (
+            Shift.objects.filter(business=shift.business, started_at__lt=uncapped_end)
+            .exclude(id=shift.id)
+            .exclude(staff__userprofile__role='waitress')
+            .filter(_station_q(stn == 'kitchen'))
+        )
+        custodian_spans = [
+            (c.started_at, c.ended_at or uncapped_end) for c in custodian_shifts
+        ]
+        segments = _subtract_intervals(segments, custodian_spans)
+
     return segments
+
+
+def _subtract_intervals(base_segments, remove_segments):
+    """Interval set-difference: base_segments minus every interval in
+    remove_segments. Used by _shift_active_segments() to strip any period a
+    waitress's own segment overlaps a concurrently-open non-waitress ("real"
+    till custodian) shift on the same station."""
+    if not remove_segments:
+        return base_segments
+    result = []
+    for b_start, b_end in base_segments:
+        pieces = [(b_start, b_end)]
+        for r_start, r_end in remove_segments:
+            next_pieces = []
+            for p_start, p_end in pieces:
+                if r_end <= p_start or r_start >= p_end:
+                    next_pieces.append((p_start, p_end))  # no overlap
+                    continue
+                if r_start > p_start:
+                    next_pieces.append((p_start, r_start))
+                if r_end < p_end:
+                    next_pieces.append((r_end, p_end))
+            pieces = next_pieces
+        result.extend(pieces)
+    return result
 
 
 def _segments_q(field, segments):
@@ -1548,8 +1610,17 @@ def open_shift(request):
     # variance alert entirely rather than comparing against a guessed
     # number; THIS shift's own eventual close (with a real counted amount)
     # becomes the first anchor for every future computation.
+    # 2026-08-08 live report (Roy) — a waitress joining an already-open
+    # counter is counting cash that's ALREADY mid-session, including sales
+    # the counter staff made but haven't posted yet; comparing that count
+    # against till_expected_cash() (built for someone opening an
+    # independent till) produces a confusing, meaningless "variance" that
+    # isn't really hers to explain. Disregarded entirely for a waitress —
+    # her opening_float is still recorded (for her own record), but never
+    # compared or flagged. Same reasoning as the till['anchor_established']
+    # False case just above: nothing trustworthy to compare against.
     till = till_expected_cash(up.business, my_station)
-    if till['anchor_established']:
+    if till['anchor_established'] and getattr(up, 'role', '') != 'waitress':
         expected_opening_cash = Decimal(str(till['expected_cash'])) - banked
         opening_variance = opening_float - expected_opening_cash
     else:

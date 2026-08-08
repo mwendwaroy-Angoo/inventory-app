@@ -155,7 +155,16 @@
             <div class="mb-3">{% bootstrap_field form.ward %}</div>
 
             <h5 class="section-label mt-4">🕐 {% trans 'Operating Hours' %}</h5>
-            <div class="row">
+            <div class="form-check mb-3" style="background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.3); border-radius:8px; padding:0.7rem 1rem;">
+                <input class="form-check-input" type="checkbox" id="is247Toggle">
+                <label class="form-check-label" for="is247Toggle" style="color:var(--gold); font-weight:600;">
+                    🌙 {% trans 'Wazi Masaa 24/7 (kila siku, muda wote)' %}
+                </label>
+                <div style="color:#b0b0b0; font-size:0.78rem; margin-top:0.2rem;">
+                    {% trans 'Washa hii kama biashara yako haifungi kabisa. Muda wa kufungua/kufunga hautahitajika.' %}
+                </div>
+            </div>
+            <div class="row" id="operatingHoursFields">
                 <div class="col-md-4 mb-3">{% bootstrap_field form.opening_time %}</div>
                 <div class="col-md-4 mb-3">{% bootstrap_field form.closing_time %}</div>
                 <div class="col-md-4 mb-3">{% bootstrap_field form.is_open_override %}</div>
@@ -311,6 +320,51 @@
 {% block extra_js %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+    // 2026-08-08 live request (Roy) — "24/7 button... system gets to
+    // understand" — Business.is_open() and _auto_close_expired_shifts()
+    // already treat blank opening_time/closing_time as "always open, never
+    // auto-close" (see their own docstrings); this toggle is a friendly
+    // one-tap way to reach that existing state instead of hunting for how
+    // to clear two native <input type="time"> fields on a phone. No new
+    // model field — just clears the three Operating Hours inputs.
+    (function() {
+        var toggle = document.getElementById('is247Toggle');
+        var openingEl = document.getElementById('id_opening_time');
+        var closingEl = document.getElementById('id_closing_time');
+        var overrideEl = document.getElementById('id_is_open_override');
+        var fieldsWrap = document.getElementById('operatingHoursFields');
+        if (!toggle || !openingEl || !closingEl) return;
+
+        function applyState(is247) {
+            fieldsWrap.style.opacity = is247 ? '0.4' : '1';
+            openingEl.disabled = is247;
+            closingEl.disabled = is247;
+            if (overrideEl) overrideEl.disabled = is247;
+            if (is247) {
+                openingEl.value = '';
+                closingEl.value = '';
+                if (overrideEl) overrideEl.value = '';
+            }
+        }
+        // Pre-check on load if hours are already blank (matches the
+        // existing "no hours set = always open" default).
+        toggle.checked = !openingEl.value && !closingEl.value;
+        applyState(toggle.checked);
+        toggle.addEventListener('change', function() { applyState(toggle.checked); });
+
+        // Disabled inputs are never sent with the form — briefly re-enable
+        // them (already correctly blanked) right before submit so Django
+        // still receives an explicit empty value rather than a missing key.
+        var formEl = toggle.closest('form');
+        if (formEl) {
+            formEl.addEventListener('submit', function() {
+                openingEl.disabled = false;
+                closingEl.disabled = false;
+                if (overrideEl) overrideEl.disabled = false;
+            });
+        }
+    })();
+
     const latField = document.getElementById('id_latitude');
     const lngField = document.getElementById('id_longitude');
     const initLat = parseFloat(latField.value) || -1.2921;
