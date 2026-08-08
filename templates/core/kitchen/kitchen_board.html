@@ -776,6 +776,25 @@
             </label>
             <input type="number" id="kb-split-amount" class="form-control form-control-sm" min="1" step="1" placeholder="e.g. 60">
           </div>
+          <!-- 2026-08-09 live request — catch-up posting for chicken/portion
+               sales missed on a busy day, mirroring Quick Sell's own
+               whole-cart backdate toggle. Cash/M-Pesa direct sale only. -->
+          <div id="kb-backdate-toggle-row" style="display:none; margin-top:0.5rem;">
+            <button type="button" onclick="kbToggleBackdate()"
+                    style="width:100%; background:rgba(255,152,0,.08); border:1px solid rgba(255,152,0,.3);
+                           border-radius:6px; color:#ff9800; font-size:.78rem; padding:.35rem .6rem; cursor:pointer;">
+              🕐 Haya ni Mauzo ya Nyuma (jana n.k.)
+            </button>
+          </div>
+          <div id="kb-backdate-row" style="display:none; margin-top:0.4rem;">
+            <label style="color:#b0b0b0; font-size:.75rem; display:block; margin-bottom:3px;">
+              Tarehe na saa halisi ya mauzo haya
+            </label>
+            <input type="datetime-local" id="kb-backdated-at" class="form-control form-control-sm">
+            <div style="font-size:.7rem; color:#666; margin-top:.25rem;">
+              Itaingia kwenye hesabu ya SIKU HIYO, si ya leo — mauzo ya leo hayataguswa.
+            </div>
+          </div>
           <!-- Receipt link shown after successful cash/mpesa/credit sale -->
           <div id="kb-receipt-banner" style="display:none; margin-top:0.5rem; padding:0.45rem 0.6rem; background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); border-radius:8px; text-align:center;">
             <a id="kb-receipt-link" href="#" target="_blank" rel="noopener" style="color:#c9a84c; font-size:0.82rem; font-weight:600; text-decoration:none;">🧾 Angalia Risiti</a>
@@ -882,6 +901,17 @@
           </select>
         </div>
         <div id="kr-portion-fields">
+          <!-- 2026-08-09 live request (Roy) — "which chicken have I received
+               today?" Shown only when the selected item has more than one
+               preset (e.g. Kuku → Bawa/Paja/Legi Nzima). Links the received
+               quantity to that specific cut so per-cut sell-tile visibility
+               and cost tracking work correctly — see kitchen_board()'s
+               _received_by_preset / ItemPortionPreset.tracks_stock_of. -->
+          <div id="kr-preset-row" style="display:none; margin-bottom:.5rem;">
+            <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Ni kipande gani cha kuku (au bidhaa hii) kimepokelewa? <span style="color:#c0395a;">*</span></label>
+            <select id="kr-preset" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+            </select>
+          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem;">
             <div>
               <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Idadi Iliyopokelewa <span style="color:#c0395a;">*</span></label>
@@ -1827,11 +1857,37 @@
       // the fast one-tap standard-price sale) opens the same add-to-cart
       // flow but always asks for the price instead of using the configured
       // one. Hidden when out of stock — nothing to sell at any price.
-      var customPriceBtn = oos ? '' :
-        '<button class="btn btn-sm" style="position:absolute; top:.35rem; right:.35rem; width:1.6rem; height:1.6rem; ' +
-        'padding:0; line-height:1; font-size:.75rem; background:rgba(201,168,76,.12); color:#c9a84c; ' +
-        'border:1px solid rgba(201,168,76,.3); border-radius:50%;" title="Bei Maalum — kiasi/ukubwa tofauti na kawaida" ' +
-        'onclick="event.stopPropagation(); customPriceTileClick(' + item.id + ')">✏️</button>';
+      // 2026-08-09 live report (Roy) — a raw-material-source item (e.g.
+      // "Raw Potatoes" feeding Chipo's batch draw) is never sold directly —
+      // "the output which is chipo" is what's sold — so its own tile must
+      // never offer "custom SELL price". It needs a cost-correction
+      // affordance instead, and per this app's own single-designed-writer
+      // rule for Item.cost_price (see Known Issues), that means handing off
+      // to Add Transaction's Receipt flow, prefilled — never a new direct-
+      // write endpoint. Owner/manager only, matching every other cost
+      // correction in this app.
+      var customPriceBtn;
+      if (item.is_raw_material_source) {
+        customPriceBtn = (!IS_OWNER) ? '' :
+          '<a href="/add-transaction/?item=' + item.id + '" ' +
+          'style="position:absolute; top:.35rem; right:.35rem; width:1.6rem; height:1.6rem; display:flex; ' +
+          'align-items:center; justify-content:center; line-height:1; font-size:.75rem; text-decoration:none; ' +
+          'background:rgba(93,168,240,.12); color:#5da8f0; border:1px solid rgba(93,168,240,.3); border-radius:50%;" ' +
+          'title="Hariri gharama — si kwa mauzo, huu ni malighafi" onclick="event.stopPropagation();">✏️</a>';
+      } else {
+        // 2026-07-31 live request: "kitchen staff can input a custom selling
+        // price... when the item sold does not physically meet the quantity
+        // or size needed to sell at set price" — e.g. a smaller-than-usual
+        // cut. A separate, deliberate ✏️ tap (not the tile itself, which
+        // stays the fast one-tap standard-price sale) opens the same
+        // add-to-cart flow but always asks for the price instead of using
+        // the configured one. Hidden when out of stock.
+        customPriceBtn = oos ? '' :
+          '<button class="btn btn-sm" style="position:absolute; top:.35rem; right:.35rem; width:1.6rem; height:1.6rem; ' +
+          'padding:0; line-height:1; font-size:.75rem; background:rgba(201,168,76,.12); color:#c9a84c; ' +
+          'border:1px solid rgba(201,168,76,.3); border-radius:50%;" title="Bei Maalum — kiasi/ukubwa tofauti na kawaida" ' +
+          'onclick="event.stopPropagation(); customPriceTileClick(' + item.id + ')">✏️</button>';
+      }
       // 2026-08-08 live request (Roy — chicken specifically): a plain
       // portion item has no envelope, so it never had an "Imekwisha"
       // action the way KitchenBatch tiles do when the tracked balance
@@ -2186,6 +2242,14 @@
     if (isCashOrMpesa && splitOtherLabel) {
       splitOtherLabel.textContent = pm === 'cash' ? 'M-Pesa' : 'Cash';
     }
+    // 2026-08-09 — backdate toggle only makes sense for a direct Cash/M-Pesa
+    // sale (never Tab/Deni) — reset on every method change, same as split.
+    var bdToggleRow = document.getElementById('kb-backdate-toggle-row');
+    var bdRow = document.getElementById('kb-backdate-row');
+    var bdInput = document.getElementById('kb-backdated-at');
+    if (bdInput) bdInput.value = '';
+    if (bdRow) bdRow.style.display = 'none';
+    if (bdToggleRow) bdToggleRow.style.display = isCashOrMpesa ? 'block' : 'none';
     // Trigger cross-tab check immediately if name already typed when food_tab selected
     if (pm === 'food_tab') {
       var _nameNow = document.getElementById('kb-tab-name');
@@ -2206,6 +2270,16 @@
     row.style.display = row.style.display === 'none' ? 'block' : 'none';
     if (row.style.display === 'block') {
       var input = document.getElementById('kb-split-amount');
+      if (input) input.focus();
+    }
+  };
+
+  window.kbToggleBackdate = function () {
+    var row = document.getElementById('kb-backdate-row');
+    if (!row) return;
+    row.style.display = row.style.display === 'none' ? 'block' : 'none';
+    if (row.style.display === 'block') {
+      var input = document.getElementById('kb-backdated-at');
       if (input) input.focus();
     }
   };
@@ -2426,6 +2500,15 @@
         partialMpesaVal = document.getElementById('kb-partial-mpesa-input').value || '0';
       }
     }
+    // 2026-08-09 — catch-up posting backdated timestamp (Cash/M-Pesa only).
+    var backdatedAtVal = '';
+    if (pm === 'cash' || pm === 'mpesa') {
+      var bdRow = document.getElementById('kb-backdate-row');
+      var bdInput = document.getElementById('kb-backdated-at');
+      if (bdRow && bdRow.style.display !== 'none' && bdInput && bdInput.value) {
+        backdatedAtVal = bdInput.value;
+      }
+    }
     var body = new URLSearchParams({
       cart: JSON.stringify(_cart),
       payment_method: pm,
@@ -2438,6 +2521,7 @@
       split_method: splitMethodVal,
       partial_cash: partialCashVal,
       partial_mpesa: partialMpesaVal,
+      backdated_at: backdatedAtVal,
       stk_payment_id: (meta && meta.stk_payment_id) ? String(meta.stk_payment_id) : '',
       idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
       csrfmiddlewaretoken: CSRF,
@@ -2962,8 +3046,13 @@
     var html = '';
     filteredTabs.forEach(function (t) {
       html += '<div style="background:#222;border:1px solid #333;border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem;">' +
-        '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at +
+        '<div style="display:flex;align-items:center;gap:.35rem;font-size:.75rem;color:#c9a84c;font-weight:600;">' +
+        '<span style="flex:1;">' + t.customer_name + ' — ' + t.settled_at +
         (t.tab_open ? ' <span style="color:#f0a840;font-weight:400;">(bado wazi — bidhaa zingine hazijalipwa)</span>' : '') +
+        '</span>' +
+        '<button onclick="window.kbRenameRecentTab(' + t.tab_id + ',\'' + t.customer_name.replace(/'/g, "\\'") + '\', this)" ' +
+        'title="Badilisha jina — risiti itasasishwa pia" ' +
+        'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.05rem .3rem;cursor:pointer;">✏️</button>' +
         '</div>';
       t.entries.forEach(function (e) {
         html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
@@ -3276,6 +3365,29 @@
           .catch(function(){ showToast('Hitilafu ya mtandao'); });
       },
     });
+  };
+
+  /* 2026-08-09 live request — rename an already-settled/paid tab (e.g.
+     staff didn't have the customer's name at time of payment) directly
+     from the "🕐 Malipo ya Hivi Karibuni" panel. update_tab_name() now
+     accepts a SETTLED tab too and syncs the tab's own receipt. */
+  window.kbRenameRecentTab = function (tabId, oldName, btn) {
+    var name = prompt('Jina sahihi la mteja:', oldName || '');
+    if (name === null) return;
+    name = name.trim();
+    if (!name) { showToast('Weka jina la mteja.'); return; }
+    if (btn) btn.disabled = true;
+    var fd = new URLSearchParams();
+    fd.append('name', name);
+    fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+    fetch('/bar/tabs/' + tabId + '/rename/', {method:'POST', credentials:'same-origin', body: fd})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (btn) btn.disabled = false;
+        if (d.ok) { showToast(d.merged ? d.message : '✓ Jina limebadilishwa — risiti pia imesasishwa.'); window.kbLoadRecentPayments(); }
+        else showToast('Hitilafu: ' + (d.error||'Jaribu tena.'));
+      })
+      .catch(function(){ if (btn) btn.disabled = false; showToast('Hitilafu ya mtandao.'); });
   };
 
   window.saveKbTabName = function(tabId) {
@@ -3815,6 +3927,19 @@
 
       if (!isBatch) {
         document.getElementById('kr-portion-fields').style.display = 'block';
+        // 2026-08-09 — preset picker, only when this item has >1 preset.
+        var presetRow = document.getElementById('kr-preset-row');
+        var presetSel = document.getElementById('kr-preset');
+        var recvItem = _portionItems.find(function(i){ return String(i.id) === String(opt.value); });
+        var recvPresets = recvItem && recvItem.all_presets;
+        if (recvPresets && recvPresets.length > 1) {
+          presetSel.innerHTML = '<option value="">— Bila kutaja kipande —</option>' +
+            recvPresets.map(function(p){ return '<option value="' + p.id + '">' + p.label + '</option>'; }).join('');
+          presetRow.style.display = 'block';
+        } else {
+          presetSel.innerHTML = '';
+          presetRow.style.display = 'none';
+        }
       } else if (siblings.length > 0) {
         // Group receive mode: shared sack across multiple items
         document.getElementById('kr-group-fields').style.display = 'block';
@@ -3909,6 +4034,10 @@
       body.append('qty', qty);
       body.append('cost_price', document.getElementById('kr-cost').value||'0');
       body.append('note', document.getElementById('kr-portion-note').value||'');
+      var presetRowVisible = document.getElementById('kr-preset-row').style.display !== 'none';
+      if (presetRowVisible) {
+        body.append('preset_id', document.getElementById('kr-preset').value||'');
+      }
     }
 
     body.append('idempotency_token',

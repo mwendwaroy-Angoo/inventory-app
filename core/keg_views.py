@@ -106,6 +106,24 @@ def _sync_master_receipt_payment_method(business, tab, payment_method):
         logger.exception('_sync_master_receipt_payment_method failed (tab=%s)', tab.id)
 
 
+def _sync_master_receipt_customer_name(business, tab, new_name):
+    """Keep a tab's master receipt's customer_name in sync when the tab is
+    renamed AFTER the fact — 2026-08-09 live request: "a way of editing the
+    name of a recently paid bill... staff did not have the name before...
+    the receipt should reconcile accordingly." Mirrors
+    _sync_master_receipt_payment_method's own established pattern exactly.
+    Never raises — a receipt display glitch must never block the rename.
+    """
+    try:
+        from core.tab_receipts import resolve_master_receipt
+        master_rcpt, _ = resolve_master_receipt(business, tab)
+        if master_rcpt and master_rcpt.customer_name != new_name:
+            master_rcpt.customer_name = new_name
+            master_rcpt.save(update_fields=['customer_name'])
+    except Exception:
+        logger.exception('_sync_master_receipt_customer_name failed (tab=%s)', tab.id)
+
+
 def _merge_tab_into(source_tab, target_tab):
     """Fold `source_tab`'s entries into `target_tab` and close the now-empty
     source tab, instead of leaving two separately-open tabs for the same
@@ -2149,8 +2167,17 @@ def update_tab_name(request, tab_id):
     if not up:
         return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
 
+    # 2026-08-09 live request — "a way of editing the name of a recently
+    # paid bill... staff did not have the name before, and the receipt
+    # should reconcile accordingly." A SETTLED tab (fully paid, closed) is
+    # now renameable too, not just an OPEN one — this is exactly the
+    # "Table 4" / anonymous-tab-by-id case surfaced in the "🕐 Malipo ya
+    # Hivi Karibuni" panel. The merge-into-an-open-tab collision logic
+    # below only makes sense for a tab still actively accumulating unpaid
+    # items — a SETTLED tab is done, so it's just a plain rename + receipt
+    # sync, never a merge.
     tab = get_object_or_404(
-        BarTab, id=tab_id, business=up.business, status='OPEN',
+        BarTab, id=tab_id, business=up.business, status__in=('OPEN', 'SETTLED'),
         source__in=_allowed_tab_sources(up),
     )
     new_name = (request.POST.get('name') or '').strip()
@@ -2159,25 +2186,26 @@ def update_tab_name(request, tab_id):
 
     old_name = tab.customer_name
 
-    # Search scoped to the same stations this staffer can already see (not a
-    # blanket cross-counter search) — a silent merge must never pull in
-    # revenue from a station this staffer isn't allowed to view.
-    existing = BarTab.objects.filter(
-        business=up.business, customer_name__iexact=new_name, status='OPEN',
-        source__in=_allowed_tab_sources(up),
-    ).exclude(id=tab.id).first()
-    if existing:
-        merged = _merge_tab_into(tab, existing)
-        return JsonResponse({
-            'ok': True,
-            'merged': True,
-            'customer_name': merged.customer_name,
-            'merged_into_tab_id': merged.id,
-            'message': (
-                f'{new_name} tayari alikuwa na tab wazi (#{merged.id}) — vitu vyote '
-                f'vimewekwa pamoja kwenye tab hiyo hiyo.'
-            ),
-        })
+    if tab.status == 'OPEN':
+        # Search scoped to the same stations this staffer can already see
+        # (not a blanket cross-counter search) — a silent merge must never
+        # pull in revenue from a station this staffer isn't allowed to view.
+        existing = BarTab.objects.filter(
+            business=up.business, customer_name__iexact=new_name, status='OPEN',
+            source__in=_allowed_tab_sources(up),
+        ).exclude(id=tab.id).first()
+        if existing:
+            merged = _merge_tab_into(tab, existing)
+            return JsonResponse({
+                'ok': True,
+                'merged': True,
+                'customer_name': merged.customer_name,
+                'merged_into_tab_id': merged.id,
+                'message': (
+                    f'{new_name} tayari alikuwa na tab wazi (#{merged.id}) — vitu vyote '
+                    f'vimewekwa pamoja kwenye tab hiyo hiyo.'
+                ),
+            })
 
     tab.customer_name = new_name
     tab.save(update_fields=['customer_name'])
@@ -2191,6 +2219,8 @@ def update_tab_name(request, tab_id):
         id__in=tab.entries.values('transaction_id'),
         recipient__iexact=old_name,
     ).update(recipient=new_name)
+
+    _sync_master_receipt_customer_name(up.business, tab, new_name)
 
     return JsonResponse({'ok': True, 'customer_name': new_name})
 

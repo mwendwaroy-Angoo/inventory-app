@@ -261,20 +261,34 @@ def kitchen_board(request):
         # Receipt, no preset attribution) keeps showing every preset exactly
         # as before, so this never breaks an item that doesn't use the
         # per-cut receiving flow.
-        from django.db.models import Sum
-        from django.db.models.functions import Abs as _KAbs
+        # 2026-08-09 live correction (Roy) — the anchor-remaining check above
+        # was keyed strictly by the SOLD preset's own id, so a preset that's
+        # never itself been received under its own name (e.g. "Half Chicken
+        # Leg", only "Full Chicken Leg" is ever actually received) either
+        # never appeared as sellable at all, OR — worse — sold invisibly
+        # without ever decrementing what it physically came from, leaving
+        # "Full Chicken Leg" showing more remaining stock than truly exists.
+        # ItemPortionPreset.tracks_stock_of (new) lets the owner say "this
+        # preset is the same physical lot as that one" — both received and
+        # sold totals are now grouped by stock_tracking_anchor_id (itself
+        # unless tracks_stock_of is set), not the raw preset id.
+        from django.db.models import Sum, F
+        from django.db.models.functions import Abs as _KAbs, Coalesce as _KCoalesce
         _received_by_preset = dict(
             KitchenStockReceiptLine.objects.filter(
                 item__store=kitchen_store, preset_id__isnull=False,
-            ).values('preset_id').annotate(total=Sum('qty_received')).values_list('preset_id', 'total')
+            )
+            .annotate(anchor_id=_KCoalesce(F('preset__tracks_stock_of_id'), F('preset_id')))
+            .values('anchor_id').annotate(total=Sum('qty_received')).values_list('anchor_id', 'total')
         )
         _sold_by_preset = dict(
             Transaction.objects.filter(
                 business=business, type='Issue', item__store=kitchen_store,
                 preset_id__isnull=False,
             ).exclude(payment_method='void')
-            .values('preset_id').annotate(total=Sum(_KAbs('qty')))
-            .values_list('preset_id', 'total')
+            .annotate(anchor_id=_KCoalesce(F('preset__tracks_stock_of_id'), F('preset_id')))
+            .values('anchor_id').annotate(total=Sum(_KAbs('qty')))
+            .values_list('anchor_id', 'total')
         )
         items_with_preset_receipts = set(
             KitchenStockReceiptLine.objects.filter(
@@ -291,7 +305,8 @@ def kitchen_board(request):
                 }
                 for p in item.portion_presets.all().order_by('display_order', 'price')
                 if item.id not in items_with_preset_receipts or (
-                    float(_received_by_preset.get(p.id) or 0) - float(_sold_by_preset.get(p.id) or 0) > 0
+                    float(_received_by_preset.get(p.stock_tracking_anchor_id()) or 0)
+                    - float(_sold_by_preset.get(p.stock_tracking_anchor_id()) or 0) > 0
                 )
             ]
             if item.is_kitchen_batch:
@@ -356,6 +371,22 @@ def kitchen_board(request):
                     'selling_price': float(item.selling_price or 0),
                     'balance': balance,
                     'presets': presets,
+                    # 2026-08-09 — the RECEIVE modal's "which cut did you get
+                    # today?" picker must offer EVERY configured preset (e.g.
+                    # Wing, currently out of stock and so filtered out of the
+                    # sell-tile `presets` above) — not just the ones
+                    # currently sellable, since receiving is exactly how an
+                    # out-of-stock cut comes back.
+                    'all_presets': [
+                        {'id': p.id, 'label': p.label}
+                        for p in item.portion_presets.all().order_by('display_order', 'price')
+                    ],
+                    # 2026-08-09 live report (Roy — Raw Potatoes pencil bug):
+                    # a raw-material-source item (e.g. "Raw Potatoes" feeding
+                    # Chipo's batch draw) is never sold directly, so its tile
+                    # must never show "✏️ Bei Maalum" (custom SELL price) —
+                    # only a cost-correction affordance makes sense for it.
+                    'is_raw_material_source': item.derived_batch_items.exists(),
                 })
 
     # Flat list for the food wastage modal — all kitchen items, sorted by name.
@@ -523,6 +554,26 @@ def _kitchen_checkout(request, up, business, is_owner):
             partial_mpesa = Decimal(str(request.POST.get('partial_mpesa', '') or '0'))
         except Exception:
             partial_mpesa = Decimal('0')
+        # 2026-08-09 live request (Roy) — catch-up posting for portion-item
+        # sales (chicken), mirroring Quick Sell's own whole-cart backdate
+        # toggle (2026-08-07): staff left without recording two days' worth
+        # of chicken sales; the owner needs to post them under the correct
+        # historical date, not today's, without polluting today's live
+        # dashboard/till figures. Gated to cash/mpesa only (never Tab/Deni —
+        # a running bill or a debt is not "already happened"), same as
+        # Quick Sell's own gate. Only applied to the plain portion-item
+        # branch below (batch/bunch record_sale() have no created_at param).
+        kb_backdated_at = None
+        if payment_method in ('cash', 'mpesa'):
+            _bd_raw = (request.POST.get('backdated_at') or '').strip()
+            if _bd_raw:
+                try:
+                    from datetime import datetime as _dt
+                    _naive = _dt.strptime(_bd_raw, '%Y-%m-%dT%H:%M')
+                    from django.utils import timezone as _tz
+                    kb_backdated_at = _tz.make_aware(_naive, _tz.get_current_timezone())
+                except Exception:
+                    kb_backdated_at = None
     except (json.JSONDecodeError, Exception):
         return JsonResponse({'ok': False, 'error': 'Invalid request'}, status=400)
 
@@ -802,6 +853,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 recipient=txn_recipient,
                 recorded_by=request.user,
                 preset=sale_preset,
+                **({'created_at': kb_backdated_at} if kb_backdated_at and not active_tab else {}),
             )
             if active_tab:
                 BarTabEntry.objects.create(
@@ -1224,6 +1276,41 @@ def kitchen_receive(request):
             cost = Decimal(str(cost_raw))
             if qty <= 0:
                 return JsonResponse({'ok': False, 'error': 'Idadi lazima iwe zaidi ya 0.'}, status=400)
+            # 2026-08-09 live request (Roy) — "+Pata Stok... which chicken
+            # have I received today?" When a preset is chosen, route through
+            # the SAME KitchenStockReceipt/Line ledger the fuller "🧾 Stock
+            # Receipt" flow already uses, so per-cut visibility (see
+            # kitchen_board()'s _received_by_preset) and per-preset cost
+            # correctly pick this up — no new ledger invented. This is also
+            # exactly the "add more to the same batch" mechanism: the ledger
+            # is a running SUM per cut, not a discrete batch object, so a
+            # second small correction line for the same preset just adds to
+            # the existing total — never a separate, disconnected "batch".
+            preset_id_raw = (request.POST.get('preset_id') or '').strip()
+            preset = None
+            if preset_id_raw.isdigit():
+                preset = ItemPortionPreset.objects.filter(id=int(preset_id_raw), item=item).first()
+            if preset is not None:
+                txn = Transaction.objects.create(
+                    business=business, item=item, type='Receipt',
+                    qty=qty, payment_method='cash', invoice_no=invoice_no,
+                )
+                if cost > 0:
+                    preset.cost_price = (cost / qty).quantize(Decimal('0.01'))
+                    preset.save(update_fields=['cost_price'])
+                receipt = KitchenStockReceipt.objects.create(
+                    business=business, store=kitchen_store,
+                    invoice_no=invoice_no, recorded_by=request.user,
+                )
+                KitchenStockReceiptLine.objects.create(
+                    receipt=receipt, item=item, preset=preset, qty_received=qty,
+                    line_cost=cost if cost > 0 else (preset.cost_price or Decimal('0')) * qty,
+                    transaction=txn,
+                )
+                return JsonResponse({
+                    'ok': True, 'new_balance': float(item.current_balance()),
+                    'preset_id': preset.id, 'preset_label': preset.label,
+                })
             Transaction.objects.create(
                 business=business,
                 item=item,

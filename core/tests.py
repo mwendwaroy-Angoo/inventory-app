@@ -26579,3 +26579,405 @@ class WaitressJoinContinuousBarRevenueTest(TestCase):
             msg="Revenue before AND after a waitress joins must be one continuous total for the bartender's shift")
         # Elapsed time must span the whole 5h uninterrupted — no segment gap.
         self.assertGreater(rec['elapsed_mins'], 4 * 60)
+
+
+class PresetStockTrackingTetherTest(TestCase):
+    """2026-08-09 live correction (Roy): the 2026-08-05 "cut visibility"
+    mechanism (only show a preset as sellable when what it represents was
+    actually received) broke for a preset that's never itself received
+    under its own name — e.g. "Half Chicken Leg" is always cut from a
+    "Full Chicken Leg" that WAS received. ItemPortionPreset.tracks_stock_of
+    links the two so both received and sold totals are grouped by one
+    shared anchor."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Tether Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='tether_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='TETHER-KUKU', unit='Pcs', selling_price=Decimal('0'),
+        )
+        self.full_leg = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Full Chicken Leg', price=Decimal('250'),
+            quantity_consumed=Decimal('1'),
+        )
+        self.half_leg = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Half Chicken Leg', price=Decimal('150'),
+            quantity_consumed=Decimal('0.5'), tracks_stock_of=self.full_leg,
+        )
+        self.wing = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Wing', price=Decimal('70'),
+            quantity_consumed=Decimal('0.125'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_stock_tracking_anchor_id(self):
+        self.assertEqual(self.full_leg.stock_tracking_anchor_id(), self.full_leg.id)
+        self.assertEqual(self.half_leg.stock_tracking_anchor_id(), self.full_leg.id)
+        self.assertEqual(self.wing.stock_tracking_anchor_id(), self.wing.id)
+
+    def _receive_full_legs(self, qty=12, cost=200):
+        import uuid
+        return self.client.post('/kitchen/receive/', {
+            'item_id': self.kuku.id, 'mode': 'portion',
+            'qty': str(qty), 'cost_price': str(cost * qty),
+            'preset_id': str(self.full_leg.id),
+            'idempotency_token': f'rcv-{uuid.uuid4()}',
+        })
+
+    def _portion_items_blob(self, body):
+        import json as _json
+        start = body.index('var _portionItems')
+        eq = body.index('=', start)
+        end = body.index(';\n', eq)
+        return _json.loads(body[eq + 1:end].strip())
+
+    def test_receiving_full_leg_creates_stock_receipt_line_and_sets_preset_cost(self):
+        resp = self._receive_full_legs(qty=12, cost=200)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.full_leg.refresh_from_db()
+        self.assertEqual(self.full_leg.cost_price, Decimal('200.00'))
+        self.assertEqual(
+            KitchenStockReceiptLine.objects.filter(item=self.kuku, preset=self.full_leg).count(), 1,
+        )
+        self.assertEqual(self.kuku.current_balance(), 12)
+
+    def test_wing_hidden_when_only_legs_received(self):
+        self._receive_full_legs(qty=12, cost=200)
+        resp = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        labels = [p['label'] for p in kuku['presets']]
+        self.assertIn('Full Chicken Leg', labels)
+        self.assertIn('Half Chicken Leg', labels)
+        self.assertNotIn('Wing', labels)
+
+    def test_half_leg_sale_decrements_full_legs_own_tally(self):
+        self._receive_full_legs(qty=12, cost=200)
+        # Sell one half-leg at a custom price — must decrement the FULL LEG
+        # anchor's own received-vs-sold tally by 0.5, not leave it untouched.
+        import json as _json
+        cart = _json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': self.half_leg.id,
+            'qty': 0.5, 'amount': 150, 'description': 'Kuku — Half Chicken Leg',
+        }])
+        resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        resp2 = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp2.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        labels = [p['label'] for p in kuku['presets']]
+        # Full Chicken Leg must still show (11.5 of 12 remaining under the
+        # anchor), and stock balance overall must reflect the 0.5 sold.
+        self.assertIn('Full Chicken Leg', labels)
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), Decimal('11.5'))
+
+    def test_selling_enough_half_legs_hides_both_presets(self):
+        self._receive_full_legs(qty=1, cost=200)
+        import json as _json
+        # Sell the equivalent of the whole received leg via two halves.
+        for _i in range(2):
+            cart = _json.dumps([{
+                'item_id': self.kuku.id, 'preset_id': self.half_leg.id,
+                'qty': 0.5, 'amount': 150, 'description': 'Kuku — Half Chicken Leg',
+            }])
+            resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+            self.assertTrue(resp.json().get('ok'), resp.json())
+        resp2 = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp2.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        labels = [p['label'] for p in kuku['presets']]
+        self.assertNotIn('Full Chicken Leg', labels)
+        self.assertNotIn('Half Chicken Leg', labels)
+
+    def test_all_presets_always_offered_for_receiving_regardless_of_current_stock(self):
+        # Wing has never been received — but it must still be offered as a
+        # RECEIVE option (that's exactly how it would ever get stock).
+        resp = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        all_labels = [p['label'] for p in kuku['all_presets']]
+        self.assertIn('Wing', all_labels)
+        self.assertIn('Full Chicken Leg', all_labels)
+
+    def test_edit_item_saves_tracks_stock_of(self):
+        resp = self.client.post(f'/stock/edit/{self.wing.item_id}/', {
+            'description': 'Kuku', 'unit': 'Pcs', 'selling_price': '0',
+            'store': self.store.id, 'reorder_level': '0', 'reorder_quantity': '0',
+            'is_produce': '', 'is_kitchen_batch': '',
+            'preset_id': [str(self.full_leg.id), str(self.half_leg.id), str(self.wing.id)],
+            'preset_label': ['Full Chicken Leg', 'Half Chicken Leg', 'Wing'],
+            'preset_price': ['250', '150', '70'],
+            'preset_qty_consumed': ['1', '0.5', '0.125'],
+            'preset_serving_type': ['cup', 'cup', 'cup'],
+            'preset_khaki_type': ['NONE', 'NONE', 'NONE'],
+            'tracks_of_preset_id': [str(self.wing.id)],
+            'tracks_of_target_id': [str(self.full_leg.id)],
+        })
+        self.assertIn(resp.status_code, (200, 302))
+        self.wing.refresh_from_db()
+        self.assertEqual(self.wing.tracks_stock_of_id, self.full_leg.id)
+
+    def test_edit_item_rejects_self_reference(self):
+        resp = self.client.post(f'/stock/edit/{self.wing.item_id}/', {
+            'description': 'Kuku', 'unit': 'Pcs', 'selling_price': '0',
+            'store': self.store.id, 'reorder_level': '0', 'reorder_quantity': '0',
+            'is_produce': '', 'is_kitchen_batch': '',
+            'preset_id': [str(self.full_leg.id), str(self.half_leg.id), str(self.wing.id)],
+            'preset_label': ['Full Chicken Leg', 'Half Chicken Leg', 'Wing'],
+            'preset_price': ['250', '150', '70'],
+            'preset_qty_consumed': ['1', '0.5', '0.125'],
+            'preset_serving_type': ['cup', 'cup', 'cup'],
+            'preset_khaki_type': ['NONE', 'NONE', 'NONE'],
+            'tracks_of_preset_id': [str(self.wing.id)],
+            'tracks_of_target_id': [str(self.wing.id)],
+        })
+        self.assertIn(resp.status_code, (200, 302))
+        self.wing.refresh_from_db()
+        self.assertIsNone(self.wing.tracks_stock_of_id)
+
+    def test_topping_up_same_preset_adds_to_existing_tally_not_a_separate_batch(self):
+        """Roy: 'add more from a specific batch... but they are from the
+        same received stock not a different one.' There is no discrete
+        batch object — receiving again for the SAME preset just adds to
+        the running received total, so a recount correction is
+        indistinguishable from 'the same batch', by construction."""
+        self._receive_full_legs(qty=10, cost=200)
+        # Staff undercounted — 2 more legs found from the same delivery.
+        import uuid
+        resp = self.client.post('/kitchen/receive/', {
+            'item_id': self.kuku.id, 'mode': 'portion',
+            'qty': '2', 'cost_price': '0',
+            'preset_id': str(self.full_leg.id),
+            'idempotency_token': f'rcv-topup-{uuid.uuid4()}',
+        })
+        self.assertTrue(resp.json()['ok'])
+        self.assertEqual(
+            KitchenStockReceiptLine.objects.filter(item=self.kuku, preset=self.full_leg).count(), 2,
+            "a top-up correction is a second line, not a second batch object",
+        )
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), 12)
+
+
+class KitchenBackdatedCheckoutTest(TestCase):
+    """2026-08-09 live urgent request (Roy) — Kitchen Board's own checkout
+    had no backdate support (unlike Quick Sell's whole-cart catch-up
+    toggle, 2026-08-07), blocking same-day correction of missed chicken
+    sales from two prior business days. Mirrors Quick Sell's gate exactly:
+    cash/mpesa direct sales only, never Tab/Deni."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Backdate Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbbd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='KBBD-KUKU', unit='Pcs', selling_price=Decimal('150'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('10'))
+        self.client.force_login(self.owner)
+
+    def test_backdated_cash_sale_uses_the_given_timestamp(self):
+        import json as _json
+        # backdated_at is parsed as LOCAL time (Africa/Nairobi) by the view,
+        # matching Quick Sell's own backdate parsing — format the naive
+        # local wall-clock string, not a raw UTC-aware timezone.now().
+        past_local = timezone.localtime(timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        cart = _json.dumps([{'item_id': self.kuku.id, 'qty': 1, 'amount': 150, 'description': 'Kuku'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
+
+    def test_backdate_ignored_for_credit(self):
+        import json as _json
+        past = (timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        cart = _json.dumps([{'item_id': self.kuku.id, 'qty': 1, 'amount': 150, 'description': 'Kuku'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'credit', 'credit_name': 'Mary',
+            'backdated_at': past.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        # created_at must be close to now, NOT the backdated timestamp.
+        self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+
+    def test_no_backdate_param_behaves_exactly_as_before(self):
+        import json as _json
+        cart = _json.dumps([{'item_id': self.kuku.id, 'qty': 1, 'amount': 150, 'description': 'Kuku'}])
+        resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+
+
+class RawMaterialSourcePencilBugTest(TestCase):
+    """2026-08-09 live report (Roy) — tapping the pencil on "Raw Potatoes"
+    (a raw_material_source item feeding Chipo's KitchenBatch draw) opened
+    the custom SELL price flow, even though "the sack of potatoes are not
+    been sold, only the output which is chipo." kitchen_board() now flags
+    such items so the template can swap in a cost-correction affordance
+    instead."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='RawMat Pencil Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='rmp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.raw_potatoes = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Potatoes',
+            material_no='RMP-RAW', unit='Ndoo', selling_price=Decimal('0'),
+            cost_price=Decimal('100'),
+        )
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='RMP-CHIPO', unit='Batch', selling_price=Decimal('100'),
+            is_kitchen_batch=True, raw_material_source=self.raw_potatoes,
+        )
+        Transaction.objects.create(business=self.biz, item=self.raw_potatoes, type='Receipt', qty=Decimal('6'))
+        self.client.force_login(self.owner)
+
+    def _portion_items_blob(self, body):
+        import json as _json
+        start = body.index('var _portionItems')
+        eq = body.index('=', start)
+        end = body.index(';\n', eq)
+        return _json.loads(body[eq + 1:end].strip())
+
+    def test_raw_material_source_flagged_in_portion_items(self):
+        resp = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp.content.decode())
+        raw = next(i for i in items if i['id'] == self.raw_potatoes.id)
+        self.assertTrue(raw['is_raw_material_source'])
+
+    def test_ordinary_portion_item_not_flagged(self):
+        soda = Item.objects.create(
+            business=self.biz, store=self.store, description='Soda',
+            material_no='RMP-SODA', unit='Pcs', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(business=self.biz, item=soda, type='Receipt', qty=Decimal('10'))
+        resp = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp.content.decode())
+        soda_item = next(i for i in items if i['id'] == soda.id)
+        self.assertFalse(soda_item['is_raw_material_source'])
+
+
+class RenameSettledTabTest(TestCase):
+    """2026-08-09 live request (Roy) — "a way of editing the name of a
+    recently paid bill but the staff did not have the name before and the
+    receipt should reconcile accordingly." update_tab_name() previously
+    only accepted an OPEN tab; now also accepts a SETTLED (fully paid) one
+    and syncs the tab's own master Receipt.customer_name too."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Rename Settled Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rst_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='rst_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='RST-01', unit='Pcs', selling_price=Decimal('250'),
+        )
+        self.tab = BarTab.objects.create(
+            business=self.biz, customer_name='Table 4', status='SETTLED', source='bar',
+            store=self.store, settled_at=timezone.now(),
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='cash',
+            recipient='Table 4',
+        )
+        self.entry = BarTabEntry.objects.create(
+            tab=self.tab, transaction=self.txn, description='Tusker',
+            amount=Decimal('250'), is_paid=True, payment_method='cash',
+        )
+        self.receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=1, token='rst-token-1',
+            customer_name='Table 4', payment_method='cash', total=Decimal('250'),
+            meta={'tab_id': self.tab.id},
+        )
+
+    def test_owner_can_rename_settled_tab(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{self.tab.id}/rename/', {'name': 'Bosco'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.customer_name, 'Bosco')
+
+    def test_rename_settled_tab_syncs_transaction_recipient(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{self.tab.id}/rename/', {'name': 'Bosco'})
+        self.txn.refresh_from_db()
+        self.assertEqual(self.txn.recipient, 'Bosco')
+
+    def test_rename_settled_tab_syncs_master_receipt(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{self.tab.id}/rename/', {'name': 'Bosco'})
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.customer_name, 'Bosco')
+
+    def test_shift_staff_can_rename_settled_tab(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{self.tab.id}/rename/', {'name': 'Bosco'})
+        self.assertTrue(resp.json()['ok'])
+
+    def test_settled_tab_rename_never_merges_into_an_open_tab(self):
+        """Merging only makes sense for a still-accumulating OPEN tab —
+        renaming a DONE, settled tab to match an unrelated open tab's name
+        must never move already-paid money into that open tab."""
+        open_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bosco', status='OPEN', source='bar', store=self.store,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{self.tab.id}/rename/', {'name': 'Bosco'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertFalse(data.get('merged'))
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.customer_name, 'Bosco')
+        self.assertEqual(self.tab.entries.count(), 1, "the settled entry must stay on its own tab, not move into open_tab")
+        open_tab.refresh_from_db()
+        self.assertEqual(open_tab.entries.count(), 0)
+
+    def test_void_tab_still_rejected(self):
+        self.tab.status = 'VOID'
+        self.tab.save(update_fields=['status'])
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{self.tab.id}/rename/', {'name': 'Bosco'})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_open_tab_rename_still_syncs_receipt_too(self):
+        """Regression: the receipt sync is unconditional, so an ordinary
+        OPEN-tab rename (the pre-existing feature) picks it up for free."""
+        open_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Tab #999', status='OPEN', source='bar', store=self.store,
+        )
+        open_receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=2, token='rst-token-2',
+            customer_name='Tab #999', payment_method='tab', total=Decimal('0'),
+            meta={'tab_id': open_tab.id},
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{open_tab.id}/rename/', {'name': 'Mary'})
+        self.assertTrue(resp.json()['ok'])
+        open_receipt.refresh_from_db()
+        self.assertEqual(open_receipt.customer_name, 'Mary')

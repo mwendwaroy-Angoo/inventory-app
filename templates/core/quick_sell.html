@@ -3159,8 +3159,13 @@
         var html = '';
         filteredTabs.forEach(function (t) {
             html += '<div style="background:#222;border:1px solid #333;border-radius:6px;padding:.35rem .5rem;margin-bottom:.3rem;">' +
-                '<div style="font-size:.75rem;color:#c9a84c;font-weight:600;">' + t.customer_name + ' — ' + t.settled_at +
+                '<div style="display:flex;align-items:center;gap:.35rem;font-size:.75rem;color:#c9a84c;font-weight:600;">' +
+                '<span style="flex:1;">' + t.customer_name + ' — ' + t.settled_at +
                 (t.tab_open ? ' <span style="color:#f0a840;font-weight:400;">(bado wazi — bidhaa zingine hazijalipwa)</span>' : '') +
+                '</span>' +
+                '<button onclick="window.qsRenameRecentTab(' + t.tab_id + ',\'' + t.customer_name.replace(/'/g, "\\'") + '\', this)" ' +
+                'title="Badilisha jina — risiti itasasishwa pia" ' +
+                'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.05rem .3rem;cursor:pointer;">✏️</button>' +
                 '</div>';
             t.entries.forEach(function (e) {
                 html += '<div style="display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#b0b0b0;padding:.15rem 0;">' +
@@ -3552,6 +3557,34 @@
     };
 
     /* ── Save phone on existing QS tab ─────────────────────── */
+    /* 2026-08-09 live request — rename an already-settled/paid tab (e.g.
+       staff didn't have the customer's name at time of payment) directly
+       from the "🕐 Malipo ya Hivi Karibuni" panel. update_tab_name() now
+       accepts a SETTLED tab too and syncs the tab's own receipt. */
+    window.qsRenameRecentTab = function (tabId, oldName, btn) {
+        var name = prompt('Jina sahihi la mteja:', oldName || '');
+        if (name === null) return;
+        name = name.trim();
+        if (!name) { qsShowToast('Weka jina la mteja.'); return; }
+        if (btn) btn.disabled = true;
+        var csrf = (document.querySelector('[name=csrfmiddlewaretoken]') || {}).value || '';
+        var fd = new URLSearchParams();
+        fd.append('name', name);
+        fd.append('csrfmiddlewaretoken', csrf);
+        fetch('/bar/tabs/' + tabId + '/rename/', {method: 'POST', credentials: 'same-origin', body: fd})
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (btn) btn.disabled = false;
+                if (d.ok) {
+                    qsShowToast(d.merged ? d.message : '✓ Jina limebadilishwa — risiti pia imesasishwa.');
+                    window.qsLoadRecentPayments();
+                } else {
+                    qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+                }
+            })
+            .catch(function () { if (btn) btn.disabled = false; qsShowToast('Hitilafu ya mtandao.'); });
+    };
+
     window.qsSaveTabName = function (tabId) {
         var input = document.getElementById('qs-tab-name-' + tabId);
         if (!input) return;

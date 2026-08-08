@@ -3672,6 +3672,23 @@ class ItemPortionPreset(models.Model):
                   'Item.cost_price is left untouched for these presets and stays whatever it was.',
     )
 
+    tracks_stock_of = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='tracked_by',
+        help_text=(
+            'This preset is a different-sized cut of the SAME physical lot as '
+            'the preset pointed to here — e.g. "Half Chicken Leg" tracks_stock_of '
+            '"Full Chicken Leg" (a full leg cut and sold as two halves is still '
+            'one leg out of what was received). 2026-08-09 live request: without '
+            'this, a preset that was never itself received under its own name '
+            '(only its "parent" cut was) either shows as permanently out of '
+            'stock, or sells invisibly without ever decrementing the parent '
+            "cut's own received-vs-sold tally. Blank = counts against itself "
+            '(the default, unchanged behavior for every preset that doesn\'t '
+            'need this). Set from Edit Item, existing presets only.'
+        ),
+    )
+
     class Meta:
         ordering = ['display_order', 'price']
         verbose_name = 'Item Portion Preset'
@@ -3679,6 +3696,13 @@ class ItemPortionPreset(models.Model):
 
     def __str__(self):
         return f"{self.item.description}: {self.label} — KES {self.price}"
+
+    def stock_tracking_anchor_id(self):
+        """The preset id whose received-vs-sold tally this preset's sales
+        count against — itself unless tracks_stock_of is set. One hop only
+        (deliberately not recursive — an owner misconfiguring a longer chain
+        is an edge case, not something worth chasing at read time)."""
+        return self.tracks_stock_of_id or self.id
 
 
 # ────────────────────────────────────────────────

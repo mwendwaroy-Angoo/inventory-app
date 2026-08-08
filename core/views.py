@@ -2668,6 +2668,27 @@ def edit_item(request, item_id):
                             quantity_consumed=qty_c, display_order=order,
                             serving_type=serving, khaki_type=khaki,
                         )
+
+                # 2026-08-09 live request — "the tether... for the system to
+                # know that this chicken leg has been cut into half and sold
+                # differently." Deliberately a SEPARATE loop, matched by real
+                # DB preset id (not positional index) — never coupled to the
+                # main preset_label/preset_id arrays above, which can also
+                # contain brand-new, not-yet-saved rows with no id at all.
+                tracks_preset_ids = request.POST.getlist('tracks_of_preset_id')
+                tracks_target_ids = request.POST.getlist('tracks_of_target_id')
+                for i, pid_raw in enumerate(tracks_preset_ids):
+                    try:
+                        tpid = int(pid_raw)
+                    except (ValueError, TypeError):
+                        continue
+                    target_raw = tracks_target_ids[i].strip() if i < len(tracks_target_ids) else ''
+                    target_id = int(target_raw) if target_raw.isdigit() else None
+                    if target_id == tpid:
+                        target_id = None  # never self-reference
+                    ItemPortionPreset.objects.filter(id=tpid, item=item).update(
+                        tracks_stock_of_id=target_id,
+                    )
                 # ─────────────────────────────────────────────────────────────
 
             messages.success(

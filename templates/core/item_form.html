@@ -761,6 +761,40 @@
                     </div>
                 </div>
 
+                {% if form.instance.pk and form.instance.portion_presets.all|length > 1 %}
+                <!-- 2026-08-09 live request (Roy) — "the tether... for the
+                     system to know that this chicken leg has been cut into
+                     half and sold differently." Deliberately a SEPARATE,
+                     plain section (not inside the fragile preset grid rows
+                     above, which have multiple independent JS row-builders
+                     per business type — see Known Issues) so this can never
+                     interact with that logic. Existing presets only — a
+                     brand-new preset added below has no id yet to link to
+                     until this form is saved once. -->
+                <div style="background:#161616; border:1px solid #2a2a2a; border-radius:8px; padding:0.75rem; margin-bottom:1rem;">
+                    <div style="color:var(--gold); font-size:0.8rem; font-weight:600; margin-bottom:0.5rem;">
+                        🔗 {% trans 'Which cut is this really part of?' %}
+                    </div>
+                    <div style="color:#888; font-size:0.72rem; margin-bottom:0.6rem;">
+                        {% trans 'If a preset (e.g. "Half Chicken Leg") is never received on its own — it is always cut from a bigger preset that IS received (e.g. "Full Chicken Leg") — link it here so a sale correctly counts against what was actually received. Leave "Yenyewe" if this preset is received under its own name.' %}
+                    </div>
+                    {% for preset in form.instance.portion_presets.all %}
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; padding:0.3rem 0; align-items:center;">
+                        <span style="color:#f0ece4; font-size:0.82rem;">{{ preset.label }}</span>
+                        <input type="hidden" name="tracks_of_preset_id" value="{{ preset.id }}">
+                        <select name="tracks_of_target_id" class="form-select form-select-sm" style="background:#1a1a1a; color:#f0ece4; border:1px solid #333;">
+                            <option value="">— {% trans 'Yenyewe (received under its own name)' %} —</option>
+                            {% for other in form.instance.portion_presets.all %}
+                                {% if other.id != preset.id %}
+                                <option value="{{ other.id }}" {% if preset.tracks_stock_of_id == other.id %}selected{% endif %}>{{ other.label }}</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
                 <button type="button" id="quickFillPresets"
                         style="background:rgba(120,180,90,0.12); border:1px dashed rgba(120,180,90,0.4); color:#9fcaa0; border-radius:6px; padding:0.4rem 1rem; font-size:0.82rem; cursor:pointer; width:100%; margin-bottom:0.5rem; display:none;">
                     🥬 {% trans 'Quick-fill standard presets (10 / 20 / 30 / 50)' %}
