@@ -1726,9 +1726,10 @@
   <div class="modal-dialog modal-dialog-centered modal-sm">
     <div class="modal-content">
       <div class="modal-header" style="border-bottom:1px solid #3a3a3a;">
-        <h6 class="modal-title" style="color:#c9a84c;">🔀 Gawanya Malipo</h6>
+        <h6 class="modal-title" style="color:#c9a84c;">✂️ Gawanya Kipengele Kimoja</h6>
       </div>
       <div class="modal-body">
+        <p style="color:#f0a840; font-size:0.72rem; margin-bottom:0.4rem;">Hii ni kwa kipengele hiki KIMOJA tu — kwa tab yote, tumia "🔀 Tab Yote" badala yake.</p>
         <p id="split-tab-info" style="color:#b0b0b0; font-size:0.83rem; margin-bottom:0.65rem;"></p>
         <!-- Full-item transfer (2026-07-25): the destination customer covers
              the WHOLE item, source customer pays nothing towards it at all —
@@ -2939,7 +2940,7 @@
           var splitBtn = !e.pending_transfer_out
             ? '<button onclick="window.openSplitTransferModal(' + e.id + ',' + tab.id + ',\'' + safeDesc.replace(/'/g, "\\'") + '\',' + e.amount + ')" ' +
               'style="background:none;border:none;color:#c9a84c;cursor:pointer;font-size:0.78rem;padding:0 2px;flex-shrink:0;" ' +
-              'title="Gawanya malipo na uhamishe sehemu kwa tab nyingine">🔀</button>'
+              'title="Gawanya kipengele HIKI TU (si tab yote) na uhamishe sehemu kwa tab nyingine">✂️</button>'
             : '';
           var pendingBadge = e.pending_transfer_out
             ? '<div style="width:100%;font-size:.68rem;color:#c9a84c;background:rgba(201,168,76,.07);border:1px solid rgba(201,168,76,.2);border-radius:5px;padding:.15rem .4rem;margin:.15rem 0 .3rem;">' +
