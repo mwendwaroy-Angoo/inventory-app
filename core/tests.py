@@ -27069,12 +27069,19 @@ class RenameConsolidatesReceiptAndFindableTest(TestCase):
         self.assertNotEqual(table4_receipt.meta.get('tab_id'), table4_tab.id)
         self.assertIn(table4_tab.id, charles_receipt.meta.get('linked_tab_ids', []))
 
-    def test_wall_scan_search_finds_a_plain_settled_tab_by_name(self):
+    def test_wall_scan_search_never_finds_a_plain_settled_tab_by_name(self):
+        """SECURITY REVERT (2026-08-09, same day): this endpoint is PUBLIC,
+        no login required — it's the wall-mounted bar QR page. A plain,
+        fully-paid settled tab (nothing left owing) must NOT be searchable
+        by name here; a brief widening that made this findable meant anyone
+        who could reach this URL and guess a customer's name could browse
+        their entire historical payment record with zero authentication.
+        The rename-and-consolidate fix itself (state-level, above) is
+        unaffected — it's the PUBLIC search surface that must stay narrow."""
         tab, receipt = self._make_settled_tab_with_receipt('Charles', Decimal('1150'), 1, 'charles3')
         resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Charles')
         data = resp.json()
-        self.assertEqual(len(data['tabs']), 1)
-        self.assertEqual(data['tabs'][0]['url'], f'/r/{receipt.token}/')
+        self.assertEqual(data['tabs'], [])
 
     def test_void_tab_never_findable_by_name(self):
         tab, receipt = self._make_settled_tab_with_receipt('Ghost', Decimal('100'), 1, 'ghost')
@@ -27096,12 +27103,18 @@ class RenameConsolidatesReceiptAndFindableTest(TestCase):
 
 
 class SearchFindsReceiptsRegardlessOfAgeTest(TestCase):
-    """2026-08-09 same-day live clarification (Roy): "each customer should
-    be able to access their receipts when scanning and searching their
-    names regardless of when that bill settlement or unsettlement was
-    from." _findable_tabs_qs_by_name() has no date restriction at all —
-    this locks in that an OLD (many days ago) settled tab is still found,
-    not just recent ones."""
+    """2026-08-09 same-day: Roy's stated requirement ("find a receipt
+    regardless of when the bill was settled") was correct, but the
+    delivery mechanism was wrong — find_tab_search is a PUBLIC,
+    unauthenticated endpoint (the wall-mounted bar QR page), so making it
+    search a business's ENTIRE historical tab record by name exposed every
+    customer's full payment history to anyone who could reach the URL and
+    guess a name, with zero login. Reverted the same day once live reports
+    of "users seeing information they shouldn't" made the exposure
+    concrete. What's still correctly true, and locked in here: a tab that
+    genuinely still owes money (debt-converted) stays findable regardless
+    of age — that was never date-bound and isn't the exposure risk, since
+    it's an active, unresolved balance, not historical browsing."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='Age Search Biz')
@@ -27111,7 +27124,7 @@ class SearchFindsReceiptsRegardlessOfAgeTest(TestCase):
             material_no='AGE-01', unit='Pcs', selling_price=Decimal('250'),
         )
 
-    def test_a_tab_settled_90_days_ago_is_still_findable_by_name(self):
+    def test_a_plain_settled_tab_from_90_days_ago_is_not_publicly_findable(self):
         tab = BarTab.objects.create(
             business=self.biz, customer_name='Old Timer', status='SETTLED', source='bar',
             store=self.store, settled_at=timezone.now() - timedelta(days=90),
@@ -27126,15 +27139,13 @@ class SearchFindsReceiptsRegardlessOfAgeTest(TestCase):
             tab=tab, transaction=txn, description='Tusker',
             amount=Decimal('250'), is_paid=True, payment_method='cash',
         )
-        receipt = Receipt.objects.create(
+        Receipt.objects.create(
             business=self.biz, receipt_number=1, token='old-timer-receipt',
             customer_name='Old Timer', payment_method='cash', total=Decimal('250'),
             meta={'tab_id': tab.id},
         )
         resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Old Timer')
-        data = resp.json()
-        self.assertEqual(len(data['tabs']), 1, data['tabs'])
-        self.assertEqual(data['tabs'][0]['url'], f'/r/{receipt.token}/')
+        self.assertEqual(resp.json()['tabs'], [])
 
     def test_a_debt_converted_tab_from_months_ago_is_still_findable(self):
         """The un-settled (still-owing) side of Roy's ask — a tab converted

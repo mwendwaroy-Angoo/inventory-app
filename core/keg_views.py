@@ -4854,25 +4854,6 @@ def _findable_tabs_qs(business):
     )
 
 
-def _findable_tabs_qs_by_name(business):
-    """Every tab a customer could reasonably search for by NAME — including
-    a plain, fully-paid SETTLED tab with nothing left owing (2026-08-09
-    live report: renaming an already-paid "Table 4" tab to "Charles" and
-    then searching "Charles" on the wall-scan QR found nothing at all — the
-    tab was correctly renamed but _findable_tabs_qs() only ever surfaced
-    OPEN or debt-converted tabs).
-
-    Deliberately a SEPARATE, wider queryset from _findable_tabs_qs() rather
-    than widening that one in place — PIN lookup there must stay scoped
-    narrower: BarTab.tab_pin only enforces uniqueness while a tab is OPEN
-    (see the model's own partial UniqueConstraint), so multiple historical
-    closed tabs can legitimately share the same 4-digit PIN and a wide-open
-    PIN search could resolve to the wrong one. A NAME search has no such
-    collision risk — find_tab_search's own dedup-by-resolved-URL already
-    collapses multiple tabs that share one receipt into a single result."""
-    return BarTab.objects.filter(business=business).exclude(status='VOID')
-
-
 def find_tab_search(request, business_id):
     """Public AJAX name-or-PIN lookup for find_tab_public — no login required.
 
@@ -4906,10 +4887,23 @@ def find_tab_search(request, business_id):
             return JsonResponse({'tabs': [], 'redirect': url})
         return JsonResponse({'tabs': [], 'pin_not_found': True})
 
-    # Name search: case-insensitive substring match. Wider than PIN lookup
-    # (any status except VOID, not just OPEN/debt-converted) — a customer
-    # searching their own corrected name must find an already-paid tab too.
-    tabs = _findable_tabs_qs_by_name(business).filter(
+    # Name search: case-insensitive substring match.
+    #
+    # 2026-08-09 SECURITY REVERT: this briefly used a much wider queryset
+    # (any status except VOID, no date bound at all) so a renamed/settled
+    # tab could still be found by name. That was a real mistake — this
+    # endpoint is PUBLIC and has NO LOGIN by design (it's the wall-mounted
+    # bar QR page), so widening it meant anyone who could reach this URL
+    # and guess/type a customer's name could browse that customer's ENTIRE
+    # historical payment record, forever, with no authentication at all —
+    # not just their one currently-open bill. Reverted back to the original,
+    # safe scope (OPEN or still-owing debt-converted tabs only) the same day
+    # it shipped, once live reports of "users seeing information they
+    # shouldn't" made the exposure concrete. A genuine "find my full
+    # history by name" feature belongs behind staff/owner authentication
+    # (e.g. the existing /debt/customers/search/ page), never on this
+    # public, unauthenticated surface.
+    tabs = _findable_tabs_qs(business).filter(
         customer_name__icontains=q,
     ).order_by('-opened_at')[:10]
 
