@@ -103,6 +103,19 @@
 <div class="settled-banner">✓ Tab hii imelipwa — asante!</div>
 {% endif %}
 
+{% if tab.tab_pin %}
+<!-- 2026-08-09 live request: parity with receipt_public.html — a customer
+     reaching this bare pre-receipt page should also see (and be able to
+     keep) their own PIN, which now works for finding this bill again even
+     after it's fully paid. -->
+<div style="background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:8px; padding:0.5rem 0.8rem; margin-bottom:0.6rem; font-size:0.78rem; color:#c9a84c;">
+  🔑 PIN: <strong>{{ tab.tab_pin }}</strong>
+  <div style="color:#b0b0b0; font-size:0.72rem; margin-top:0.1rem;">
+    Hifadhi namba hii — itakusaidia kutafuta risiti yako baadaye, hata baada ya kulipa yote.
+  </div>
+</div>
+{% endif %}
+
 <!-- ── Incoming split-bill transfer(s) — a different customer wants part of
      their bill added to this tab. See TabTransferRequest / BarTabEntry.
      split_and_transfer_locked() (2026-07-23/24). ────────────────────────── -->

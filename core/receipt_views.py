@@ -185,6 +185,36 @@ def _receipt_all_tab_ids(receipt):
     return ([tab_id] if tab_id else []) + linked
 
 
+def _receipt_tab_pin(receipt):
+    """The customer-facing PIN(s) of this receipt's linked tab(s), for
+    display on the customer's own receipt page.
+
+    2026-08-09 live request (Roy) — a customer whose tab was already fully
+    paid off had no way to find that receipt again by name (name search on
+    the public wall-QR page is deliberately restricted to still-open/still-
+    owing tabs, to stop anyone typing a guessable name from browsing a
+    customer's ENTIRE payment history with no login — see the security
+    revert this same day in core/keg_views.py). PIN search doesn't have
+    that problem — it's already the private, per-tab credential this app
+    uses everywhere else — so it was widened to reach a customer's full
+    history (core.keg_views._findable_tabs_qs_for_pin). But the PIN was
+    NEVER shown to the customer themselves, only to staff in the tabs
+    drawer — so widening the search alone didn't actually help until the
+    customer has some way to know/keep their own PIN. This surfaces it
+    here, on their own receipt, so it can be noted down for later.
+    """
+    from .models import BarTab as _BarTab
+    ids = _receipt_all_tab_ids(receipt)
+    if not ids:
+        return []
+    return list(
+        _BarTab.objects.filter(id__in=ids, business=receipt.business)
+        .exclude(tab_pin='')
+        .values_list('tab_pin', flat=True)
+        .distinct()
+    )
+
+
 def _get_live_tab_state(receipt):
     """Return (is_live, tab_status, lines, outstanding) for a tab-linked receipt.
 
@@ -450,6 +480,8 @@ def public_receipt(request, token):
         2,
     )
 
+    tab_pins = _receipt_tab_pin(receipt)
+
     return render(request, 'core/receipt_public.html', {
         'receipt':      receipt,
         'receipt_url':  receipt_url,
@@ -458,6 +490,7 @@ def public_receipt(request, token):
         'station_debt': station_debt,
         'pending_transfers_in': pending_transfers_in,
         'total_paid_so_far': total_paid_so_far,
+        'tab_pins':     tab_pins,
     })
 
 

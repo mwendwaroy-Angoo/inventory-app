@@ -3402,11 +3402,25 @@ class FindTabDebtStateTest(TestCase):
         self.assertEqual(len(data.get('tabs', [])), 1)
         self.assertEqual(data['tabs'][0]['name'], 'Debt Patron Two')
 
-    def test_fully_paid_settled_tab_not_found(self):
-        self._make_tab('Paid Patron', '7733', paid=True)
+    def test_fully_paid_settled_tab_now_found_by_pin(self):
+        """2026-08-09 live request (Roy) — a customer whose tab is already
+        fully paid off had no way to find their own receipt again. PIN
+        search (unlike name search) was widened to reach a customer's full
+        history — see _findable_tabs_qs_for_pin's own docstring for why
+        that's safe (a PIN is a private credential, not a guessable name)."""
+        tab = self._make_tab('Paid Patron', '7733', paid=True)
         resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '7733'})
         data = resp.json()
-        self.assertTrue(data.get('pin_not_found'))
+        rcpt = Receipt.objects.get(meta__tab_id=tab.id)
+        self.assertEqual(data.get('redirect'), f'/r/{rcpt.token}/')
+        self.assertNotIn('pin_not_found', data)
+
+    def test_fully_paid_settled_tab_still_not_found_by_name(self):
+        """Name search stays deliberately narrow — only PIN was widened."""
+        self._make_tab('Paid Name Patron', '7736', paid=True)
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Paid Name Patron'})
+        data = resp.json()
+        self.assertEqual(data.get('tabs', []), [])
 
     def test_void_tab_not_found(self):
         tab = self._make_tab('Void Patron', '7744', paid=False)
@@ -3424,6 +3438,116 @@ class FindTabDebtStateTest(TestCase):
         data = resp.json()
         self.assertIn('redirect', data)
         self.assertNotIn('pin_not_found', data)
+
+    def test_reused_pin_resolves_to_most_recent_match(self):
+        """BarTab's PIN-uniqueness constraint only applies to OPEN rows, so
+        an old, already-settled tab's PIN can legitimately be reused by a
+        later, different tab. Once fully-paid tabs became PIN-findable, a
+        naive .first() with no ordering would return an arbitrary one of
+        several matches — .order_by('-opened_at') must prefer the newest."""
+        older = self._make_tab('Old Owner Of 9001', '9001', paid=True)
+        older.opened_at = timezone.now() - timedelta(days=10)
+        older.save(update_fields=['opened_at'])
+        newer = self._make_tab('New Owner Of 9001', '9001', paid=False)
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '9001'})
+        data = resp.json()
+        newer_rcpt = Receipt.objects.get(meta__tab_id=newer.id)
+        self.assertEqual(data.get('redirect'), f'/r/{newer_rcpt.token}/')
+
+
+class FindTabSearchSplitRateLimitTest(TestCase):
+    """2026-08-09 live report (Roy): a busy bar's shared WiFi/NAT means
+    several genuinely different customers can search by name from the same
+    public IP within a minute — they shouldn't have to fight each other (or
+    an unrelated PIN lookup) for one shared rate-limit budget. PIN lookups
+    keep a tighter budget since they now reach a customer's full history
+    (see _findable_tabs_qs_for_pin) — a brute-force PIN guesser has a
+    bigger payoff per successful guess than before."""
+
+    def setUp(self):
+        from django.core.cache import cache as _cache
+        _cache.clear()
+        self.biz = Business.objects.create(name='Split Rate Limit Biz')
+
+    def test_pin_budget_exhausting_does_not_block_name_search(self):
+        for _i in range(5):
+            self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '1234'})
+        blocked = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '1234'})
+        self.assertEqual(blocked.status_code, 429)
+        still_ok = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Roy'})
+        self.assertEqual(still_ok.status_code, 200)
+
+    def test_name_budget_exhausting_does_not_block_pin_search(self):
+        for _i in range(20):
+            self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Roy'})
+        blocked = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Roy'})
+        self.assertEqual(blocked.status_code, 429)
+        still_ok = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': '1234'})
+        self.assertEqual(still_ok.status_code, 200)
+
+    def test_name_search_limit_is_higher_than_pin(self):
+        for _i in range(6):
+            resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Bosco'})
+        # 6 name-search calls must still succeed — the old shared 5/min
+        # budget would have blocked the 6th one.
+        self.assertEqual(resp.status_code, 200)
+
+
+class ReceiptShowsTabPinTest(TestCase):
+    """2026-08-09 live request (Roy): PIN search was widened to reach a
+    customer's full history, but the PIN was never actually shown to the
+    customer themselves — only to staff in the tabs drawer. Surfaced on the
+    customer's own receipt page so they have something to note down and use
+    for the widened lookup later."""
+
+    def setUp(self):
+        from django.core.cache import cache as _cache
+        _cache.clear()
+        self.biz = Business.objects.create(name='Receipt Pin Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rcptpin_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Rcpt Pin Beer',
+            material_no='RCPTPIN-01', unit='pcs', selling_price=Decimal('150'),
+        )
+
+    def test_tab_linked_receipt_shows_its_pin(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Pin Customer', status='OPEN',
+            tab_pin='4560', tab_receipt_token='rcptpin-tok', served_by=self.owner,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'),
+            payment_method='credit', recipient='Pin Customer',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Rcpt Pin Beer',
+            amount=Decimal('150'), is_paid=False,
+        )
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Rcpt Pin Beer', 'qty': 1, 'subtotal': 150}],
+            payment_method='tab', customer_name='Pin Customer', meta={'tab_id': tab.id},
+        )
+        resp = self.client.get(f'/r/{rcpt.token}/')
+        self.assertContains(resp, '4560')
+
+    def test_direct_sale_receipt_with_no_tab_shows_no_pin_block(self):
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Rcpt Pin Beer', 'qty': 1, 'subtotal': 150}],
+            payment_method='cash', customer_name='Walk-in',
+        )
+        resp = self.client.get(f'/r/{rcpt.token}/')
+        self.assertNotContains(resp, 'PIN:')
+
+    def test_tab_live_page_also_shows_pin(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bare Page Customer', status='OPEN',
+            tab_pin='4561', tab_receipt_token='rcptpin-tok2', served_by=self.owner,
+        )
+        resp = self.client.get(f'/tab/{tab.tab_receipt_token}/')
+        self.assertContains(resp, '4561')
 
 
 class WallTabQrVisibilityTest(TestCase):

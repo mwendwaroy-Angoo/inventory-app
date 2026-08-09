@@ -4854,34 +4854,73 @@ def _findable_tabs_qs(business):
     )
 
 
+def _findable_tabs_qs_for_pin(business):
+    """Every tab ever (paid or still owing), EXCEPT void ones — the PIN-
+    lookup counterpart to _findable_tabs_qs() (2026-08-09 live request —
+    Roy: a customer whose tab has already been fully paid off had no way to
+    find their own receipt again, since name search is deliberately
+    restricted to still-open/still-owing tabs — the whole point of that
+    restriction, per the security revert above, is that a NAME is
+    guessable/typeable by anyone with no proof of who they are. A PIN is
+    different: it's a private 4-digit code only shown to staff and (via
+    receipt_public.html) the customer themselves, and PIN lookups already
+    sit behind their own tighter rate limit — so widening PIN reach to a
+    customer's own history, paid or not, doesn't reopen the "browse
+    anyone's whole ledger by typing a name" hole. VOID stays excluded,
+    matching _findable_tabs_qs's own exclusion — a cancelled tab was a
+    corrected mistake, not a real bill, and was never meant to be
+    reachable here even by PIN.
+    Note: BarTab's uniqueness constraint on tab_pin only applies to OPEN
+    rows, so a PIN can legitimately be reused by a later, different tab once
+    the earlier one closes — .filter(tab_pin=q).order_by('-opened_at')
+    .first() in the caller resolves that ambiguity by preferring the most
+    recent match, the overwhelmingly likely intended one."""
+    return BarTab.objects.filter(business=business).exclude(status='VOID')
+
+
 def find_tab_search(request, business_id):
     """Public AJAX name-or-PIN lookup for find_tab_public — no login required.
 
     GET ?q=<query>
     - 4-digit numeric string → PIN lookup → returns {'redirect': '/tab/<token>/'}
     - Text string → name icontains search → returns {'tabs': [...]}
-    Rate-limited to 5 calls/minute per IP to prevent enumeration.
+    Rate-limited per IP to prevent enumeration — PIN and name lookups use
+    SEPARATE limits (2026-08-09): PIN now reaches a customer's full history
+    (see _findable_tabs_qs_for_pin), so its limit stays tight; name search
+    is unchanged in scope, and a busy bar's shared WiFi/NAT can genuinely
+    have several different customers searching within the same minute, so
+    that limit was raised rather than making them fight over one shared
+    budget with each other AND with anyone testing a PIN.
     """
     from django.core.cache import cache
     from accounts.models import Business as _Business
 
     ip = request.META.get('HTTP_X_FORWARDED_FOR', '') or request.META.get('REMOTE_ADDR', '')
     ip = ip.split(',')[0].strip()
-    rate_key = f'find_tab_rl:{business_id}:{ip}'
+
+    q = request.GET.get('q', '').strip()
+    is_pin_query = q.isdigit() and len(q) == 4
+    rate_bucket = 'pin' if is_pin_query else 'name'
+    rate_limit = 5 if is_pin_query else 20
+    rate_key = f'find_tab_rl_{rate_bucket}:{business_id}:{ip}'
     calls = cache.get(rate_key, 0)
-    if calls >= 5:
+    if calls >= rate_limit:
         return JsonResponse({'error': 'Subiri kidogo', 'tabs': []}, status=429)
     cache.set(rate_key, calls + 1, timeout=60)
 
-    q = request.GET.get('q', '').strip()
     if len(q) < 2:
         return JsonResponse({'tabs': []})
 
     business = get_object_or_404(_Business, id=business_id)
 
     # PIN lookup: exactly 4 digits → direct redirect
-    if q.isdigit() and len(q) == 4:
-        tab = _findable_tabs_qs(business).filter(tab_pin=q).first()
+    if is_pin_query:
+        tab = (
+            _findable_tabs_qs_for_pin(business)
+            .filter(tab_pin=q)
+            .order_by('-opened_at')
+            .first()
+        )
         url = _resolve_tab_public_url(tab) if tab else None
         if url:
             return JsonResponse({'tabs': [], 'redirect': url})
