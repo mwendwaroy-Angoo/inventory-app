@@ -483,6 +483,23 @@ def kitchen_board(request):
     # never silently folded in, matching daily_sales()'s own confirmed_rev/
     # credit_rev split and the "Mikopo Mapya" wording already used
     # elsewhere on this same page's shift panel.
+    #
+    # 2026-08-09, same-day follow-up: after the confirmed/credit split above
+    # shipped, Roy reported "Leo" STILL showed KES 2550 while his currently
+    # open shift's own cash/mpesa were both KES 0 — "not the actual sales
+    # recorded for today". Traced further and found a SECOND, independent
+    # gap in this same hand-rolled query: it never excluded `[SVQ]`-tagged
+    # transactions — the corrective cash/mpesa Issue a stock-take VARIANCE
+    # ACCEPT creates when a physical recount finds a discrepancy (see the
+    # 2026-07-25 "Stock-take-accept revenue was inflating 'today's' live
+    # dashboard" entry). That fix swept home()'s bar/kitchen_today_revenue,
+    # the dashboard_revenue_api poll, the revenue-target progress bar, and
+    # _reconcile()'s own cash/mpesa totals — but this specific Kitchen
+    # Board tile is a genuinely separate, hand-rolled query that was never
+    # part of that sweep, so a same-day stock-count correction (a real,
+    # recent activity here — Kuku/chicken stock was actively being
+    # corrected this session) could silently count as if it were a real
+    # sale. Matches home()'s own `.exclude(invoice_no='[SVQ]')` exactly.
     kitchen_revenue_today = Decimal('0')
     kitchen_revenue_credit = Decimal('0')
     if kitchen_store:
@@ -492,7 +509,7 @@ def kitchen_board(request):
             date=timezone.localdate(),
             item__store=kitchen_store,
             payment_method__in=['cash', 'mpesa', 'credit'],
-        ).select_related('item')
+        ).exclude(invoice_no='[SVQ]').select_related('item')
         for t in txns:
             rev = Decimal(str(t.revenue()))
             if t.payment_method == 'credit':
@@ -2218,10 +2235,10 @@ def kitchen_stats_api(request):
         return JsonResponse({'ok': False}, status=403)
     business = up.business
     kitchen_store = _kitchen_store(business)
-    # 2026-08-09 — same confirmed-vs-credit split as kitchen_board()'s own
-    # initial render (see that view's detailed comment); this is the LIVE
-    # poll refreshing the same "🍽 Leo" header tile, so it must stay
-    # consistent with what the page shows on load.
+    # 2026-08-09 — same confirmed-vs-credit split AND same [SVQ] exclusion
+    # as kitchen_board()'s own initial render (see that view's detailed
+    # comment); this is the LIVE poll refreshing the same "🍽 Leo" header
+    # tile, so it must stay consistent with what the page shows on load.
     revenue_today = Decimal('0')
     revenue_credit = Decimal('0')
     if kitchen_store:
@@ -2231,7 +2248,7 @@ def kitchen_stats_api(request):
             date=timezone.localdate(),
             item__store=kitchen_store,
             payment_method__in=['cash', 'mpesa', 'credit'],
-        ).select_related('item')
+        ).exclude(invoice_no='[SVQ]').select_related('item')
         for t in txns:
             rev = Decimal(str(t.revenue()))
             if t.payment_method == 'credit':

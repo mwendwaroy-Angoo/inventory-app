@@ -28162,12 +28162,31 @@ class KitchenBoardRevenueConfirmedCreditSplitTest(TestCase):
         )
         self.client.force_login(self.owner)
 
-    def _make_txn(self, payment_method, amount='100'):
+    def _make_txn(self, payment_method, amount='100', invoice_no=''):
         Transaction.objects.create(
             business=self.biz, item=self.item, type='Issue',
             qty=Decimal('-1'), sale_amount=Decimal(amount),
             payment_method=payment_method, date=timezone.localdate(),
+            invoice_no=invoice_no,
         )
+
+    def test_svq_corrective_transaction_excluded_from_leo(self):
+        """2026-08-09, same-day follow-up: a second, independent gap in the
+        same query — a stock-take variance-accept's corrective cash/mpesa
+        transaction (tagged invoice_no='[SVQ]') was never excluded here,
+        unlike every other 'today's revenue' surface in the app (home(),
+        the dashboard poll, the revenue-target bar, _reconcile()). A same-
+        day stock count correction must never look like a real sale."""
+        self._make_txn('cash', '400')
+        self._make_txn('cash', '2150', invoice_no='[SVQ]')
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.context['kitchen_revenue_today'], Decimal('400'))
+
+    def test_svq_corrective_transaction_excluded_from_stats_api(self):
+        self._make_txn('cash', '400')
+        self._make_txn('mpesa', '2150', invoice_no='[SVQ]')
+        resp = self.client.get('/kitchen/stats/')
+        self.assertEqual(resp.json()['revenue_today'], 400.0)
 
     def test_credit_excluded_from_leo_headline(self):
         self._make_txn('cash', '400')
