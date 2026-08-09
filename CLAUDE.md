@@ -5147,3 +5147,31 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   source, which has no other item to correct instead. 16 new tests
   (`KitchenStockReceiptRevenuePrecisionTest` ×10, `EditRawMaterialCostTest` ×6). No
   migrations. 1619 tests pass (core + accounts).
+- Kitchen Board "Leo" revenue breakdown + delete a mistaken Stock Receipt (2026-08-09,
+  same-day follow-up). **(1)** Roy: "for Leo to adjust from 2550 to today's figures as
+  much as there are none yet which means zero, is that too hard surely." The credit split
+  and `[SVQ]` exclusion fixed earlier the same day didn't move this figure at all — every
+  check already made came back clean, meaning it's genuinely summing `type='Issue'`,
+  cash/mpesa, non-`[SVQ]` transactions dated today. Rather than guess a third blind
+  exclusion fix (the exact mistake this app's own "audit ALL surfaces" rule warns
+  against), owner/manager now get a line-by-line breakdown (item/preset, amount, payment
+  method, exact time) via a small ▾ toggle next to the "Leo" tile, rendered from the same
+  page-load snapshot the figure itself is built from — so the real transactions behind the
+  number can actually be inspected instead of guessed at again. **(2)** Live report: "you
+  have made the previous receipt which was a mistake show up, I do not need it" — the
+  2026-08-09 fix making recently-closed Stock Receipts visible on the board (to enable
+  "Fungua Tena") surfaced an old, already-closed "Kamau" duplicate Roy never needed to see
+  before. New `kitchen_stock_receipt_delete` view/URL + "🗑 Futa" button alongside "↩️
+  Fungua Tena" on a closed receipt card. Deliberately safe: deletes only the
+  `KitchenStockReceipt`/`KitchenStockReceiptLine` bookkeeping rows — the real Receipt
+  `Transaction` each line created (which actually added stock) is a separate row entirely,
+  referenced FROM the line via a forward FK, and is never touched by deleting the line, so
+  an item's stock balance is completely unaffected. Owner/manager only, same tier as every
+  other financial-record correction. Same session, live clarifying question: Roy also
+  flagged "Chipo Faida" as possibly inaccurate — investigated and confirmed
+  `KitchenBatch.revenue_collected` is a completely separate, pre-existing mechanism (a
+  running counter incremented only at real `record_sale()` calls, never built from a live
+  Transaction query) untouched by any of this session's fixes; no code changed there
+  without concrete evidence of a specific discrepancy — asked Roy for one rather than
+  guessing a fourth time. 8 new tests (`KitchenStockReceiptDeleteTest` ×5,
+  `KitchenRevenueBreakdownTest` ×3). No migrations. 1627 tests pass (core + accounts).
