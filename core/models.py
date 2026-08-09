@@ -5856,11 +5856,47 @@ class KitchenStockReceipt(models.Model):
         """Sum of Issue-transaction revenue for this receipt's own items,
         in the window since this receipt was created (or up to closed_at
         once closed). Excludes void sales, matches Transaction.revenue()'s
-        own sale_amount-preferred convention."""
-        from django.db.models import Sum, Case, When, F, Value, DecimalField as _DF
+        own sale_amount-preferred convention.
+
+        2026-08-09 (Roy, live follow-up — "ensure the stock receipt
+        appends and adjusts sales/profits accordingly"): two real gaps
+        fixed, both matching the same classes of bug just found and fixed
+        on kitchen_board()'s "Leo" tile. (1) PER-PRESET attribution — a
+        line for one specific preset (e.g. "Full Chicken Leg" on a Kuku
+        item that ALSO sells as Wing/Bawa/Half Chicken Leg via other
+        presets) previously matched on item_id alone, so a sale of a
+        DIFFERENT preset of the same shared item — possibly received under
+        a completely separate receipt — silently counted toward THIS
+        receipt's own Mapato/Faida. Now filtered per (item_id, preset_id)
+        for a preset-specific line; a line with no preset (a plain item
+        with no per-cut cost split) still counts every sale of that item
+        regardless of preset, matching the original single-cost-price
+        design. (2) `[SVQ]`-tagged corrective transactions (a stock-take
+        variance-accept's book-vs-physical-count correction, never a real
+        sale) are now excluded, matching every other revenue computation
+        in the app.
+
+        Same-day follow-up: the strict per-preset match above (correct on
+        its own) silently excluded a real class of HISTORICAL sale — the
+        single-preset tile-tap path never attached `preset_id` to the
+        Transaction it created until the fix shipped earlier the same day
+        (see tileClick()'s own 2026-08-09 comment in kitchen_board.html) —
+        so a sale rung up before that fix has `preset=None` even though it
+        was genuinely sold as this receipt's own preset (often the ONLY
+        sellable preset on the item at the time, since an unreceived cut
+        stays hidden — see the "cut visibility" gating). Roy: "chicken
+        data i recorded for previous days for that given receipt have not
+        reflected yet, but the stock has reduced" confirmed this exact
+        gap. A `preset=None` sale of the receipt's own item is now also
+        counted — it can't be positively ruled out, and historically
+        `preset=None` was the norm, not the exception. Only a sale
+        explicitly tagged with a DIFFERENT, non-null preset (the original,
+        confirmed Wing-vs-Full-Leg bug) is still excluded — that's the one
+        case with positive proof it belongs elsewhere."""
+        from django.db.models import Sum, Case, When, F, Value, Q, DecimalField as _DF
         from django.db.models.functions import Abs, Coalesce
-        item_ids = list(self.lines.values_list('item_id', flat=True))
-        if not item_ids:
+        lines = list(self.lines.values_list('item_id', 'preset_id'))
+        if not lines:
             return Decimal('0')
         end = self.closed_at or timezone.now()
         _rev = Case(
@@ -5868,10 +5904,19 @@ class KitchenStockReceipt(models.Model):
             default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
             output_field=_DF(max_digits=12, decimal_places=2),
         )
+        item_q = Q(pk__in=[])
+        for item_id, preset_id in lines:
+            if preset_id:
+                item_q |= (
+                    Q(item_id=item_id, preset_id=preset_id) |
+                    Q(item_id=item_id, preset_id__isnull=True)
+                )
+            else:
+                item_q |= Q(item_id=item_id)
         total = Transaction.objects.filter(
-            business=self.business, item_id__in=item_ids, type='Issue',
+            item_q, business=self.business, type='Issue',
             created_at__gte=self.created_at, created_at__lte=end,
-        ).exclude(payment_method='void').aggregate(t=Sum(_rev))['t']
+        ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').aggregate(t=Sum(_rev))['t']
         return total or Decimal('0')
 
     @property
@@ -5891,6 +5936,23 @@ class KitchenStockReceipt(models.Model):
         self.status = 'DONE'
         self.closed_at = timezone.now()
         self.closed_by = user
+        self.save(update_fields=['status', 'closed_at', 'closed_by'])
+
+    def reopen(self):
+        """Undo a mistaken/premature close — total_revenue()'s window ends
+        at closed_at, so a receipt closed before any sales were rung up
+        (2026-08-09 live report: Roy closed "Kamau" — 23 Full Chicken Leg
+        — while it still showed KES 0 revenue, before he'd resumed selling)
+        is permanently frozen at whatever it earned by that moment, with no
+        way for later real sales to ever count toward it again. Clearing
+        closed_at/closed_by re-opens the window through to "now" (see
+        total_revenue()'s own end = self.closed_at or timezone.now()).
+        A no-op if already OPEN."""
+        if self.status == 'OPEN':
+            return
+        self.status = 'OPEN'
+        self.closed_at = None
+        self.closed_by = None
         self.save(update_fields=['status', 'closed_at', 'closed_by'])
 
 

@@ -1619,6 +1619,31 @@ def kitchen_stock_receipt_close(request, receipt_id):
     return JsonResponse({'ok': True, 'receipt': _kitchen_stock_receipt_to_dict(receipt)})
 
 
+@login_required
+@require_POST
+def kitchen_stock_receipt_reopen(request, receipt_id):
+    """Undo a mistaken/premature close (2026-08-09 live report: Roy closed
+    "Kamau" — 23 Full Chicken Leg — while it still showed KES 0 revenue,
+    before he'd resumed selling; total_revenue()'s window is frozen at
+    closed_at, so it could never earn any real sales again once closed).
+    Owner/manager only — reopening changes a receipt's own historical
+    profit figure, same sensitivity tier as every other financial-figure
+    correction in this app."""
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not is_owner:
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya mmiliki/meneja inahitajika'}, status=403)
+
+    receipt = KitchenStockReceipt.objects.filter(id=receipt_id, business=business).first()
+    if receipt is None:
+        return JsonResponse({'ok': False, 'error': 'Receipt haikupatikana.'}, status=404)
+
+    receipt.reopen()
+    return JsonResponse({'ok': True, 'receipt': _kitchen_stock_receipt_to_dict(receipt)})
+
+
 # ── Cross-counter tab merge check (AJAX GET) ─────────────────────────────────
 
 @login_required
@@ -2149,6 +2174,75 @@ def edit_kitchen_batch_target(request, batch_id):
         'message': (
             f'Gharama ya batch ya {batch.item.description} imebadilishwa kutoka '
             f'KES {old_cost:,.0f} kwenda KES {new_cost:,.0f}.'
+        ),
+    })
+
+
+@login_required
+@require_POST
+def edit_raw_material_cost(request, item_id):
+    """Correct a raw-material-source item's own cost_price (e.g. "Raw
+    Potatoes" feeding Chipo's batch draw) by typing the SACK's whole cost
+    and how many of the item's own units make up one sack — the system
+    divides for you.
+
+    2026-08-09 live report (Roy): the raw-material tile's ✏️ pencil used
+    to hand off to Add Transaction's Receipt flow (per this app's own
+    "Item.cost_price has exactly ONE designed writer" rule) — Roy
+    explicitly rejected that as "bogus" and asked for a direct sack-
+    division entry instead: "it represents the 6 buckets equivalent to a
+    whole sack division, it is easier that way." This is a NEW, deliberate,
+    narrowly-scoped exception to that rule — same category as
+    KitchenBatch.open_batch()'s pre-existing exception (see the Known
+    Issues note in CLAUDE.md) — restricted to items that ARE actually a
+    raw_material_source for some batch item (item.derived_batch_items
+    exists), never any arbitrary item. Also moves the correction affordance
+    OFF the batch tile's "✏️ Hariri Gharama" (which now hides itself for a
+    raw-material-tracked batch — KitchenBatch.open_batch() already derives
+    cost_total from kg_drawn × raw_item.cost_price automatically, so
+    fixing THIS item's cost_price is the correct lever for every FUTURE
+    draw; "Hariri Gharama" stays for batches with no raw_material_source,
+    which have no such item to correct instead).
+
+    Owner/manager only, matching every other financial-figure correction
+    in this app."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
+    business = up.business
+    if not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya mmiliki/meneja pekee'}, status=403)
+
+    item = Item.objects.filter(id=item_id, store__business=business).first()
+    if item is None:
+        return JsonResponse({'ok': False, 'error': 'Bidhaa haikupatikana'}, status=404)
+    if not item.derived_batch_items.exists():
+        return JsonResponse(
+            {'ok': False, 'error': 'Hii si malighafi ya batch yoyote'}, status=400,
+        )
+
+    try:
+        sack_cost = Decimal((request.POST.get('sack_cost') or '').strip())
+        units_per_sack = Decimal((request.POST.get('units_per_sack') or '').strip())
+    except InvalidOperation:
+        return JsonResponse({'ok': False, 'error': 'Nambari batili'}, status=400)
+    if sack_cost <= 0 or units_per_sack <= 0:
+        return JsonResponse(
+            {'ok': False, 'error': 'Gharama ya gunia na idadi ya vyombo lazima ziwe zaidi ya 0'}, status=400,
+        )
+
+    old_cost = item.cost_price
+    new_cost = (sack_cost / units_per_sack).quantize(Decimal('0.01'))
+    item.cost_price = new_cost
+    item.save(update_fields=['cost_price'])
+
+    return JsonResponse({
+        'ok': True,
+        'item': {'id': item.id, 'cost_price': float(item.cost_price)},
+        'message': (
+            f'Gharama ya {item.description} imebadilishwa kutoka '
+            f'KES {(old_cost or 0):,.2f} kwenda KES {new_cost:,.2f} kwa kila {item.unit} '
+            f'(gunia ya KES {sack_cost:,.0f} ÷ {units_per_sack:g} {item.unit}).'
         ),
     })
 

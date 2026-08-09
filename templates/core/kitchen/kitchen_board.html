@@ -1897,19 +1897,24 @@
       // "Raw Potatoes" feeding Chipo's batch draw) is never sold directly —
       // "the output which is chipo" is what's sold — so its own tile must
       // never offer "custom SELL price". It needs a cost-correction
-      // affordance instead, and per this app's own single-designed-writer
-      // rule for Item.cost_price (see Known Issues), that means handing off
-      // to Add Transaction's Receipt flow, prefilled — never a new direct-
-      // write endpoint. Owner/manager only, matching every other cost
+      // affordance instead.
+      //
+      // Same-day follow-up: the hand-off-to-Add-Transaction version above
+      // was explicitly rejected by Roy as "bogus" — replaced with a direct
+      // sack-cost ÷ units-per-sack entry (kbEditRawMaterialCost /
+      // edit_raw_material_cost), a new deliberate, narrowly-scoped
+      // exception to the single-designed-writer rule (see that view's own
+      // docstring). Owner/manager only, matching every other cost
       // correction in this app.
       var customPriceBtn;
       if (item.is_raw_material_source) {
         customPriceBtn = (!IS_OWNER) ? '' :
-          '<a href="/add-transaction/?item=' + item.id + '" ' +
-          'style="position:absolute; top:.35rem; right:.35rem; width:1.6rem; height:1.6rem; display:flex; ' +
-          'align-items:center; justify-content:center; line-height:1; font-size:.75rem; text-decoration:none; ' +
+          '<button class="btn btn-sm" style="position:absolute; top:.35rem; right:.35rem; width:1.6rem; height:1.6rem; ' +
+          'padding:0; line-height:1; font-size:.75rem; ' +
           'background:rgba(93,168,240,.12); color:#5da8f0; border:1px solid rgba(93,168,240,.3); border-radius:50%;" ' +
-          'title="Hariri gharama — si kwa mauzo, huu ni malighafi" onclick="event.stopPropagation();">✏️</a>';
+          'title="Hariri gharama — gunia ÷ vyombo" onclick="event.stopPropagation(); ' +
+          'kbEditRawMaterialCost(' + item.id + ',\'' + (item.name || '').replace(/'/g, "\\'") + '\',\'' +
+          (item.unit || '').replace(/'/g, "\\'") + '\');">✏️</button>';
       } else {
         // 2026-07-31 live request: "kitchen staff can input a custom selling
         // price... when the item sold does not physically meet the quantity
@@ -2045,7 +2050,15 @@
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(255,255,255,.04);border:1px solid #555;border-radius:5px;color:#b0b0b0;cursor:pointer;">✓ Imekwisha</button>' +
           '<button onclick="kbDiscardBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\', this); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;cursor:pointer;">🗑 Tupa</button>' +
-          (IS_OWNER ? '<button onclick="kbEditBatchTarget(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\',' + batch.cost_total + '); event.stopPropagation();" ' +
+          // 2026-08-09 (Roy): "Hariri Gharama" here now hides itself for a
+          // raw-material-tracked batch (item.raw_source_id set) — Roy's
+          // explicit ask was to move the correction affordance onto the
+          // RAW ITEM's own tile instead (kbEditRawMaterialCost above),
+          // since open_batch() already derives cost_total automatically
+          // from kg_drawn × raw_item.cost_price for every FUTURE draw once
+          // that item's cost is fixed. Kept for a batch with no raw
+          // material source — that one still has no other item to correct.
+          (IS_OWNER && !item.raw_source_id ? '<button onclick="kbEditBatchTarget(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\',' + batch.cost_total + '); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.3);border-radius:5px;color:#c9a84c;cursor:pointer;">✏️ Hariri Gharama</button>' : '') +
           '</div>';
       }
@@ -4238,35 +4251,78 @@
       .catch(function(){ btn.disabled=false; btn.textContent='Hifadhi Receipt'; errEl.textContent='Hitilafu ya mtandao.'; errEl.style.display='block'; });
   };
 
+  function _ksrLineHtml(r) {
+    return r.lines.map(function(l){
+      var lbl = l.preset_label ? (l.item_name + ' — ' + l.preset_label) : l.item_name;
+      return '<span style="display:inline-block;margin-right:.6rem;color:#b0b0b0;">' + lbl + ': ' + l.qty_received + ' @ KES ' + l.unit_cost.toFixed(2) + '</span>';
+    }).join('');
+  }
+
   function loadStockReceipts() {
     fetch('/kitchen/stock-receipt/list/')
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (!d.ok) return;
         _ksrOpenReceipts = d.open || [];
+        var closedReceipts = d.closed || [];
         var panel = document.getElementById('kb-stock-receipts-panel');
         if (!panel) return;
-        if (!_ksrOpenReceipts.length) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
+        if (!_ksrOpenReceipts.length && !closedReceipts.length) {
+          panel.style.display = 'none'; panel.innerHTML = ''; return;
+        }
         panel.style.display = 'block';
-        panel.innerHTML = _ksrOpenReceipts.map(function(r){
+        var openHtml = _ksrOpenReceipts.map(function(r){
           var pft = r.profit;
           var pftColor = pft >= 0 ? '#4caf50' : '#c0395a';
-          var linesHtml = r.lines.map(function(l){
-            var lbl = l.preset_label ? (l.item_name + ' — ' + l.preset_label) : l.item_name;
-            return '<span style="display:inline-block;margin-right:.6rem;color:#b0b0b0;">' + lbl + ': ' + l.qty_received + ' @ KES ' + l.unit_cost.toFixed(2) + '</span>';
-          }).join('');
           return '<div style="background:var(--onyx-card);border:1px solid rgba(76,175,80,.25);border-radius:10px;padding:.6rem .75rem;margin-bottom:.4rem;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;">' +
               '<div style="font-size:.85rem;color:#f0ece4;font-weight:600;">🧾 ' + (r.supplier || 'Stock Receipt') + (r.invoice_no ? ' #' + r.invoice_no : '') + '</div>' +
               '<button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.35);color:#4caf50;font-size:.74rem;" onclick="window.openStockReceiptCloseModal(' + r.id + ')">✓ Fungwa</button>' +
             '</div>' +
-            '<div style="font-size:.74rem;margin:.35rem 0;">' + linesHtml + '</div>' +
+            '<div style="font-size:.74rem;margin:.35rem 0;">' + _ksrLineHtml(r) + '</div>' +
             '<div style="font-size:.78rem;color:#b0b0b0;">Gharama: KES ' + Math.round(r.total_cost) + ' · Mapato: KES ' + Math.round(r.total_revenue) + ' · Faida: <strong style="color:' + pftColor + ';">KES ' + Math.round(pft) + '</strong>' + (r.profit_pct !== null ? ' (' + r.profit_pct + '%)' : '') + '</div>' +
           '</div>';
         }).join('');
+        // 2026-08-09 (Roy — "ensure the stock receipt appends and adjusts
+        // sales/profits accordingly"): recently-closed receipts are now
+        // shown too, with a "↩️ Fungua Tena" (reopen) safety net —
+        // total_revenue()'s window freezes at closed_at, so a receipt
+        // closed before all its sales were rung up would otherwise never
+        // be able to earn more revenue again. Owner/manager only, same
+        // tier as closing/cost correction.
+        var closedHtml = closedReceipts.map(function(r){
+          var pft = r.profit;
+          var pftColor = pft >= 0 ? '#4caf50' : '#c0395a';
+          return '<div style="background:var(--onyx-card);border:1px solid rgba(136,136,136,.2);border-radius:10px;padding:.6rem .75rem;margin-bottom:.4rem;opacity:.85;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;">' +
+              '<div style="font-size:.85rem;color:#b0b0b0;font-weight:600;">🧾 ' + (r.supplier || 'Stock Receipt') + (r.invoice_no ? ' #' + r.invoice_no : '') + ' <span style="color:#888;font-size:.72rem;font-weight:400;">— imefungwa</span></div>' +
+              (IS_OWNER ? '<button class="btn btn-sm" style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.35);color:#5da8f0;font-size:.74rem;" onclick="window.ksrReopen(' + r.id + ')">↩️ Fungua Tena</button>' : '') +
+            '</div>' +
+            '<div style="font-size:.74rem;margin:.35rem 0;">' + _ksrLineHtml(r) + '</div>' +
+            '<div style="font-size:.78rem;color:#888;">Gharama: KES ' + Math.round(r.total_cost) + ' · Mapato: KES ' + Math.round(r.total_revenue) + ' · Faida: <strong style="color:' + pftColor + ';">KES ' + Math.round(pft) + '</strong>' + (r.profit_pct !== null ? ' (' + r.profit_pct + '%)' : '') + '</div>' +
+          '</div>';
+        }).join('');
+        panel.innerHTML = openHtml + closedHtml;
       })
       .catch(function(){});
   }
+
+  window.ksrReopen = function(receiptId) {
+    if (!confirm('Fungua tena receipt hii? Mapato yataendelea kuongezeka kutoka sasa.')) return;
+    var body = new URLSearchParams();
+    body.append('csrfmiddlewaretoken', CSRF);
+    fetch('/kitchen/stock-receipt/' + receiptId + '/reopen/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) {
+          showToast('✓ Receipt imefunguliwa tena.');
+          loadStockReceipts();
+        } else {
+          showToast(d.error || 'Hitilafu.');
+        }
+      })
+      .catch(function(){ showToast('Hitilafu ya mtandao.'); });
+  };
 
   window.openStockReceiptCloseModal = function(receiptId) {
     var r = _ksrOpenReceipts.find(function(x){ return x.id === receiptId; });
@@ -5233,6 +5289,36 @@
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (d.ok) { showToast(d.message || '✓ Imesasishwa'); setTimeout(function(){ location.reload(); }, 1000); }
+        else       { showToast('❌ ' + (d.error || 'Hitilafu'), 3000); }
+      })
+      .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });
+  };
+
+  // 2026-08-09 live request (Roy): "the pencil icon is directing me to the
+  // add transaction, that is bogus... it represents the 6 buckets
+  // equivalent to a whole sack division, it is easier that way" —
+  // replaces the old hand-off-to-Add-Transaction pencil with a direct
+  // sack-cost ÷ units-per-sack entry, same "simple prompt" pattern as
+  // kbEditBatchTarget above.
+  window.kbEditRawMaterialCost = function(itemId, itemName, currentUnit) {
+    var sackCost = prompt('Gharama ya gunia nzima ya "' + itemName + '" (KES)?');
+    if (sackCost === null) return;
+    sackCost = sackCost.trim();
+    if (!sackCost) return;
+    var unitsPerSack = prompt(
+      'Gunia moja ni ' + currentUnit + ' ngapi? (mfano: ndoo 6 kwa gunia moja)', '6'
+    );
+    if (unitsPerSack === null) return;
+    unitsPerSack = unitsPerSack.trim();
+    if (!unitsPerSack) return;
+    var body = new URLSearchParams();
+    body.append('csrfmiddlewaretoken', CSRF);
+    body.append('sack_cost', sackCost);
+    body.append('units_per_sack', unitsPerSack);
+    fetch('/kitchen/item/' + itemId + '/edit-raw-cost/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) { showToast(d.message || '✓ Imesasishwa'); setTimeout(function(){ location.reload(); }, 1200); }
         else       { showToast('❌ ' + (d.error || 'Hitilafu'), 3000); }
       })
       .catch(function(){ showToast('❌ Hitilafu ya mtandao', 3000); });

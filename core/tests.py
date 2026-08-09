@@ -28227,3 +28227,224 @@ class KitchenBoardRevenueConfirmedCreditSplitTest(TestCase):
         self._make_txn('void', '999')
         resp = self.client.get('/kitchen/')
         self.assertEqual(resp.context['kitchen_revenue_today'], Decimal('500'))
+
+
+class KitchenStockReceiptRevenuePrecisionTest(TestCase):
+    """2026-08-09 live follow-up (Roy): "ensure the stock receipt appends
+    and adjusts sales/profits accordingly." Two real gaps fixed in
+    KitchenStockReceipt.total_revenue(), the same classes of bug just
+    found on kitchen_board()'s "Leo" tile: (1) it matched on item_id alone,
+    so a sale of a DIFFERENT preset of the same shared item (e.g. "Wing"
+    sold while a receipt for "Full Chicken Leg" is open) silently counted
+    toward this receipt's own Mapato/Faida; (2) it never excluded
+    invoice_no='[SVQ]' stock-count corrective transactions. Also covers
+    the new reopen() safety net for a receipt closed before all its sales
+    were rung up."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KSR Precision Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='ksrprec_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='ksrprec_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='KSRPREC-01', unit='Pcs', selling_price=Decimal('0'),
+        )
+        self.full_leg = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Full Chicken Leg', price=Decimal('250'), quantity_consumed=Decimal('1'),
+        )
+        self.wing = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Wing', price=Decimal('70'), quantity_consumed=Decimal('0.125'),
+        )
+        self.client.force_login(self.owner)
+        self.receipt = KitchenStockReceipt.objects.create(business=self.biz, store=self.store)
+        KitchenStockReceiptLine.objects.create(
+            receipt=self.receipt, item=self.kuku, preset=self.full_leg,
+            qty_received=Decimal('23'), line_cost=Decimal('3700'),
+        )
+
+    def _sell(self, preset, amount, invoice_no=''):
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, preset=preset, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal(amount),
+            payment_method='cash', invoice_no=invoice_no,
+            created_at=timezone.now(),
+        )
+
+    def test_different_preset_sale_not_counted(self):
+        """A Wing sale must NOT count toward the Full Chicken Leg receipt's
+        own Mapato — they're different presets of the same shared item."""
+        self._sell(self.wing, '70')
+        self.assertEqual(self.receipt.total_revenue(), Decimal('0'))
+
+    def test_matching_preset_sale_counted(self):
+        self._sell(self.full_leg, '250')
+        self.assertEqual(self.receipt.total_revenue(), Decimal('250'))
+
+    def test_no_preset_historical_sale_still_counted(self):
+        """2026-08-09, same-day follow-up (Roy): "chicken data i recorded
+        for previous days for that given receipt have not reflected yet,
+        but the stock has reduced" — a sale rung up via the single-preset
+        tile-tap path BEFORE its own preset_id-passing fix shipped the same
+        day has preset=None on its Transaction. It must still count toward
+        the receipt's own preset line — it can't be positively ruled out,
+        and preset=None was the historical norm, not the exception."""
+        self._sell(None, '250')
+        self.assertEqual(self.receipt.total_revenue(), Decimal('250'))
+
+    def test_svq_corrective_transaction_excluded(self):
+        self._sell(self.full_leg, '250')
+        self._sell(self.full_leg, '999', invoice_no='[SVQ]')
+        self.assertEqual(self.receipt.total_revenue(), Decimal('250'))
+
+    def test_plain_item_line_counts_every_preset(self):
+        """A line with NO preset (plain item, no per-cut cost split) keeps
+        the original behaviour — every sale of that item counts, regardless
+        of which preset (if any) it went through."""
+        plain_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Smokie',
+            material_no='KSRPREC-02', unit='Pcs', selling_price=Decimal('30'),
+        )
+        plain_receipt = KitchenStockReceipt.objects.create(business=self.biz, store=self.store)
+        KitchenStockReceiptLine.objects.create(
+            receipt=plain_receipt, item=plain_item, preset=None,
+            qty_received=Decimal('10'), line_cost=Decimal('200'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=plain_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('30'),
+            payment_method='cash', created_at=timezone.now(),
+        )
+        self.assertEqual(plain_receipt.total_revenue(), Decimal('30'))
+
+    def test_reopen_extends_window_for_new_sales(self):
+        """The literal live scenario: a receipt closed while it still
+        showed KES 0 revenue must be able to earn real sales again once
+        reopened."""
+        self.receipt.close(self.owner)
+        self.assertEqual(self.receipt.status, 'DONE')
+        self.assertIsNotNone(self.receipt.closed_at)
+        # A sale made AFTER close must not count while still closed.
+        self._sell(self.full_leg, '250')
+        self.assertEqual(self.receipt.total_revenue(), Decimal('0'))
+
+        self.receipt.reopen()
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, 'OPEN')
+        self.assertIsNone(self.receipt.closed_at)
+        self.assertIsNone(self.receipt.closed_by)
+        # Now the same sale (already recorded, still within [created_at, now])
+        # counts, since the window extends to now() again.
+        self.assertEqual(self.receipt.total_revenue(), Decimal('250'))
+
+    def test_reopen_already_open_is_noop(self):
+        self.receipt.reopen()
+        self.assertEqual(self.receipt.status, 'OPEN')
+
+    def test_reopen_view_owner_only(self):
+        self.receipt.close(self.owner)
+        resp = self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/reopen/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, 'OPEN')
+
+    def test_reopen_view_blocks_plain_staff(self):
+        self.receipt.close(self.owner)
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/reopen/')
+        self.assertEqual(resp.status_code, 403)
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, 'DONE')
+
+    def test_reopen_view_cross_business_rejected(self):
+        other_biz = Business.objects.create(name='Other KSR Biz')
+        other_owner = User.objects.create_user(username='ksrprec_other', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        self.receipt.close(self.owner)
+        self.client.force_login(other_owner)
+        resp = self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/reopen/')
+        self.assertEqual(resp.status_code, 404)
+        self.receipt.refresh_from_db()
+        self.assertEqual(self.receipt.status, 'DONE')
+
+
+class EditRawMaterialCostTest(TestCase):
+    """2026-08-09 live report (Roy): "the pencil icon is directing me to
+    the add transaction, that is bogus... it represents the 6 buckets
+    equivalent to a whole sack division, it is easier that way" — a
+    direct sack-cost ÷ units-per-sack entry for a raw-material-source
+    item's own cost_price, replacing the old hand-off to Add Transaction."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='rawcost')
+        self.raw_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Potatoes',
+            unit='Ndoo', material_no='RAWCOST-01', cost_price=Decimal('0'),
+            opening_bin_balance=6,
+        )
+        self.item.raw_material_source = self.raw_item
+        self.item.save(update_fields=['raw_material_source'])
+        self.staff_user = User.objects.create_user(username='rawcost_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='kitchen')
+        self.client.force_login(self.owner_user)
+
+    def _edit(self, sack_cost='1200', units_per_sack='6', item_id=None):
+        return self.client.post(
+            f'/kitchen/item/{item_id or self.raw_item.id}/edit-raw-cost/',
+            {'sack_cost': sack_cost, 'units_per_sack': units_per_sack},
+        )
+
+    def test_divides_sack_cost_by_units_per_sack(self):
+        resp = self._edit(sack_cost='1200', units_per_sack='6')
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['item']['cost_price'], 200.0)
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.cost_price, Decimal('200.00'))
+
+    def test_future_kitchen_batch_draws_use_corrected_cost(self):
+        """The whole point: fixing THIS item's cost_price makes the next
+        KitchenBatch draw price correctly, with zero further action."""
+        self._edit(sack_cost='1200', units_per_sack='6')
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, draw_qty=Decimal('2'),
+        )
+        self.assertEqual(batch.cost_total, Decimal('400.00'))
+
+    def test_rejects_item_that_is_not_a_raw_material_source(self):
+        plain_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Smokie',
+            material_no='RAWCOST-02', unit='Pcs', selling_price=Decimal('30'),
+        )
+        resp = self._edit(item_id=plain_item.id)
+        self.assertEqual(resp.status_code, 400)
+        plain_item.refresh_from_db()
+        self.assertEqual(plain_item.cost_price, None)
+
+    def test_invalid_amount_rejected(self):
+        resp = self._edit(sack_cost='0', units_per_sack='6')
+        self.assertEqual(resp.status_code, 400)
+        resp2 = self._edit(sack_cost='1200', units_per_sack='0')
+        self.assertEqual(resp2.status_code, 400)
+        resp3 = self._edit(sack_cost='not-a-number', units_per_sack='6')
+        self.assertEqual(resp3.status_code, 400)
+
+    def test_plain_staff_blocked(self):
+        self.client.force_login(self.staff_user)
+        resp = self._edit()
+        self.assertEqual(resp.status_code, 403)
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.cost_price, Decimal('0'))
+
+    def test_cross_business_item_rejected(self):
+        other_biz = Business.objects.create(name='Other Rawcost Biz')
+        other_owner = User.objects.create_user(username='rawcost_other', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        self.client.force_login(other_owner)
+        resp = self._edit()
+        self.assertEqual(resp.status_code, 404)
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.cost_price, Decimal('0'))
