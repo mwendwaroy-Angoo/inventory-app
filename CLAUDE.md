@@ -5042,3 +5042,51 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   today's; the day-level Z-report total stays deduped across overlapping shifts. No new
   migrations. 9 new tests (`AdHocExpenseDayReconciliationTest`). 1585 tests pass (core +
   accounts).
+- Ad-hoc expense edit/recover + Kitchen "Leo" credit conflation fix (2026-08-09, same-day
+  follow-up). **(1)** Roy: "can i recover a counter cash entry placed on a wrong date
+  mistakenly" — clarified via `AskUserQuestion` to mean the Matumizi/ad-hoc expense tool
+  specifically (not petty cash). No edit path existed for an already-recorded
+  `BusinessExpense` — only create. New `edit_ad_hoc_expense()`/`ad_hoc_expenses_list()`
+  (`core/recurring_expense_views.py`, owner/manager only, matching the record permission
+  tier) let an entry be found and corrected — most often its date. Answered Roy's
+  follow-up question directly: no separate "recompute" step is needed after correcting the
+  date — `shift_views._ad_hoc_expense_total_for_shift()` and the Z-report's day-level query
+  both read `BusinessExpense` fresh on every render (see the entry immediately above), so
+  moving an entry's date makes it disappear from the wrong day's Shift History/Z-report row
+  and appear on the correct day's the very next time either is opened, automatically. New
+  "📋 Historia ya Matumizi" collapsible panel (`templates/core/expense_history_panel.html`,
+  same collapsible-panel convention as the "🕐 Malipo ya Hivi Karibuni" Recent Payments
+  panel) added to both Bar Board and Kitchen Board — date picker + list + "✏️ Hariri" per
+  entry, reusing the existing `expenseModal` in a new edit mode (`window.openExpenseModal
+  (expense)` prefills and retitles the modal; `_submitExpense()` branches POST target/
+  method on whether `window._expEditingId` is set). A future/invalid date submitted on
+  edit falls back to the entry's OWN existing date, not today (deliberately different from
+  `record_ad_hoc_expense()`'s own today-fallback) — an edit that only touches amount/
+  description must never silently move an otherwise-correct date. **(2)** Same-day live
+  report (Roy, Monsoon Inn, with screenshot): Kitchen Board's "🍽 Leo" header tile showed
+  KES 2550 while the currently-open shift's own Cash Sales/M-Pesa were both KES 0 — "i have
+  not [rung/confirmed] today's entries so that amount is inaccurate... the same applies to
+  recent sales and receipts, since it affects all of them." Traced (not guessed) to
+  `kitchen_board()`'s `kitchen_revenue_today` (and its live-poll sibling
+  `kitchen_stats_api`) blending `payment_method__in=['cash','mpesa','credit']` into ONE
+  number with no distinction — the exact "confirmed vs unpaid revenue" conflation bug
+  already found and fixed on 2026-07-31 for `daily_sales()`/`home()`/`stock_list.html`/the
+  close-shift result panel, but never extended to this specific tile — a genuinely separate
+  code path that never calls `_reconcile()`, so the earlier fix's own sweep missed it.
+  Verified Receipts list (`receipts_list.html`) already correctly badges a `payment_method
+  ='credit'` receipt as "Credit" (not "Cash") from the 2026-07-25 sprint, and `daily_sales()`
+  was already fixed — so "it affects all of them" was really one shared root cause (Kitchen
+  Board's own header tile) making an otherwise-correct picture look inconsistent, not a
+  spreading bug. Also ruled out (verified directly, not assumed) a `Transaction.date` UTC/
+  Nairobi day-boundary bug — confirmed `DateField.get_prep_value()` already correctly
+  resolves an aware `timezone.now()` default to the Nairobi-local calendar day via Django's
+  own `to_python()`, matching `timezone.localdate()` exactly. Fixed: `kitchen_revenue_today`
+  is now confirmed (cash+mpesa) only, with `kitchen_revenue_credit` split out separately;
+  `kitchen_stats_api` returns both `revenue_today`/`revenue_credit` for its live poll.
+  Kitchen Board shows "+ Deni: KES X" as its own badge (`kb-revenue-credit-badge`), hidden
+  when zero, using the same "Mikopo Mapya" title-tooltip wording this page's own shift panel
+  already established — never silently folded into "Leo" itself. Bar Board audited and
+  confirmed it has no equivalent server-computed "today revenue" header tile to need the
+  same fix. 15 new tests (`AdHocExpenseEditRecoverTest` ×10,
+  `KitchenBoardRevenueConfirmedCreditSplitTest` ×6 — one test file addition covers both). No
+  migrations. 1601 tests pass (core + accounts).
