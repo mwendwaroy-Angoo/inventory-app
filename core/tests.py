@@ -28404,6 +28404,60 @@ class EditRawMaterialCostTest(TestCase):
         self.raw_item.refresh_from_db()
         self.assertEqual(self.raw_item.cost_price, Decimal('200.00'))
 
+    def _open_batch_at_placeholder_cost(self, draw_qty='4'):
+        """open_batch() rejects a literal 0 cost outright — Roy's real
+        scenario is a wrong/placeholder cost entered before the real sack
+        price was known (e.g. KES 10/Ndoo, a guess), not literally unset."""
+        self.raw_item.cost_price = Decimal('10')
+        self.raw_item.save(update_fields=['cost_price'])
+        return KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, draw_qty=Decimal(draw_qty),
+        )
+
+    def test_correcting_cost_retroactively_updates_open_batch(self):
+        """2026-08-09, same-day follow-up (Roy): "i had not put in the cost
+        price for the gunia before, i put it just a few moments ago...
+        i expected it to adjust in a certain way, not to stay the way it
+        was before" — a batch already drawn BEFORE the correction (at the
+        old, wrong placeholder raw cost) must have its own cost_total (and
+        therefore its Faida) retroactively recomputed, not stay frozen."""
+        batch = self._open_batch_at_placeholder_cost()
+        self.assertEqual(batch.cost_total, Decimal('40.00'))  # 4 × 10 (placeholder)
+
+        resp = self._edit(sack_cost='1200', units_per_sack='6')  # → KES 200/Ndoo
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertIn(self.item.description, resp.json()['updated_batches'])
+
+        batch.refresh_from_db()
+        self.assertEqual(batch.cost_total, Decimal('800.00'))  # 4 Ndoo × 200
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('800.00'))
+
+    def test_correction_never_touches_revenue_collected(self):
+        """Only cost_total changes — revenue_collected reflects real sales
+        and must be completely unaffected by a cost correction."""
+        batch = self._open_batch_at_placeholder_cost()
+        batch.record_sale(Decimal('500'), payment_method='cash', recorded_by=self.owner_user)
+        self._edit(sack_cost='1200', units_per_sack='6')
+        batch.refresh_from_db()
+        self.assertEqual(batch.revenue_collected, Decimal('500'))
+
+    def test_closed_batch_not_retroactively_updated(self):
+        """A CLOSED batch's cost_total is historical record — only OPEN
+        batches (still selling, still representing a live decision) get
+        the retroactive correction."""
+        batch = self._open_batch_at_placeholder_cost()
+        batch.status = 'DEPLETED'
+        batch.save(update_fields=['status'])
+        self._edit(sack_cost='1200', units_per_sack='6')
+        batch.refresh_from_db()
+        self.assertEqual(batch.cost_total, Decimal('40.00'))
+
+    def test_batch_with_no_open_batches_reports_none_updated(self):
+        resp = self._edit(sack_cost='1200', units_per_sack='6')
+        self.assertEqual(resp.json()['updated_batches'], [])
+
     def test_future_kitchen_batch_draws_use_corrected_cost(self):
         """The whole point: fixing THIS item's cost_price makes the next
         KitchenBatch draw price correctly, with zero further action."""

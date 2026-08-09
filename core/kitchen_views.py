@@ -2258,7 +2258,26 @@ def edit_raw_material_cost(request, item_id):
     which have no such item to correct instead).
 
     Owner/manager only, matching every other financial-figure correction
-    in this app."""
+    in this app.
+
+    Same-day follow-up (Roy): "could it be realistic really when i had not
+    put in the cost price for the gunia before, i put it just a few
+    moments ago... i expected it to adjust in a certain way, not to stay
+    the way it was before" — correctly spotted a real gap: KitchenBatch.
+    cost_total is a SNAPSHOT taken once, at open_batch() time
+    (kg_drawn × raw_item.cost_price AS IT WAS THEN) — it does not
+    dynamically re-read raw_item.cost_price on every view. Correcting this
+    item's cost_price alone therefore only affects FUTURE draws, exactly
+    as this function's own original docstring said — but that left every
+    CURRENTLY OPEN batch already drawn from this item permanently frozen
+    at its old, wrong (often unset/zero) cost, with no correction path at
+    all once "Hariri Gharama" was removed from a raw-material-tracked
+    batch tile in the same sprint. Fixed by retroactively recomputing
+    cost_total for every OPEN KitchenBatch sourced from this item
+    (source_qty_drawn × the newly corrected cost_price) — the same
+    "batch.item.cost_price mirrors cost_total" convention edit_kitchen_
+    batch_target already follows, applied here automatically instead of
+    needing a second manual step."""
     up = _get_up(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
@@ -2284,18 +2303,48 @@ def edit_raw_material_cost(request, item_id):
             {'ok': False, 'error': 'Gharama ya gunia na idadi ya vyombo lazima ziwe zaidi ya 0'}, status=400,
         )
 
-    old_cost = item.cost_price
-    new_cost = (sack_cost / units_per_sack).quantize(Decimal('0.01'))
-    item.cost_price = new_cost
-    item.save(update_fields=['cost_price'])
+    from django.db import transaction as _db_txn
+    with _db_txn.atomic():
+        item = Item.objects.select_for_update().get(id=item.id)
+        old_cost = item.cost_price
+        new_cost = (sack_cost / units_per_sack).quantize(Decimal('0.01'))
+        item.cost_price = new_cost
+        item.save(update_fields=['cost_price'])
+
+        when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+        who = request.user.get_full_name() or request.user.username
+        updated_batches = []
+        open_batches = KitchenBatch.objects.select_for_update().filter(
+            business=business, source_item_id=item.id, status='OPEN',
+        ).select_related('item')
+        for batch in open_batches:
+            if not batch.source_qty_drawn:
+                continue
+            old_batch_cost = batch.cost_total
+            new_batch_cost = (batch.source_qty_drawn * new_cost).quantize(Decimal('0.01'))
+            batch.cost_total = new_batch_cost
+            batch.note = (
+                (batch.note + ' | ' if batch.note else '')
+                + f'Gharama ya malighafi ilirekebishwa: batch gharama kutoka '
+                f'KES {old_batch_cost:,.0f} kwenda KES {new_batch_cost:,.0f} na {who} — {when}'
+            )
+            batch.save(update_fields=['cost_total', 'note'])
+            batch.item.cost_price = new_batch_cost
+            batch.item.save(update_fields=['cost_price'])
+            updated_batches.append(batch.item.description)
+
+    extra = ''
+    if updated_batches:
+        extra = f' Batch zilizo wazi za {", ".join(sorted(set(updated_batches)))} zimerekebishwa pia.'
 
     return JsonResponse({
         'ok': True,
         'item': {'id': item.id, 'cost_price': float(item.cost_price)},
+        'updated_batches': updated_batches,
         'message': (
             f'Gharama ya {item.description} imebadilishwa kutoka '
             f'KES {(old_cost or 0):,.2f} kwenda KES {new_cost:,.2f} kwa kila {item.unit} '
-            f'(gunia ya KES {sack_cost:,.0f} ÷ {units_per_sack:g} {item.unit}).'
+            f'(gunia ya KES {sack_cost:,.0f} ÷ {units_per_sack:g} {item.unit}).{extra}'
         ),
     })
 
