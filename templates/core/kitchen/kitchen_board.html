@@ -266,6 +266,11 @@
     <div style="display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;">
       <div class="kb-revenue-badge">
         🍽 Leo: <strong id="kb-revenue-amount">KES {{ kitchen_revenue_today|floatformat:0 }}</strong>
+        {% if is_owner %}
+        <span onclick="window.kbToggleRevenueBreakdown(); event.stopPropagation();"
+              style="cursor:pointer; color:#888; font-size:.72rem; margin-left:.25rem;"
+              title="Vipi hesabu hii ilipatikana?">▾</span>
+        {% endif %}
       </div>
       <!-- 2026-08-09 live report (Roy): "Leo" used to blend cash+mpesa+
            credit into one number — a deni/tab sale not yet collected made
@@ -328,6 +333,15 @@
       {% endif %}
     </div>
   </div>
+
+  {% if is_owner %}
+  <!-- 2026-08-09, second same-day follow-up (Roy — "for Leo to adjust from
+       2550 to today's figures... is that too hard surely"): a line-by-line
+       breakdown of exactly what "Leo" is summing, so the real transactions
+       behind the figure can be seen directly instead of guessing at
+       another blind exclusion fix. -->
+  <div id="kb-revenue-breakdown-panel" style="display:none; margin-bottom:.75rem; background:var(--onyx-card); border:1px solid #3a3a3a; border-radius:10px; padding:.6rem .75rem; font-size:.78rem;"></div>
+  {% endif %}
 
   {% if can_receive_stock %}
   <!-- ── Open Kitchen Stock Receipts panel — populated by loadStockReceipts() ── -->
@@ -1751,6 +1765,7 @@
   var _khakiPool       = {{ khaki_pool|safe }};
   var _mixSiblings     = {{ mix_siblings_json|safe }};
   var _barTabNames     = {{ bar_tab_names|safe }};
+  {% if is_owner %}var _kbRevenueLines = {{ kitchen_revenue_lines|safe }};{% endif %}
 
   /* ── Reason Chips (2026-07-25) — see bar_board.html for the full comment.
      Copied verbatim; no shared JS bundle in this app. ── */
@@ -2819,6 +2834,30 @@
         .catch(function(){});
     }, 5000);
   }
+
+  // 2026-08-09 — "Leo" breakdown disclosure. Renders from the page-load
+  // snapshot (_kbRevenueLines) rather than re-fetching, since the point is
+  // to see exactly what the CURRENTLY-DISPLAYED figure is made of.
+  window.kbToggleRevenueBreakdown = function() {
+    var panel = document.getElementById('kb-revenue-breakdown-panel');
+    if (!panel) return;
+    var showing = panel.style.display !== 'none';
+    if (showing) { panel.style.display = 'none'; return; }
+    var lines = window._kbRevenueLines || [];
+    if (!lines.length) {
+      panel.innerHTML = '<div style="color:#888;">Hakuna mauzo yaliyorekodiwa leo bado.</div>';
+    } else {
+      panel.innerHTML = '<div style="color:#c9a84c;font-weight:600;margin-bottom:.35rem;">Mauzo yaliyounda "Leo":</div>' +
+        lines.map(function(l){
+          return '<div style="display:flex;justify-content:space-between;gap:.5rem;padding:.2rem 0;border-bottom:1px solid #2a2a2a;">' +
+            '<span style="color:#f0ece4;">' + l.label + '</span>' +
+            '<span style="color:#888;white-space:nowrap;">' + l.time + ' · ' + l.payment_method + '</span>' +
+            '<span style="color:#4caf50;white-space:nowrap;">KES ' + Math.round(l.amount) + '</span>' +
+          '</div>';
+        }).join('');
+    }
+    panel.style.display = 'block';
+  };
 
   function refreshRevenue() {
     fetch('/kitchen/stats/', {headers:{'X-CSRFToken':CSRF}})
@@ -4296,7 +4335,10 @@
           return '<div style="background:var(--onyx-card);border:1px solid rgba(136,136,136,.2);border-radius:10px;padding:.6rem .75rem;margin-bottom:.4rem;opacity:.85;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;">' +
               '<div style="font-size:.85rem;color:#b0b0b0;font-weight:600;">🧾 ' + (r.supplier || 'Stock Receipt') + (r.invoice_no ? ' #' + r.invoice_no : '') + ' <span style="color:#888;font-size:.72rem;font-weight:400;">— imefungwa</span></div>' +
-              (IS_OWNER ? '<button class="btn btn-sm" style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.35);color:#5da8f0;font-size:.74rem;" onclick="window.ksrReopen(' + r.id + ')">↩️ Fungua Tena</button>' : '') +
+              (IS_OWNER ? '<span style="display:flex;gap:.35rem;">' +
+                '<button class="btn btn-sm" style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.35);color:#5da8f0;font-size:.74rem;" onclick="window.ksrReopen(' + r.id + ')">↩️ Fungua Tena</button>' +
+                '<button class="btn btn-sm" style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.3);color:#c0395a;font-size:.74rem;" onclick="window.ksrDelete(' + r.id + ')">🗑 Futa</button>' +
+              '</span>' : '') +
             '</div>' +
             '<div style="font-size:.74rem;margin:.35rem 0;">' + _ksrLineHtml(r) + '</div>' +
             '<div style="font-size:.78rem;color:#888;">Gharama: KES ' + Math.round(r.total_cost) + ' · Mapato: KES ' + Math.round(r.total_revenue) + ' · Faida: <strong style="color:' + pftColor + ';">KES ' + Math.round(pft) + '</strong>' + (r.profit_pct !== null ? ' (' + r.profit_pct + '%)' : '') + '</div>' +
@@ -4316,6 +4358,27 @@
       .then(function(d){
         if (d.ok) {
           showToast('✓ Receipt imefunguliwa tena.');
+          loadStockReceipts();
+        } else {
+          showToast(d.error || 'Hitilafu.');
+        }
+      })
+      .catch(function(){ showToast('Hitilafu ya mtandao.'); });
+  };
+
+  // 2026-08-09 (Roy — "you have made the previous receipt which was a
+  // mistake show up, I do not need it"): removes only the bookkeeping
+  // record, never the underlying stock — see the backend view's own
+  // docstring for why that's safe.
+  window.ksrDelete = function(receiptId) {
+    if (!confirm('Futa receipt hii kabisa? Hii HAITAathiri stock — ni rekodi ya faida/hasara tu.')) return;
+    var body = new URLSearchParams();
+    body.append('csrfmiddlewaretoken', CSRF);
+    fetch('/kitchen/stock-receipt/' + receiptId + '/delete/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) {
+          showToast('✓ Receipt imefutwa.');
           loadStockReceipts();
         } else {
           showToast(d.error || 'Hitilafu.');

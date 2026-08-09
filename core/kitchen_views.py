@@ -502,6 +502,18 @@ def kitchen_board(request):
     # sale. Matches home()'s own `.exclude(invoice_no='[SVQ]')` exactly.
     kitchen_revenue_today = Decimal('0')
     kitchen_revenue_credit = Decimal('0')
+    # 2026-08-09, second same-day follow-up (Roy — "for Leo to adjust from
+    # 2550 to today's figures as much as there are none yet which means
+    # zero, is that too hard surely"): the credit split and [SVQ] exclusion
+    # above didn't move this figure at all, meaning whatever it's summing
+    # is genuinely type='Issue', cash/mpesa, non-[SVQ], dated today — every
+    # check already made comes back clean. Rather than guess a THIRD blind
+    # fix, owner/manager now get a line-by-line breakdown of exactly what's
+    # in "Leo" (item, preset, amount, method, exact time) so the real
+    # transactions can be seen and explained directly, the same "show the
+    # real breakdown instead of guessing again" approach already used for
+    # home()'s till-expected-cash disclosure.
+    kitchen_revenue_lines = []
     if kitchen_store:
         txns = Transaction.objects.filter(
             business=business,
@@ -509,13 +521,22 @@ def kitchen_board(request):
             date=timezone.localdate(),
             item__store=kitchen_store,
             payment_method__in=['cash', 'mpesa', 'credit'],
-        ).exclude(invoice_no='[SVQ]').select_related('item')
+        ).exclude(invoice_no='[SVQ]').select_related('item', 'preset').order_by('-created_at')
         for t in txns:
             rev = Decimal(str(t.revenue()))
             if t.payment_method == 'credit':
                 kitchen_revenue_credit += rev
             else:
                 kitchen_revenue_today += rev
+            if is_owner:
+                label = t.item.description + (f' — {t.preset.label}' if t.preset_id else '')
+                kitchen_revenue_lines.append({
+                    'label': label,
+                    'amount': float(rev),
+                    'payment_method': t.payment_method,
+                    'time': timezone.localtime(t.created_at).strftime('%d %b, %H:%M'),
+                    'invoice_no': t.invoice_no,
+                })
 
     has_stk = bool(
         business.daraja_consumer_key and
@@ -550,6 +571,7 @@ def kitchen_board(request):
         'bar_tab_names': json.dumps(bar_tab_names),  # all kitchen staff can add food to bar tabs
         'kitchen_revenue_today': kitchen_revenue_today,
         'kitchen_revenue_credit': kitchen_revenue_credit,
+        'kitchen_revenue_lines': json.dumps(kitchen_revenue_lines),
         'food_tab_count': len(food_tabs_data),
         'has_stk': has_stk,
         'has_my_shift': has_my_shift,
@@ -1642,6 +1664,37 @@ def kitchen_stock_receipt_reopen(request, receipt_id):
 
     receipt.reopen()
     return JsonResponse({'ok': True, 'receipt': _kitchen_stock_receipt_to_dict(receipt)})
+
+
+@login_required
+@require_POST
+def kitchen_stock_receipt_delete(request, receipt_id):
+    """Remove a mistaken KitchenStockReceipt bookkeeping record entirely
+    (2026-08-09 live report: Roy — "you have made the previous receipt
+    which was a mistake show up, I do not need it").
+
+    Deliberately safe: this deletes only the KitchenStockReceipt header and
+    its KitchenStockReceiptLine rows — the bookkeeping wrapper around a
+    delivery. The underlying Transaction each line created (the real
+    Receipt that added stock) is NEVER touched — KitchenStockReceiptLine.
+    transaction is a FK FROM the line TO the transaction (on_delete=
+    SET_NULL only matters in the other direction, if the transaction were
+    deleted); deleting the line leaves the transaction, and therefore the
+    item's stock balance, completely unaffected. Owner/manager only,
+    same tier as every other financial-record correction."""
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not is_owner:
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya mmiliki/meneja inahitajika'}, status=403)
+
+    receipt = KitchenStockReceipt.objects.filter(id=receipt_id, business=business).first()
+    if receipt is None:
+        return JsonResponse({'ok': False, 'error': 'Receipt haikupatikana.'}, status=404)
+
+    receipt.delete()
+    return JsonResponse({'ok': True})
 
 
 # ── Cross-counter tab merge check (AJAX GET) ─────────────────────────────────

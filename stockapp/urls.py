@@ -135,6 +135,7 @@ from core.kitchen_views import (
     kitchen_stats_api,
     kitchen_stock_receipt_close,
     kitchen_stock_receipt_reopen,
+    kitchen_stock_receipt_delete,
     kitchen_stock_receipt_create,
     kitchen_stock_receipts_list,
     kitchen_tabs_list,
@@ -522,6 +523,7 @@ urlpatterns = [
     path("kitchen/stock-receipt/list/",           kitchen_stock_receipts_list,   name="kitchen_stock_receipts_list"),
     path("kitchen/stock-receipt/<int:receipt_id>/close/", kitchen_stock_receipt_close, name="kitchen_stock_receipt_close"),
     path("kitchen/stock-receipt/<int:receipt_id>/reopen/", kitchen_stock_receipt_reopen, name="kitchen_stock_receipt_reopen"),
+    path("kitchen/stock-receipt/<int:receipt_id>/delete/", kitchen_stock_receipt_delete, name="kitchen_stock_receipt_delete"),
     # ── Kitchen Shift Handover Module ────────────────────────────────────────
     path("kitchen/shift/open/",                   open_shift,             name="kitchen_open_shift"),
     path("kitchen/shift/<int:shift_id>/close/",   close_shift,            name="kitchen_close_shift"),

@@ -28448,3 +28448,116 @@ class EditRawMaterialCostTest(TestCase):
         self.assertEqual(resp.status_code, 404)
         self.raw_item.refresh_from_db()
         self.assertEqual(self.raw_item.cost_price, Decimal('0'))
+
+
+class KitchenStockReceiptDeleteTest(TestCase):
+    """2026-08-09 live report (Roy): "you have made the previous receipt
+    which was a mistake show up, I do not need it" — a mistaken
+    KitchenStockReceipt bookkeeping record must be fully removable, WITHOUT
+    touching the real stock-adding Transaction its line created."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KSR Delete Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='ksrdel_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='ksrdel_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='KSRDEL-01', unit='Pcs', selling_price=Decimal('0'),
+        )
+        self.receipt = KitchenStockReceipt.objects.create(business=self.biz, store=self.store)
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt',
+            qty=Decimal('23'), payment_method='cash',
+        )
+        self.line = KitchenStockReceiptLine.objects.create(
+            receipt=self.receipt, item=self.item, qty_received=Decimal('23'),
+            line_cost=Decimal('3700'), transaction=self.txn,
+        )
+        self.client.force_login(self.owner)
+
+    def test_owner_can_delete_receipt(self):
+        resp = self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/delete/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertFalse(KitchenStockReceipt.objects.filter(id=self.receipt.id).exists())
+
+    def test_delete_never_touches_underlying_transaction_or_stock(self):
+        """The whole point: the real stock-adding Transaction must survive,
+        so the item's stock balance is completely unaffected."""
+        balance_before = self.item.current_balance()
+        self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/delete/')
+        self.assertTrue(Transaction.objects.filter(id=self.txn.id).exists())
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), balance_before)
+
+    def test_delete_removes_lines_too(self):
+        self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/delete/')
+        self.assertFalse(KitchenStockReceiptLine.objects.filter(id=self.line.id).exists())
+
+    def test_plain_staff_blocked(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/delete/')
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(KitchenStockReceipt.objects.filter(id=self.receipt.id).exists())
+
+    def test_cross_business_receipt_rejected(self):
+        other_biz = Business.objects.create(name='Other KSR Delete Biz')
+        other_owner = User.objects.create_user(username='ksrdel_other', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        self.client.force_login(other_owner)
+        resp = self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/delete/')
+        self.assertEqual(resp.status_code, 404)
+        self.assertTrue(KitchenStockReceipt.objects.filter(id=self.receipt.id).exists())
+
+
+class KitchenRevenueBreakdownTest(TestCase):
+    """2026-08-09, second same-day follow-up (Roy — "for Leo to adjust
+    from 2550 to today's figures... is that too hard surely"): owner/
+    manager get a line-by-line breakdown of what "Leo" is actually
+    summing, so the real transactions can be inspected directly."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Breakdown Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbbrk_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='kbbrk_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='KBBRK-01', unit='Plate', selling_price=Decimal('100'),
+        )
+        self.client.force_login(self.owner)
+
+    def _sell(self, amount='100', payment_method='cash'):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal(amount),
+            payment_method=payment_method, date=timezone.localdate(),
+        )
+
+    def test_owner_sees_breakdown_lines(self):
+        self._sell('400')
+        resp = self.client.get('/kitchen/')
+        import json as _json
+        lines = _json.loads(resp.context['kitchen_revenue_lines'])
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]['label'], 'Chipo')
+        self.assertEqual(lines[0]['amount'], 400.0)
+        self.assertEqual(lines[0]['payment_method'], 'cash')
+
+    def test_breakdown_empty_when_no_sales(self):
+        resp = self.client.get('/kitchen/')
+        import json as _json
+        lines = _json.loads(resp.context['kitchen_revenue_lines'])
+        self.assertEqual(lines, [])
+
+    def test_staff_does_not_get_breakdown_lines(self):
+        self._sell('400')
+        self.client.force_login(self.staff)
+        resp = self.client.get('/kitchen/')
+        import json as _json
+        lines = _json.loads(resp.context['kitchen_revenue_lines'])
+        self.assertEqual(lines, [])
