@@ -290,6 +290,19 @@ def kitchen_board(request):
             .values('anchor_id').annotate(total=Sum(_KAbs('qty')))
             .values_list('anchor_id', 'total')
         )
+        # 2026-08-09 live report (Roy): investigated a report of "unable to
+        # sell in the Kuku tile" right after receiving "Full Chicken Leg"
+        # via a preset-attributed Kitchen Stock Receipt line — traced it to
+        # tileClick()'s single-preset branch in kitchen_board.html, not
+        # this gate (see the fix there). This per-ITEM gate (as opposed to
+        # a per-preset one) is deliberate, tested design from the
+        # 2026-08-05/09 "cut visibility" work (PresetStockTrackingTetherTest):
+        # once an item has ANY preset-attributed receipt, every OTHER
+        # preset on it is meant to hide until it too is received under the
+        # new regime (or linked via tracks_stock_of) — "today only legs
+        # came in" should not keep showing wings as sellable. Left
+        # unchanged; do not "fix" this to show every preset again, it
+        # would silently undo that feature.
         items_with_preset_receipts = set(
             KitchenStockReceiptLine.objects.filter(
                 item__store=kitchen_store, preset_id__isnull=False,

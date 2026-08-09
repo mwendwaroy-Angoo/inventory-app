@@ -2293,8 +2293,25 @@
     if (item.presets && item.presets.length > 1) {
       openPresetModal(item);
     } else if (item.presets && item.presets.length === 1) {
-      addToCart({item_id: item.id, description: item.name + ' — ' + item.presets[0].label,
-                 amount: item.presets[0].price, qty: item.presets[0].qty});
+      // 2026-08-09 live report (Roy) — this branch used to skip the
+      // price=0 "custom price" sentinel entirely (unlike addPreset(),
+      // its multi-preset sibling), so an item that happens to have
+      // exactly one sellable preset priced KES 0 silently added a
+      // worthless zero-value cart line on tap instead of asking for the
+      // amount. Also now passes preset_id, matching addPreset() — without
+      // it, this sale would never count towards this preset's own
+      // received-vs-sold stock tracking (see kitchen_board()'s
+      // stock_tracking_anchor_id logic).
+      var p = item.presets[0];
+      var amount = p.price;
+      if (!amount || amount <= 0) {
+        var typed = prompt('Bei ya ' + p.label + ' (KES)?');
+        if (typed === null) return;
+        amount = parseFloat(typed);
+        if (!amount || amount <= 0 || isNaN(amount)) { showToast('Bei si sahihi.'); return; }
+      }
+      addToCart({item_id: item.id, preset_id: p.id, description: item.name + ' — ' + p.label,
+                 amount: amount, qty: p.qty});
     } else {
       addToCart({item_id: item.id, description: item.name, amount: item.selling_price, qty: 1});
     }
