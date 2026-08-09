@@ -28580,6 +28580,67 @@ class EditRawMaterialCostTest(TestCase):
         self.raw_item.refresh_from_db()
         self.assertEqual(self.raw_item.cost_price, Decimal('0'))
 
+    def _kitchen_batches_blob(self, body):
+        import json as _json
+        start = body.index('var _kitchenBatches')
+        eq = body.index('=', start)
+        end = body.index(';\n', eq)
+        return _json.loads(body[eq + 1:end].strip())
+
+    def test_pre_link_batch_stays_editable_regardless_of_later_item_link(self):
+        """2026-08-09 live report (Roy): "i did tap the edit icon in the raw
+        potatoes tiles and input the cost but nothing changed." Root cause:
+        the batch tile's own 'Hariri Gharama' button was hiding itself
+        based on the ITEM's CURRENT raw_material_source setting, not on
+        whether THIS SPECIFIC batch was actually opened via a linked draw.
+        A batch opened BEFORE the raw-material link existed has
+        source_item_id=None (from_draw=False) forever — _batch_to_dict
+        must keep reporting that accurately even after the item is later
+        linked, and the manual per-batch editor must stay reachable for
+        exactly that batch."""
+        self.item.raw_material_source = None
+        self.item.save(update_fields=['raw_material_source'])
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, cost_total=Decimal('500'),
+        )
+        self.item.raw_material_source = self.raw_item
+        self.item.save(update_fields=['raw_material_source'])
+
+        resp = self.client.get('/kitchen/')
+        batches = self._kitchen_batches_blob(resp.content.decode())
+        chipo = next(b for b in batches if b['id'] == self.item.id)
+        ob = chipo['open_batches'][0]
+        self.assertEqual(ob['id'], batch.id)
+        self.assertFalse(ob['from_draw'], "batch predates the raw-material link")
+
+        # edit_raw_material_cost() correctly cannot reach this batch.
+        edit_resp = self._edit(sack_cost='1200', units_per_sack='6')
+        self.assertTrue(edit_resp.json()['ok'], edit_resp.json())
+        self.assertNotIn(self.item.description, edit_resp.json()['updated_batches'])
+        batch.refresh_from_db()
+        self.assertEqual(batch.cost_total, Decimal('500.00'), "unreachable via the raw-item edit")
+
+        # But the manual per-batch editor still works for this exact batch.
+        manual_resp = self.client.post(
+            f'/kitchen/batch/{batch.id}/edit-target/', {'cost_total': '600'},
+        )
+        self.assertTrue(manual_resp.json()['ok'], manual_resp.json())
+        batch.refresh_from_db()
+        self.assertEqual(batch.cost_total, Decimal('600.00'))
+
+    def test_linked_batch_from_draw_true(self):
+        """The positive case: a batch opened via a real linked draw reports
+        from_draw=True, correctly hiding the manual editor in favor of
+        correcting the raw item's own cost."""
+        batch = self._open_batch_at_placeholder_cost()
+        resp = self.client.get('/kitchen/')
+        batches = self._kitchen_batches_blob(resp.content.decode())
+        chipo = next(b for b in batches if b['id'] == self.item.id)
+        ob = chipo['open_batches'][0]
+        self.assertEqual(ob['id'], batch.id)
+        self.assertTrue(ob['from_draw'])
+
 
 class KitchenStockReceiptDeleteTest(TestCase):
     """2026-08-09 live report (Roy): "you have made the previous receipt

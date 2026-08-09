@@ -2065,15 +2065,23 @@
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(255,255,255,.04);border:1px solid #555;border-radius:5px;color:#b0b0b0;cursor:pointer;">✓ Imekwisha</button>' +
           '<button onclick="kbDiscardBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\', this); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;cursor:pointer;">🗑 Tupa</button>' +
-          // 2026-08-09 (Roy): "Hariri Gharama" here now hides itself for a
-          // raw-material-tracked batch (item.raw_source_id set) — Roy's
-          // explicit ask was to move the correction affordance onto the
-          // RAW ITEM's own tile instead (kbEditRawMaterialCost above),
-          // since open_batch() already derives cost_total automatically
-          // from kg_drawn × raw_item.cost_price for every FUTURE draw once
-          // that item's cost is fixed. Kept for a batch with no raw
-          // material source — that one still has no other item to correct.
-          (IS_OWNER && !item.raw_source_id ? '<button onclick="kbEditBatchTarget(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\',' + batch.cost_total + '); event.stopPropagation();" ' +
+          // 2026-08-09 (Roy): "Hariri Gharama" here hides itself ONLY for a
+          // batch that was actually OPENED via a linked raw-material draw
+          // (batch.from_draw — the exact per-batch signal open_batch() sets,
+          // see _batch_to_dict) — for such a batch, correcting the RAW
+          // ITEM's own cost (kbEditRawMaterialCost above) is the right
+          // lever, since open_batch() already derives cost_total from
+          // kg_drawn × raw_item.cost_price. Same-day correction: this used
+          // to check item.raw_source_id (the ITEM's CURRENT configuration)
+          // instead of the batch's own history — so a batch opened BEFORE
+          // the raw-material link existed (or via the plain manual-cost
+          // path) had NO correction path at all: hidden here because the
+          // item now looks raw-material-tracked, but unreachable by
+          // edit_raw_material_cost() because this batch's own
+          // source_item_id was never actually set. Roy: "i did tap the
+          // edit icon in the raw potatoes tiles and input the cost but
+          // nothing changed" — this is why.
+          (IS_OWNER && !batch.from_draw ? '<button onclick="kbEditBatchTarget(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\',' + batch.cost_total + '); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(201,168,76,.06);border:1px solid rgba(201,168,76,.3);border-radius:5px;color:#c9a84c;cursor:pointer;">✏️ Hariri Gharama</button>' : '') +
           '</div>';
       }
