@@ -27860,3 +27860,156 @@ class AdHocExpenseTest(TestCase):
         after = till_expected_cash(self.biz, 'kitchen')
         self.assertEqual(before['expected_cash'], after['expected_cash'])
         self.assertTrue(after['anchor_established'])
+
+
+class AdHocExpenseDayReconciliationTest(TestCase):
+    """2026-08-09, same-day follow-up (Roy, explicit confirmation to "both
+    shift history and z report"): a same-day ad-hoc expense reconciles
+    against Shift History and the Z-report for the SPECIFIC DAY it's dated
+    for — additively, at display time — while till_expected_cash() and the
+    LIVE in-progress shift panel (active_shift_api, close_shift) stay
+    completely untouched. See shift_views._ad_hoc_expense_total_for_shift()."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Ad Hoc Recon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='adhocrecon_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='adhocrecon_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='AHR-01', unit='Bottle', selling_price=Decimal('200'),
+        )
+
+    def _record_expense(self, **overrides):
+        import uuid
+        self.client.force_login(self.owner)
+        payload = {
+            'amount': '400', 'description': 'Firewood', 'category': 'supplies',
+            'station': 'bar', 'date': timezone.localdate().isoformat(), 'notes': '',
+            'idempotency_token': str(uuid.uuid4()),
+        }
+        payload.update(overrides)
+        return self.client.post('/expenses/record/', payload)
+
+    def _make_closed_shift(self, cash=1000, counted=1000, station='bar', staff=None):
+        staff = staff or self.staff
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=staff,
+            opening_float=Decimal('0'), status='CLOSED', station=station,
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal(str(counted)),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal(str(cash)),
+            payment_method='cash', created_at=shift.started_at,
+        )
+        return shift
+
+    def test_ad_hoc_expense_total_for_shift_same_day(self):
+        from core.shift_views import _ad_hoc_expense_total_for_shift
+        shift = self._make_closed_shift()
+        self._record_expense(amount='400')
+        self.assertAlmostEqual(_ad_hoc_expense_total_for_shift(shift), 400.0, places=1)
+
+    def test_ad_hoc_expense_total_for_shift_different_day_excluded(self):
+        from core.shift_views import _ad_hoc_expense_total_for_shift
+        shift = self._make_closed_shift()
+        old_date = (timezone.localdate() - timedelta(days=5)).isoformat()
+        self._record_expense(amount='400', date=old_date)
+        self.assertAlmostEqual(_ad_hoc_expense_total_for_shift(shift), 0.0, places=1)
+
+    def test_ad_hoc_expense_total_for_shift_station_scoped(self):
+        from core.shift_views import _ad_hoc_expense_total_for_shift
+        shift = self._make_closed_shift(station='bar')
+        self._record_expense(amount='700', station='kitchen')
+        self.assertAlmostEqual(_ad_hoc_expense_total_for_shift(shift), 0.0, places=1)
+
+    def test_shift_history_shows_adjusted_expected_cash_and_variance(self):
+        self._make_closed_shift(cash=1000, counted=1000)
+        self._record_expense(amount='300')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/history/')
+        self.assertEqual(resp.status_code, 200)
+        rec = resp.context['rows'][0]['rec']
+        self.assertEqual(rec['ad_hoc_expenses'], 300.0)
+        # Expected cash 1000 - 300 expense = 700; counted 1000 → variance +300
+        self.assertEqual(rec['expected_cash_after_expenses'], 700.0)
+        self.assertEqual(rec['variance_after_expenses'], 300.0)
+        self.assertEqual(rec['variance'], 0.0)  # original, un-adjusted variance untouched
+
+    def test_shift_history_backdated_expense_only_affects_its_own_day(self):
+        """A shift closed TODAY must not be adjusted by an expense dated for
+        a DIFFERENT (past) day — even if recorded today."""
+        shift = self._make_closed_shift(cash=1000, counted=1000)
+        old_date = (timezone.localdate() - timedelta(days=5)).isoformat()
+        self._record_expense(amount='999', date=old_date)
+        from core.shift_views import _reconcile, _ad_hoc_expense_total_for_shift
+        rec = _reconcile(shift)
+        self.assertEqual(_ad_hoc_expense_total_for_shift(shift), 0.0)
+        self.assertEqual(rec['expected_cash'], 1000.0)
+
+    def test_bar_z_report_shows_day_ad_hoc_expenses(self):
+        self._make_closed_shift(cash=1000, counted=1000)
+        self._record_expense(amount='250')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/z-report/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['day_ad_hoc_expenses'], 250.0)
+        # day_expected_cash = 1000 (cash) - 250 (expense) = 750
+        self.assertEqual(resp.context['day_expected_cash'], 750.0)
+
+    def test_bar_z_report_backdated_expense_does_not_affect_todays_report(self):
+        self._make_closed_shift(cash=1000, counted=1000)
+        old_date = (timezone.localdate() - timedelta(days=5)).isoformat()
+        self._record_expense(amount='999', date=old_date)
+        self.client.force_login(self.owner)
+        resp_today = self.client.get('/bar/z-report/')
+        self.assertEqual(resp_today.context['day_ad_hoc_expenses'], 0.0)
+        self.assertEqual(resp_today.context['day_expected_cash'], 1000.0)
+        resp_old = self.client.get('/bar/z-report/', {'date': old_date})
+        self.assertEqual(resp_old.context['day_ad_hoc_expenses'], 999.0)
+
+    def test_live_shift_panel_and_close_shift_unaffected_by_same_day_expense(self):
+        """Regression lock: _reconcile() itself must stay completely
+        untouched — the live in-progress shift panel (active_shift_api) and
+        the moment-of-close comparison must keep showing the ORIGINAL,
+        un-adjusted expected_cash even when a same-day ad-hoc expense
+        exists, per Roy's explicit "should not touch the live drawer"
+        instruction. Only Shift History / Z-report (display-time, separate
+        helper) fold it in."""
+        from core.shift_views import _reconcile
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            opening_float=Decimal('0'), status='OPEN', station='bar',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('1000'),
+            payment_method='cash', created_at=shift.started_at,
+        )
+        self._record_expense(amount='400')
+        rec = _reconcile(shift)
+        self.assertEqual(rec['expected_cash'], 1000.0)
+
+        self.client.force_login(self.staff)
+        resp = self.client.get('/bar/shift/active/')
+        data = resp.json()
+        self.assertEqual(data['shift']['expected_cash'], 1000.0)
+
+    def test_bar_z_report_dedup_across_overlapping_shifts_owner_view(self):
+        """The DAY-level ad-hoc expense figure must be a single deduped
+        query, never summed per-overlapping-shift — mirrors the existing
+        day_cash/day_mpesa dedup fix for two staff sharing one till."""
+        self._make_closed_shift(cash=500, counted=500, staff=self.staff)
+        staff2 = User.objects.create_user(username='adhocrecon_staff2', password='x')
+        UserProfile.objects.create(user=staff2, business=self.biz, role='staff')
+        self._make_closed_shift(cash=500, counted=500, staff=staff2)
+        self._record_expense(amount='300')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/z-report/')
+        # Must be exactly 300 (deduped), not 600 (double-counted across two shifts)
+        self.assertEqual(resp.context['day_ad_hoc_expenses'], 300.0)

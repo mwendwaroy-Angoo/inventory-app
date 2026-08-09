@@ -702,6 +702,46 @@ def _reconcile(shift):
     }
 
 
+def _ad_hoc_expense_total_for_shift(shift):
+    """Sum of ad-hoc BusinessExpense entries (core/recurring_expense_views.py's
+    "Matumizi ya Leo" tool) dated on any calendar day this shift's own active
+    segments touch, station-scoped the same way petty cash is in _reconcile().
+
+    2026-08-09 (Roy, explicit confirmation): a backdated ad-hoc expense must
+    reconcile against Shift History AND the Z-report for the SPECIFIC DAY it
+    is dated for — never the day it happens to be recorded on, and never
+    till_expected_cash() (the continuous "right now" dashboard tile, which
+    stays completely untouched by design — see record_ad_hoc_expense()'s own
+    docstring). Deliberately NOT folded into _reconcile() itself, which is
+    also used by the LIVE in-progress shift panel (active_shift_api) and the
+    moment-of-close comparison (close_shift) — those keep showing exactly the
+    live, un-adjusted figure staff actually compared against their physical
+    count at the time; only the two named historical/summary reports
+    recompute with this on top, additively, at display time.
+
+    Uses the same "owner shift stays unscoped" and "blank-station entries
+    count toward neither station" conventions _reconcile()'s own petty-cash
+    query already established.
+    """
+    from .models import BusinessExpense
+    end = shift.ended_at or timezone.now()
+    segments = _shift_active_segments(shift, end)
+    if not segments:
+        return 0.0
+    date_min = min(timezone.localtime(s).date() for s, _e in segments)
+    date_max = max(timezone.localtime(e).date() for _s, e in segments)
+    try:
+        staff_role = shift.staff.userprofile.role
+    except Exception:
+        staff_role = 'staff'
+    qs = BusinessExpense.objects.filter(
+        business=shift.business, date__range=(date_min, date_max),
+    )
+    if staff_role != 'owner':
+        qs = qs.filter(station=_shift_station(shift))
+    return float(qs.aggregate(t=Sum('amount'))['t'] or 0)
+
+
 def till_expected_cash(business, station, as_of=None):
     """Live, continuous "how much cash SHOULD be sitting in this till right
     now" for one station ('bar' or 'kitchen') — independent of shift
@@ -2652,7 +2692,29 @@ def shift_history(request):
     rows = []
     for shift in shifts_qs:
         rec = _reconcile(shift)
-        var = rec['variance']
+        # 2026-08-09 (Roy, explicit confirmation): fold same-day ad-hoc
+        # expenses into the historical Shift History display, additively —
+        # see _ad_hoc_expense_total_for_shift()'s own docstring for why this
+        # is done here (display-time recompute) rather than inside
+        # _reconcile() itself (which the live in-progress panel also reads).
+        expense_total = _ad_hoc_expense_total_for_shift(shift)
+        rec['ad_hoc_expenses'] = round(expense_total, 2)
+        if expense_total:
+            rec['expected_cash_after_expenses'] = round(rec['expected_cash'] - expense_total, 2)
+            rec['variance_after_expenses'] = (
+                round(float(shift.closing_cash_counted) - rec['expected_cash_after_expenses'], 2)
+                if shift.closing_cash_counted is not None else None
+            )
+        else:
+            rec['expected_cash_after_expenses'] = rec['expected_cash']
+            rec['variance_after_expenses'] = rec['variance']
+        # Badge colour reflects the AFTER-expenses variance (equal to the
+        # original variance whenever no same-day ad-hoc expense exists) —
+        # matching this app's own established precedent that a correction
+        # applied after the fact should be reflected live in the standing
+        # historical record (see the petty-cash-review-undo entry in
+        # Known Issues), not frozen at whatever it looked like at close time.
+        var = rec['variance_after_expenses']
         if var is None:
             var_class = 'pending'
         elif abs(var) <= 50:

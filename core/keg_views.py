@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from . import keg_metrics
-from .models import BarCupLog, BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Payment, PettyCash, Receipt, Shift, TabTransferRequest, Transaction
+from .models import BarCupLog, BarTab, BarTabEntry, BusinessExpense, Customer, Item, ItemPortionPreset, KegBarrel, KegWeightReading, Payment, PettyCash, Receipt, Shift, TabTransferRequest, Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -4438,7 +4438,7 @@ def bar_shrinkage_report(request):
 @login_required
 def bar_z_report(request):
     """End-of-night Z-report. Owner sees all bar shifts for the day; staff sees own shift only."""
-    from .shift_views import _reconcile, _shift_station
+    from .shift_views import _reconcile, _shift_station, _ad_hoc_expense_total_for_shift
 
     up = _get_up(request)
     if not up:
@@ -4473,6 +4473,7 @@ def bar_z_report(request):
     day_opening_float = 0.0
     day_expected_cash = 0.0
     day_petty_cash = 0.0
+    day_ad_hoc_expenses = 0.0
     counted_shifts = 0
 
     for shift in qs:
@@ -4487,6 +4488,19 @@ def bar_z_report(request):
         # disagree) — no separate petty-cash pass needed here anymore.
         petty_total = rec['petty_cash']
 
+        # 2026-08-09 (Roy, explicit confirmation): same per-shift ad-hoc
+        # expense fold-in as shift_history() — see
+        # _ad_hoc_expense_total_for_shift()'s own docstring. Additive, per
+        # row only; the report's own DAY-level total (below) is computed
+        # separately and de-duplicated, matching the existing day_cash/
+        # day_mpesa/day_credit dedup pattern for overlapping shifts.
+        shift_expense_total = _ad_hoc_expense_total_for_shift(shift)
+        shift_expected_after = rec['expected_cash'] - shift_expense_total
+        shift_variance_after = (
+            round(float(shift.closing_cash_counted) - shift_expected_after, 2)
+            if shift.closing_cash_counted is not None else None
+        )
+
         shift_rows.append({
             'shift':          shift,
             'cash_sales':     rec['cash_sales'],
@@ -4497,8 +4511,11 @@ def bar_z_report(request):
             'offline_adj':    rec['offline_adj'],
             'petty_cash':     petty_total,
             'expected_cash':  rec['expected_cash'],
+            'ad_hoc_expenses': round(shift_expense_total, 2),
+            'expected_cash_after_expenses': round(shift_expected_after, 2),
             'closing_counted': float(shift.closing_cash_counted) if shift.closing_cash_counted is not None else None,
             'variance':       rec['variance'],
+            'variance_after_expenses': shift_variance_after if shift_expense_total else rec['variance'],
             'elapsed':        rec['elapsed'],
             'status':         shift.status,
         })
@@ -4512,8 +4529,9 @@ def bar_z_report(request):
             day_mpesa        += rec['mpesa_sales']
             day_credit       += rec['credit_sales']
             day_total        += rec['total_sales']
-            day_expected_cash += rec['expected_cash']
+            day_expected_cash += rec['expected_cash'] - shift_expense_total
             day_petty_cash   += petty_total
+            day_ad_hoc_expenses += shift_expense_total
         counted_shifts   += 1
 
     bar_shifts_today = [row['shift'] for row in shift_rows]
@@ -4543,7 +4561,15 @@ def bar_z_report(request):
             created_at__gte=day_start, created_at__lte=day_end,
         ).aggregate(t=Sum('amount'))['t'] or 0)
         day_offline_adj = sum(float(s.offline_sales_amount or 0) for s in bar_shifts_today)
-        day_expected_cash = day_opening_float + day_cash + day_offline_adj - day_petty_cash
+        # 2026-08-09 (Roy, explicit confirmation): a single deduped, DAY-level
+        # (report_date, not per-shift-window) ad-hoc expense query — same
+        # dedup reasoning as day_cash/day_mpesa/day_credit above, so an
+        # expense dated for report_date is never double-subtracted just
+        # because two overlapping shifts both touch that date.
+        day_ad_hoc_expenses = float(BusinessExpense.objects.filter(
+            business=business, station='bar', date=report_date,
+        ).aggregate(t=Sum('amount'))['t'] or 0)
+        day_expected_cash = day_opening_float + day_cash + day_offline_adj - day_petty_cash - day_ad_hoc_expenses
 
         from .shift_views import _detect_overlapping_shift_pairs
         overlap_pairs = _detect_overlapping_shift_pairs(bar_shifts_today)
@@ -4648,6 +4674,7 @@ def bar_z_report(request):
         'day_opening_float':   round(day_opening_float, 2),
         'day_expected_cash':   round(day_expected_cash, 2),
         'day_petty_cash':      round(day_petty_cash, 2),
+        'day_ad_hoc_expenses': round(day_ad_hoc_expenses, 2),
         'open_tab_count':      open_tab_count,
         'open_tab_kes':        round(open_tab_kes, 2),
         'day_keg_variance_kes':    round(day_keg_variance_kes, 2),

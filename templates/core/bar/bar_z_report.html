@@ -209,6 +209,12 @@
         <span class="info-val" style="color:#ffb74d;">&#8722; KES {{ day_petty_cash|floatformat:0 }}</span>
       </div>
       {% endif %}
+      {% if day_ad_hoc_expenses > 0 %}
+      <div class="info-row">
+        <span class="info-label">💸 Matumizi ya siku hii</span>
+        <span class="info-val" style="color:#e08aa0;">&#8722; KES {{ day_ad_hoc_expenses|floatformat:0 }}</span>
+      </div>
+      {% endif %}
       <div class="info-row" style="border-top:1px solid rgba(201,168,76,.15);margin-top:.3rem;padding-top:.45rem;">
         <span class="info-label">Expected drawer</span>
         <span class="info-val">KES {{ day_expected_cash|floatformat:0 }}</span>
@@ -232,6 +238,7 @@
           <th>Credit</th>
           <th>Total</th>
           <th>Petty Cash</th>
+          <th>Matumizi</th>
           <th>Expected Drawer</th>
           <th>Counted</th>
           <th>Variance</th>
@@ -249,7 +256,8 @@
           <td style="color:#b0b0b0;">{{ row.credit_sales|floatformat:0 }}</td>
           <td style="color:var(--gold);font-weight:600;">{{ row.total_sales|floatformat:0 }}</td>
           <td style="color:#ffb74d;">{% if row.petty_cash > 0 %}{{ row.petty_cash|floatformat:0 }}{% else %}—{% endif %}</td>
-          <td>{{ row.expected_cash|floatformat:0 }}</td>
+          <td style="color:#e08aa0;">{% if row.ad_hoc_expenses > 0 %}{{ row.ad_hoc_expenses|floatformat:0 }}{% else %}—{% endif %}</td>
+          <td>{{ row.expected_cash_after_expenses|floatformat:0 }}</td>
           <td>
             {% if row.closing_counted is not None %}
               {{ row.closing_counted|floatformat:0 }}
@@ -258,11 +266,11 @@
             {% endif %}
           </td>
           <td>
-            {% if row.variance is not None %}
-              {% if row.variance > 0 %}
-                <span class="variance-ok">+{{ row.variance|floatformat:0 }}</span>
-              {% elif row.variance < 0 %}
-                <span class="variance-danger">{{ row.variance|floatformat:0 }}</span>
+            {% if row.variance_after_expenses is not None %}
+              {% if row.variance_after_expenses > 0 %}
+                <span class="variance-ok">+{{ row.variance_after_expenses|floatformat:0 }}</span>
+              {% elif row.variance_after_expenses < 0 %}
+                <span class="variance-danger">{{ row.variance_after_expenses|floatformat:0 }}</span>
               {% else %}
                 <span class="variance-ok">0</span>
               {% endif %}

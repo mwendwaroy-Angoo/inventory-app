@@ -1665,10 +1665,15 @@ class BusinessExpense(models.Model):
     # shows up in that counter's own picture — blank for whole-business
     # expenses (rent, recurring rules, DJ/MC payouts) which predate this
     # field and were never meant to be attributed to one station.
-    # Deliberately NEVER read by till_expected_cash()/_reconcile() — Roy's
-    # explicit requirement: this must not touch today's expected drawer
-    # cash, it's a bookkeeping record only (feeds Expense Intelligence/P&L,
-    # nothing else).
+    # Deliberately NEVER read by till_expected_cash() (the continuous "right
+    # now" dashboard tile) or _reconcile() itself (the live in-progress shift
+    # panel / moment-of-close comparison) — an ad-hoc expense must never move
+    # today's LIVE expected drawer, and never a day it wasn't dated for.
+    # Same-day follow-up (2026-08-09, Roy's explicit confirmation): Shift
+    # History and the Z-report DO fold a same-day entry in, additively, at
+    # DISPLAY time only — see shift_views._ad_hoc_expense_total_for_shift()'s
+    # docstring for the exact mechanism and why it's a separate helper rather
+    # than a change to _reconcile() itself.
     station = models.CharField(max_length=10, choices=STATION_CHOICES, blank=True)
     recorded_by = models.ForeignKey(
         'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
