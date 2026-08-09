@@ -5293,3 +5293,24 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `test_genuinely_depleted_item_still_hides_all_presets` unchanged), 1 new test
   (`test_owner_sees_received_sold_diagnostic_numbers` — owner sees `_received`/`_sold`, staff
   never does). No migrations. 1633 tests pass (core + accounts).
+- Fix: "Hariri Gharama" hid itself on the wrong signal, silently blocking cost correction
+  (2026-08-09, same-day follow-up). Roy: "i did tap the edit icon in the raw potatoes tiles
+  and inputed the cost but nothing changed." Root-caused, not guessed: `_batch_to_dict()`
+  already computes `from_draw` (`batch.source_item_id is not None`) — a per-BATCH signal for
+  whether THIS specific open batch was actually opened via a linked raw-material draw — but
+  `kitchen_board.html`'s "Hariri Gharama" button visibility checked `item.raw_source_id`
+  instead (the ITEM's CURRENT configuration), the wrong granularity entirely. A batch opened
+  BEFORE the raw-material link existed (or via the older plain manual-cost path) has
+  `source_item_id=None` permanently — `edit_raw_material_cost()`'s retroactive recompute
+  correctly has nothing to find and update for it — but the manual per-batch editor
+  (`edit_kitchen_batch_target`, the ONLY other cost-correction lever) was hidden anyway,
+  because the ITEM now looks raw-material-tracked even though THIS batch was never actually
+  linked. Net effect: zero working correction path existed for Roy's currently-open Chipo
+  batch. Fixed by switching the button's condition from `!item.raw_source_id` to
+  `!batch.from_draw` — a genuinely-linked batch still correctly hides the manual editor
+  (correcting the raw item is the right lever there), while a batch that predates the link
+  gets its manual editor back regardless of the item's current setting. 2 new tests
+  (`test_pre_link_batch_stays_editable_regardless_of_later_item_link` — reproduces Roy's
+  exact timeline: batch opened before the link, link added after, manual editor still
+  reachable, automatic path correctly can't touch it; `test_linked_batch_from_draw_true` —
+  the positive case, unchanged). No migrations. 1635 tests pass (core + accounts).
