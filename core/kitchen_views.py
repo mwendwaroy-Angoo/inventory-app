@@ -313,11 +313,26 @@ def kitchen_board(request):
             _all_item_presets = list(item.portion_presets.all().order_by('display_order', 'price'))
 
             def _preset_dict(p):
-                return {
+                d = {
                     'id': p.id, 'label': p.label, 'price': float(p.price),
                     'qty': float(p.quantity_consumed), 'khaki_type': p.khaki_type,
                     'cost_price': float(p.cost_price) if p.cost_price is not None else None,
                 }
+                # 2026-08-09 live report (Roy): "it is bringing unnecessary
+                # portion presets unlike before where I saw full chicken
+                # legs and the tether." A same-day "show everything" safety
+                # net (meant to fix a DIFFERENT symptom — every preset
+                # vanishing at once) made this worse, not better, by
+                # surfacing presets that were never actually received.
+                # Removed. Owner/manager only: expose the raw received/sold/
+                # remaining numbers behind the gate so a real ledger
+                # mismatch can be SEEN and diagnosed from the numbers
+                # themselves, instead of guessed at again.
+                if is_owner and item.id in items_with_preset_receipts:
+                    anchor = p.stock_tracking_anchor_id()
+                    d['_received'] = float(_received_by_preset.get(anchor) or 0)
+                    d['_sold'] = float(_sold_by_preset.get(anchor) or 0)
+                return d
 
             presets = [
                 _preset_dict(p)
@@ -327,28 +342,6 @@ def kitchen_board(request):
                     - float(_sold_by_preset.get(p.stock_tracking_anchor_id()) or 0) > 0
                 )
             ]
-            # 2026-08-09 live report (Roy): "clicking that chicken tile and
-            # it is no longer showing the presets as it was before" — the
-            # cut-visibility gate above can legitimately net every single
-            # preset to zero (received-vs-sold, tracked separately from the
-            # item's own overall balance) even while the item's real
-            # current_balance() still shows plenty left — any drift between
-            # the two ledgers (e.g. a sale/receipt that didn't attach a
-            # preset, a stock-count correction) makes ALL presets vanish
-            # from the tile at once, degrading it to a plain no-preset sale
-            # with no picker at all. Deliberately gated on the item's REAL
-            # balance still being positive — a genuinely fully-sold item
-            # (both ledgers agree on 0) must still correctly hide every
-            # preset, exactly as designed and locked in by
-            # test_selling_enough_half_legs_hides_both_presets. Only a real
-            # mismatch (presets say 0, actual stock says otherwise) falls
-            # back to showing every configured preset rather than silently
-            # hiding them all.
-            if (
-                not presets and _all_item_presets and item.id in items_with_preset_receipts
-                and item.current_balance() > 0
-            ):
-                presets = [_preset_dict(p) for p in _all_item_presets]
             if item.is_kitchen_batch:
                 # Kitchen batch item (chips, stew, ugali) — KitchenBatch P&L
                 open_batches = list(

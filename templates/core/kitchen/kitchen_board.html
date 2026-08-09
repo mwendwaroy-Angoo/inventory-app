@@ -2429,8 +2429,15 @@
       // forceCustomPrice mode (✏️ Bei Maalum) every preset is treated this
       // way regardless of its own configured price.
       var priceLabel = (!forceCustomPrice && p.price && p.price > 0) ? ('KES ' + fmt(p.price)) : 'Bei Yoyote';
+      // 2026-08-09 — owner/manager-only diagnostic subtext (p._received/
+      // p._sold only present for them, see kitchen_board()'s _preset_dict):
+      // makes the received-vs-sold ledger behind the cut-visibility gate
+      // directly visible instead of a guessed-at black box.
+      var diag = (p._received !== undefined) ?
+        '<div style="font-size:.65rem;color:#888;margin-top:.1rem;">imepokewa: ' + fmt(p._received) +
+        ' · imeuzwa: ' + fmt(p._sold) + ' · iliyobaki: ' + fmt(p._received - p._sold) + '</div>' : '';
       return '<div class="kb-preset-item" onclick="addPreset(' + item.id + ',' + idx + ')">' +
-             '<span class="kb-preset-label">' + p.label + '</span>' +
+             '<div><span class="kb-preset-label">' + p.label + '</span>' + diag + '</div>' +
              '<span class="kb-preset-price">' + priceLabel + '</span>' +
              '</div>';
     }).join('');
