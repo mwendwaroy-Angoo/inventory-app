@@ -2850,7 +2850,7 @@
                '<div><strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' + cashBadge +
                (tab.tab_pin ? '<span style="font-size:0.72rem;color:#b0b0b0;margin-left:6px;">PIN: ' + tab.tab_pin + '</span>' : '') +
                '<span style="margin-left:.4rem;font-size:.7rem;background:rgba(201,168,76,.12);color:#c9a84c;border:1px solid rgba(201,168,76,.3);border-radius:4px;padding:1px 6px;">🍺 Bar Tab</span></div>' +
-               '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
+               '<span style="color:#b0b0b0;font-size:.75rem;">' + (tab.server_name ? 'via ' + tab.server_name + ' · ' : '') + tab.opened_at + '</span></div>' +
                entriesHtml +
                '<div style="border-top:1px solid #333;margin-top:.4rem;padding-top:.4rem;display:flex;justify-content:space-between;font-size:.82rem;">' +
                '<strong style="color:#c9a84c;">Chakula: KES ' + fmt(tab.unpaid_total) + '</strong>' +
@@ -2902,7 +2902,7 @@
              '<div style="display:flex;justify-content:space-between;margin-bottom:.35rem;">' +
              '<span><strong style="color:#f0ece4;font-size:.88rem;">' + tab.customer_name + '</strong>' + cashBadge +
              (tab.tab_pin ? '<span style="font-size:0.72rem;color:#b0b0b0;margin-left:6px;">PIN: ' + tab.tab_pin + '</span>' : '') + '</span>' +
-             '<span style="color:#b0b0b0;font-size:.75rem;">' + tab.opened_at + '</span></div>' +
+             '<span style="color:#b0b0b0;font-size:.75rem;">' + (tab.server_name ? 'via ' + tab.server_name + ' · ' : '') + tab.opened_at + '</span></div>' +
              staleHtml +
              incomingHtml +
              receiptLink +

@@ -1653,6 +1653,7 @@ def kitchen_tabs_list(request):
     food_tabs = (
         BarTab.objects
         .filter(business=up.business, source='kitchen', status='OPEN')
+        .select_related('served_by')
         .prefetch_related(
             Prefetch('entries',
                      queryset=BarTabEntry.objects.select_related('transaction__item__store'))
@@ -1707,6 +1708,7 @@ def kitchen_tabs_list(request):
                     'note': _t.note, 'source_customer': _t.source_tab.customer_name,
                 })
 
+    from .keg_views import _tab_served_by_label
     result = []
     for tab in food_tabs:
         all_entries = list(tab.entries.all())
@@ -1759,6 +1761,7 @@ def kitchen_tabs_list(request):
             'id': tab.id,
             'customer_name': tab.customer_name,
             'customer_phone': _tab_phone,
+            'server_name': _tab_served_by_label(tab),
             'total': sum(float(e['amount']) for e in entries),
             'unpaid_total': sum(float(e['amount']) for e in entries if not e['is_paid']),
             'entries': entries,
@@ -1782,6 +1785,7 @@ def kitchen_tabs_list(request):
             status='OPEN',
             entries__transaction__item__store__is_kitchen=True,
         )
+        .select_related('served_by')
         .distinct()
         .order_by('-opened_at')
     )
@@ -1800,6 +1804,7 @@ def kitchen_tabs_list(request):
         result.append({
             'id': tab.id,
             'customer_name': tab.customer_name,
+            'server_name': _tab_served_by_label(tab),
             'total': sum(e['amount'] for e in kitchen_entries),
             'unpaid_total': float(unpaid),
             'entries': kitchen_entries,

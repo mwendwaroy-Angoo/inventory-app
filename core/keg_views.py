@@ -1297,6 +1297,20 @@ def deplete_barrel(request, barrel_id):
 # SPRINT 3 — Tabs: list, tick, settle, void, convert-to-debt
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _tab_served_by_label(tab):
+    """Resolve who actually opened/served this tab, for tabs-drawer
+    accountability display (2026-08-09 live request — Roy: "add a served
+    by who in the tabs drawer against each tab to enhance accountability").
+    Prefers the real logged-in staff member (served_by) — the common case
+    for every counter — falling back to the free-text server_name field,
+    which exists specifically for a waitress working without her own login
+    (see BarTab.server_name's own help_text). Blank when neither is set.
+    Caller should select_related('served_by') to avoid N+1 queries."""
+    if tab.served_by_id:
+        return tab.served_by.get_full_name() or tab.served_by.username
+    return tab.server_name or ''
+
+
 @login_required
 def tabs_list(request):
     """AJAX GET — returns all OPEN tabs for this business with their entries.
@@ -1328,6 +1342,7 @@ def tabs_list(request):
     tabs = (
         BarTab.objects
         .filter(business=up.business, status='OPEN', **_source_filter)
+        .select_related('served_by')
         .prefetch_related(
             Prefetch('entries',
                      queryset=BarTabEntry.objects.select_related('transaction__item__store'))
@@ -1480,7 +1495,7 @@ def tabs_list(request):
                 'id': tab.id,
                 'customer_name': tab.customer_name,
                 'customer_phone': _tab_phone,
-                'server_name': tab.server_name,
+                'server_name': _tab_served_by_label(tab),
                 'total': sum(float(e['amount']) for e in entries),
                 'unpaid_total': sum(float(e['amount']) for e in entries if not e['is_paid']),
                 'entries': entries,
@@ -1518,7 +1533,7 @@ def tabs_list(request):
                 'id': tab.id,
                 'customer_name': tab.customer_name,
                 'customer_phone': _tab_phone,
-                'server_name': tab.server_name,
+                'server_name': _tab_served_by_label(tab),
                 'total': sum(float(e['amount']) for e in entries),
                 'unpaid_total': unpaid,
                 'entries': entries,
@@ -4828,45 +4843,68 @@ def _resolve_tab_public_url(tab):
     return None
 
 
+FINDABLE_BY_NAME_DAYS = 30
+
+
 def _findable_tabs_qs(business):
-    """OPEN tabs, plus SETTLED tabs that were converted to debt (shift-close
-    auto-convert, or manual "Geuza Deni") and still carry an unpaid balance.
+    """OPEN tabs, SETTLED tabs that still carry an unpaid balance (any age),
+    plus any tab at all — paid or not — opened within the last
+    FINDABLE_BY_NAME_DAYS days. Used by find_tab_search's NAME branch only
+    (see _findable_tabs_qs_for_pin for the separate, unbounded PIN branch).
 
     Bug found while auditing BillScan end-to-end (2026-07-22): this used to
     be a plain status='OPEN' filter — the exact same status a tab keeps its
     PIN under is meaningless once conversion flips it to SETTLED, so a
     customer whose tab was auto-converted at shift close (precisely the
     "abandoned tab" scenario this whole conversion path exists to catch)
-    could no longer find their own bill by scanning the wall QR and typing
-    the still-valid PIN they were given — "PIN not found" despite a real,
-    payable balance. Mirrors the same "effective status" reasoning
-    receipt_views._get_live_tab_state already uses when a tab is reached
-    via its receipt token instead of a fresh PIN/name lookup — VOID tabs
-    and fully-paid SETTLED tabs correctly stay excluded either way."""
+    could no longer find their own bill. Fixed to also include still-owing
+    SETTLED tabs, mirroring receipt_views._get_live_tab_state's "effective
+    status" reasoning.
+
+    2026-08-09, second live request (Roy): a customer who ALREADY paid off
+    their tab still couldn't be found by name — "the customer just wants to
+    search their name and see what's there, that is just it." A blanket
+    unrestricted widening was tried once already the same day and reverted
+    within hours — this endpoint is PUBLIC with NO LOGIN (the wall-mounted
+    bar QR page), so with no bound at all, anyone who could reach the URL
+    and type/guess a common name could browse that customer's ENTIRE
+    payment history forever. The FINDABLE_BY_NAME_DAYS window is the
+    middle ground: a customer can find a recently-paid bill by name with no
+    extra step, while a stranger typing a guessable name can only ever see
+    the last month's activity, not a permanent, ever-growing dossier — the
+    same trade-off a business already accepts by keeping paper receipts on
+    a counter for a while, not forever. Still-owing debt stays findable
+    regardless of age (unchanged) — that's accountability the business
+    needs long-term, not exposure risk.
+    """
     from django.db.models import Exists, OuterRef, Q
+    from django.utils import timezone as _tz
+    from datetime import timedelta as _td
     unpaid_exists = BarTabEntry.objects.filter(
         tab=OuterRef('pk'), is_paid=False,
     ).exclude(payment_method='void')
+    cutoff = _tz.now() - _td(days=FINDABLE_BY_NAME_DAYS)
     return (
         BarTab.objects.filter(business=business)
+        .exclude(status='VOID')
         .annotate(_has_unpaid=Exists(unpaid_exists))
-        .filter(Q(status='OPEN') | Q(status='SETTLED', _has_unpaid=True))
+        .filter(
+            Q(status='OPEN')
+            | Q(_has_unpaid=True)
+            | Q(opened_at__gte=cutoff)
+        )
     )
 
 
 def _findable_tabs_qs_for_pin(business):
     """Every tab ever (paid or still owing), EXCEPT void ones — the PIN-
-    lookup counterpart to _findable_tabs_qs() (2026-08-09 live request —
-    Roy: a customer whose tab has already been fully paid off had no way to
-    find their own receipt again, since name search is deliberately
-    restricted to still-open/still-owing tabs — the whole point of that
-    restriction, per the security revert above, is that a NAME is
-    guessable/typeable by anyone with no proof of who they are. A PIN is
-    different: it's a private 4-digit code only shown to staff and (via
-    receipt_public.html) the customer themselves, and PIN lookups already
-    sit behind their own tighter rate limit — so widening PIN reach to a
-    customer's own history, paid or not, doesn't reopen the "browse
-    anyone's whole ledger by typing a name" hole. VOID stays excluded,
+    lookup counterpart to _findable_tabs_qs(). Unlike name search (bounded
+    to FINDABLE_BY_NAME_DAYS, since a name is guessable/typeable by anyone
+    with no proof of who they are), a PIN is a private 4-digit code — only
+    shown to staff and (via receipt_public.html) the customer themselves,
+    and PIN lookups sit behind their own tighter rate limit — so it has no
+    date bound at all: a customer keeps the ability to find any bill of
+    theirs, ever, as long as they still have the PIN. VOID stays excluded,
     matching _findable_tabs_qs's own exclusion — a cancelled tab was a
     corrected mistake, not a real bill, and was never meant to be
     reachable here even by PIN.
@@ -4928,20 +4966,23 @@ def find_tab_search(request, business_id):
 
     # Name search: case-insensitive substring match.
     #
-    # 2026-08-09 SECURITY REVERT: this briefly used a much wider queryset
-    # (any status except VOID, no date bound at all) so a renamed/settled
-    # tab could still be found by name. That was a real mistake — this
-    # endpoint is PUBLIC and has NO LOGIN by design (it's the wall-mounted
-    # bar QR page), so widening it meant anyone who could reach this URL
-    # and guess/type a customer's name could browse that customer's ENTIRE
-    # historical payment record, forever, with no authentication at all —
-    # not just their one currently-open bill. Reverted back to the original,
-    # safe scope (OPEN or still-owing debt-converted tabs only) the same day
-    # it shipped, once live reports of "users seeing information they
-    # shouldn't" made the exposure concrete. A genuine "find my full
-    # history by name" feature belongs behind staff/owner authentication
-    # (e.g. the existing /debt/customers/search/ page), never on this
-    # public, unauthenticated surface.
+    # History, in order, same day (2026-08-09): this briefly used a fully
+    # unrestricted queryset (any status except VOID, no date bound at all)
+    # so a renamed/settled tab could still be found by name — reverted
+    # within hours once live reports of "users seeing information they
+    # shouldn't" confirmed the real exposure: this endpoint is PUBLIC with
+    # NO LOGIN (the wall-mounted bar QR page), so no date bound meant
+    # anyone who could reach the URL and guess/type a customer's name could
+    # browse that customer's ENTIRE historical payment record, forever.
+    # Roy's follow-up made clear the plain-OPEN-or-owing-only scope that
+    # revert landed on was too narrow the other way — customers just want
+    # to type their name and see a recently-paid bill too, no PIN, no
+    # extra step. _findable_tabs_qs() now lands in between: still-owing
+    # debt stays findable at any age (unchanged — that's real accountability
+    # the business needs), but paid tabs are also findable for
+    # FINDABLE_BY_NAME_DAYS after they opened, then age out of name search
+    # (PIN search — _findable_tabs_qs_for_pin — has no such bound, since a
+    # PIN isn't a guessable public string the way a name is).
     tabs = _findable_tabs_qs(business).filter(
         customer_name__icontains=q,
     ).order_by('-opened_at')[:10]

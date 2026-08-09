@@ -3415,10 +3415,26 @@ class FindTabDebtStateTest(TestCase):
         self.assertEqual(data.get('redirect'), f'/r/{rcpt.token}/')
         self.assertNotIn('pin_not_found', data)
 
-    def test_fully_paid_settled_tab_still_not_found_by_name(self):
-        """Name search stays deliberately narrow — only PIN was widened."""
+    def test_recently_paid_settled_tab_now_found_by_name(self):
+        """2026-08-09, same-day follow-up (Roy): "customers just want to
+        search their names... that is just it" — a recently-paid tab
+        (opened within FINDABLE_BY_NAME_DAYS) must now be findable by name
+        too, not just PIN."""
         self._make_tab('Paid Name Patron', '7736', paid=True)
         resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Paid Name Patron'})
+        data = resp.json()
+        self.assertEqual(len(data.get('tabs', [])), 1)
+        self.assertEqual(data['tabs'][0]['name'], 'Paid Name Patron')
+
+    def test_old_paid_settled_tab_ages_out_of_name_search(self):
+        """The bounded middle ground: unlike PIN (no date bound at all),
+        name search still ages out after FINDABLE_BY_NAME_DAYS — the
+        mitigation that makes re-widening name search safe at all."""
+        from core.keg_views import FINDABLE_BY_NAME_DAYS
+        tab = self._make_tab('Old Paid Name Patron', '7737', paid=True)
+        tab.opened_at = timezone.now() - timedelta(days=FINDABLE_BY_NAME_DAYS + 5)
+        tab.save(update_fields=['opened_at'])
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/', {'q': 'Old Paid Name Patron'})
         data = resp.json()
         self.assertEqual(data.get('tabs', []), [])
 
@@ -3548,6 +3564,89 @@ class ReceiptShowsTabPinTest(TestCase):
         )
         resp = self.client.get(f'/tab/{tab.tab_receipt_token}/')
         self.assertContains(resp, '4561')
+
+
+class TabServedByLabelTest(TestCase):
+    """2026-08-09 live request (Roy): "add a served by who in the tabs
+    drawer against each tab to enhance accountability." BarTab.server_name
+    is a free-text field meant only for a waitress with no login — for the
+    common case (a real logged-in staff member), it was always blank, so
+    the tabs drawer's existing "via {server_name}" line never actually
+    showed anyone for most tabs. _tab_served_by_label() prefers the real
+    served_by FK, falling back to server_name only when that's unset."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Served By Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='servedby_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(
+            username='servedby_staff', password='x', first_name='Susan', last_name='Namayan',
+        )
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Served By Beer',
+            material_no='SVDBY-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Served By Chipo',
+            material_no='SVDBY-02', unit='pcs', selling_price=Decimal('100'),
+        )
+
+    def test_helper_prefers_served_by_over_server_name(self):
+        from core.keg_views import _tab_served_by_label
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='X', status='OPEN',
+            served_by=self.staff, server_name='Should Not Show',
+        )
+        self.assertEqual(_tab_served_by_label(tab), 'Susan Namayan')
+
+    def test_helper_falls_back_to_server_name_when_no_login(self):
+        from core.keg_views import _tab_served_by_label
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='X', status='OPEN',
+            server_name='Waitress No Login',
+        )
+        self.assertEqual(_tab_served_by_label(tab), 'Waitress No Login')
+
+    def test_helper_blank_when_neither_set(self):
+        from core.keg_views import _tab_served_by_label
+        tab = BarTab.objects.create(business=self.biz, customer_name='X', status='OPEN')
+        self.assertEqual(_tab_served_by_label(tab), '')
+
+    def test_bar_tabs_list_api_shows_real_staff_name(self):
+        BarTab.objects.create(
+            business=self.biz, customer_name='Bar Customer', status='OPEN',
+            source='bar', served_by=self.staff,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/')
+        data = resp.json()
+        self.assertEqual(len(data['tabs']), 1)
+        self.assertEqual(data['tabs'][0]['server_name'], 'Susan Namayan')
+
+    def test_kitchen_tabs_list_api_shows_real_staff_name(self):
+        BarTab.objects.create(
+            business=self.biz, customer_name='Kitchen Customer', status='OPEN',
+            source='kitchen', served_by=self.staff,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/kitchen/tabs/')
+        data = resp.json()
+        self.assertEqual(len(data['tabs']), 1)
+        self.assertEqual(data['tabs'][0]['server_name'], 'Susan Namayan')
+
+    def test_quick_sell_tabs_list_api_shows_real_staff_name(self):
+        BarTab.objects.create(
+            business=self.biz, customer_name='QS Customer', status='OPEN',
+            source='qs', served_by=self.staff,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/?ctx=qs')
+        data = resp.json()
+        self.assertEqual(len(data['tabs']), 1)
+        self.assertEqual(data['tabs'][0]['server_name'], 'Susan Namayan')
 
 
 class WallTabQrVisibilityTest(TestCase):
@@ -27193,19 +27292,19 @@ class RenameConsolidatesReceiptAndFindableTest(TestCase):
         self.assertNotEqual(table4_receipt.meta.get('tab_id'), table4_tab.id)
         self.assertIn(table4_tab.id, charles_receipt.meta.get('linked_tab_ids', []))
 
-    def test_wall_scan_search_never_finds_a_plain_settled_tab_by_name(self):
-        """SECURITY REVERT (2026-08-09, same day): this endpoint is PUBLIC,
-        no login required — it's the wall-mounted bar QR page. A plain,
-        fully-paid settled tab (nothing left owing) must NOT be searchable
-        by name here; a brief widening that made this findable meant anyone
-        who could reach this URL and guess a customer's name could browse
-        their entire historical payment record with zero authentication.
-        The rename-and-consolidate fix itself (state-level, above) is
-        unaffected — it's the PUBLIC search surface that must stay narrow."""
+    def test_wall_scan_search_finds_a_recently_paid_settled_tab_by_name(self):
+        """2026-08-09, same-day follow-up (Roy): "customers just want to
+        search their name... that is just it" — a RECENT, fully-paid
+        settled tab (nothing left owing) must be findable by name, no PIN
+        needed. This endpoint is still PUBLIC with no login (the wall-
+        mounted bar QR page) — see FINDABLE_BY_NAME_DAYS / _findable_tabs_qs
+        for how this stays bounded rather than reopening the earlier,
+        reverted unrestricted-history exposure."""
         tab, receipt = self._make_settled_tab_with_receipt('Charles', Decimal('1150'), 1, 'charles3')
         resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Charles')
         data = resp.json()
-        self.assertEqual(data['tabs'], [])
+        self.assertEqual(len(data['tabs']), 1)
+        self.assertEqual(data['tabs'][0]['url'], f'/r/{receipt.token}/')
 
     def test_void_tab_never_findable_by_name(self):
         tab, receipt = self._make_settled_tab_with_receipt('Ghost', Decimal('100'), 1, 'ghost')
@@ -27227,18 +27326,20 @@ class RenameConsolidatesReceiptAndFindableTest(TestCase):
 
 
 class SearchFindsReceiptsRegardlessOfAgeTest(TestCase):
-    """2026-08-09 same-day: Roy's stated requirement ("find a receipt
-    regardless of when the bill was settled") was correct, but the
-    delivery mechanism was wrong — find_tab_search is a PUBLIC,
-    unauthenticated endpoint (the wall-mounted bar QR page), so making it
-    search a business's ENTIRE historical tab record by name exposed every
-    customer's full payment history to anyone who could reach the URL and
-    guess a name, with zero login. Reverted the same day once live reports
-    of "users seeing information they shouldn't" made the exposure
-    concrete. What's still correctly true, and locked in here: a tab that
-    genuinely still owes money (debt-converted) stays findable regardless
-    of age — that was never date-bound and isn't the exposure risk, since
-    it's an active, unresolved balance, not historical browsing."""
+    """2026-08-09, two live requests the same day, both correct, in
+    tension: (1) "find a receipt regardless of when the bill was settled"
+    — a fully unrestricted widening was tried and reverted within hours,
+    since find_tab_search is a PUBLIC, unauthenticated endpoint (the
+    wall-mounted bar QR page) and no date bound meant anyone could browse
+    a customer's ENTIRE payment history forever by guessing a name; (2)
+    the follow-up — "customers just want to search their name... that is
+    just it" — no PIN, no extra step, even for an already-paid bill.
+    _findable_tabs_qs() resolves both: a tab that genuinely still owes
+    money stays findable regardless of age (an active, unresolved balance
+    is real accountability, not historical browsing — unchanged, locked in
+    below), and a PAID tab is ALSO findable by name for
+    FINDABLE_BY_NAME_DAYS after it opened, then ages out — bounding how
+    much of a stranger's guess-a-name attempt can ever expose."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='Age Search Biz')
