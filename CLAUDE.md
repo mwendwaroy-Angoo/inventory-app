@@ -5175,3 +5175,25 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   without concrete evidence of a specific discrepancy — asked Roy for one rather than
   guessing a fourth time. 8 new tests (`KitchenStockReceiptDeleteTest` ×5,
   `KitchenRevenueBreakdownTest` ×3). No migrations. 1627 tests pass (core + accounts).
+- Fix: raw-material cost correction did not retroactively update an already-open batch
+  (2026-08-09, same-day follow-up). Roy followed up on the "Chipo Faida" question with the
+  concrete evidence asked for: "could it be realistic really when i had not put in the
+  cost price for the gunia before, i put it just a few moments ago... i expected it to
+  adjust in a certain way, not to stay the way it was before." Traced and confirmed a real
+  gap: `KitchenBatch.cost_total` is a snapshot taken once, at `open_batch()` time
+  (`draw_qty × raw_item.cost_price` AS IT WAS THEN) — it never dynamically re-reads the
+  raw item's `cost_price` later. `edit_raw_material_cost()` correcting Raw Potatoes' own
+  cost therefore only ever affected FUTURE draws (exactly as its own original docstring
+  said) — but left the CURRENTLY OPEN Chipo batch permanently frozen at its old, wrong
+  placeholder cost, correspondingly inflating Faida, with no correction path at all once
+  "Hariri Gharama" was removed from a raw-material-tracked batch tile earlier the same
+  day. Fixed: correcting a raw item's cost now also recomputes `cost_total` for every
+  currently OPEN `KitchenBatch` sourced from it (`source_qty_drawn × the newly corrected
+  cost_price`), mirrors the result into that batch's own `item.cost_price` (same
+  convention `edit_kitchen_batch_target` already follows), and reports which batches were
+  updated in the response message. `revenue_collected` is never touched — only the cost
+  side moves. A CLOSED batch is deliberately left alone, since its `cost_total` is a
+  historical record of a decision already finalized. 6 new tests (extending
+  `EditRawMaterialCostTest`) — including a direct regression lock that `revenue_collected`
+  survives untouched and that a CLOSED batch is NOT retroactively updated. No migrations.
+  1631 tests pass (core + accounts).
