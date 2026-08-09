@@ -260,6 +260,8 @@ from core.recurring_expense_views import (
     recurring_expense_delete,
     recurring_expense_review,
     recurring_expense_confirm,
+    record_ad_hoc_expense,
+    expense_day_total_api,
 )
 from core.receipt_views import receipts_list, public_receipt, send_receipt, receipt_live_status, receipt_pay, tab_live_view, receipt_respond_tab_transfer, tab_respond_tab_transfer
 from core.onboarding_views import mark_section_seen
@@ -767,6 +769,8 @@ urlpatterns = [
     # ── Recurring Expenses ──
     path("analytics/recurring/", recurring_expense_list, name="recurring_expense_list"),
     path("analytics/recurring/add/", recurring_expense_add, name="recurring_expense_add"),
+    path("expenses/record/", record_ad_hoc_expense, name="record_ad_hoc_expense"),
+    path("expenses/day-total/", expense_day_total_api, name="expense_day_total_api"),
     path("analytics/recurring/<int:expense_id>/edit/", recurring_expense_edit, name="recurring_expense_edit"),
     path("analytics/recurring/<int:expense_id>/delete/", recurring_expense_delete, name="recurring_expense_delete"),
     path("analytics/recurring/review/", recurring_expense_review, name="recurring_expense_review"),

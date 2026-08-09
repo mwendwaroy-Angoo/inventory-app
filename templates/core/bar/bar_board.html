@@ -675,6 +675,20 @@
                      cursor:pointer;">
         🪙 Counter Cash
       </button>
+      {% if is_owner %}
+      <button onclick="window.openExpenseModal()"
+              style="background:rgba(232,144,144,0.08); border:1px solid rgba(232,144,144,0.3);
+                     color:#e89090; border-radius:8px; padding:4px 12px; font-size:0.82rem;
+                     cursor:pointer;">
+        💸 Matumizi
+      </button>
+      <!-- 2026-08-09 — informational only, never subtracted from Counter
+           Cash's till-expected-cash math; see kitchen_board.html's twin. -->
+      <span style="background:rgba(232,144,144,0.08); border:1px solid rgba(232,144,144,0.3);
+                   color:#e89090; border-radius:8px; padding:4px 12px; font-size:0.82rem;">
+        Matumizi ya Leo: <strong id="bb-expense-amount">KES 0</strong>
+      </span>
+      {% endif %}
       <button onclick="window.openDjMcModal()"
               id="djmc-btn"
               style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.35);
@@ -1817,6 +1831,9 @@
 <!-- Petty Cash modal -->
 {% include "core/petty_cash_modal.html" %}
 
+<!-- Ad-hoc expense modal (2026-08-09) -->
+{% if is_owner %}{% include "core/expense_modal.html" %}{% endif %}
+
 <!-- ── DJ / MC Session Modal ─────────────────────────────────────── -->
 <div id="djmcBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:1200; align-items:flex-start; justify-content:center; padding-top:4rem; overflow-y:auto;">
   <div style="background:#2a2a2a; border:1px solid rgba(201,168,76,.25); border-radius:16px; width:100%; max-width:460px; margin:0 1rem 2rem;">
@@ -1849,6 +1866,7 @@
   // this — see convert_tab_to_debt/bulk_convert_tabs_to_debt).
   var IS_WAITRESS = {% if is_waitress %}true{% else %}false{% endif %};
   window.PETTY_CASH_STATION = 'bar';  // 2026-07-27 — which till the shared petty cash modal records against on this board
+  window.EXPENSE_STATION = 'bar';  // 2026-08-09 — which counter the shared ad-hoc expense modal tags entries with
   var CSRF        = "{{ csrf_token }}";
   /* Seeded from server — updated dynamically once shift API responds */
   var _myShiftOpen = {% if has_my_shift %}true{% else %}false{% endif %};
@@ -5795,6 +5813,12 @@
 
 /* ── Petty Cash ── */
 {% include "core/petty_cash_js.html" %}
+
+/* ── Ad-hoc expense (2026-08-09) ── */
+{% if is_owner %}
+{% include "core/expense_js.html" %}
+window._refreshExpenseTotal();
+{% endif %}
 
 /* ── Cross-counter tab merge detection (bar → kitchen food tab) ─── */
 window._barMergeTabId = '';

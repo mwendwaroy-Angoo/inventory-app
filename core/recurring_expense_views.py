@@ -10,7 +10,7 @@ Flow:
   Monthly investment nudge sent separately.
 """
 from datetime import date as date_type
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
@@ -19,9 +19,10 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from django.db import transaction as db_transaction
+from django.db.models import Sum
 
 from .models import BusinessExpense, RecurringExpense
-from .views import get_user_profile, owner_required
+from .views import get_user_profile, owner_required, owner_or_manager_required
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -358,3 +359,121 @@ def recurring_expense_confirm(request):
         'period_label':  period_label,
         'expense_count': len(due),
     })
+
+
+# ── Ad-hoc, station-scoped expense (2026-08-09 live request) ─────────────────
+#
+# Roy, from Kitchen Board's own reconciliation area: "can I record expenses
+# for a certain day" — followed by an explicit design decision when asked
+# whether it should reduce today's expected drawer cash the way Petty Cash
+# does: "it should not touch today's expected drawer just for that
+# specified day." So this is deliberately NOT PettyCash (a till drawdown,
+# always "now", feeds till_expected_cash()/_reconcile()) — it's a plain
+# bookkeeping BusinessExpense, optionally backdated to a specific day,
+# optionally tagged to a station for that counter's own picture, that only
+# ever feeds Expense Intelligence/P&L. till_expected_cash()/_reconcile()
+# must never read this field — if a future change makes them do so, that
+# breaks this feature's whole reason for existing.
+#
+# BusinessExpense has no review/approval workflow of its own (unlike
+# PettyCash) — a write here is final — so this is owner/manager only,
+# matching the sensitivity tier of every other direct financial-record-
+# creation action in this app (Rekebisha, stock variance review, Kitchen
+# Batch cost correction).
+
+@login_required
+@owner_or_manager_required
+@require_POST
+def record_ad_hoc_expense(request):
+    up = get_user_profile(request)
+    business = up.business
+
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Ombi hili tayari limetumwa.', 'duplicate': True}, status=409)
+
+    amount_raw = (request.POST.get('amount') or '').strip()
+    description = (request.POST.get('description') or '').strip()
+    category = (request.POST.get('category') or 'other').strip()
+    station = (request.POST.get('station') or '').strip()
+    date_raw = (request.POST.get('date') or '').strip()
+    notes = (request.POST.get('notes') or '').strip()
+
+    try:
+        amount = Decimal(amount_raw)
+        if amount <= 0:
+            raise InvalidOperation
+    except (InvalidOperation, ValueError, TypeError):
+        return JsonResponse({'ok': False, 'error': 'Weka kiasi sahihi.'}, status=400)
+
+    if not description:
+        return JsonResponse({'ok': False, 'error': 'Weka maelezo mafupi ya matumizi haya.'}, status=400)
+
+    valid_categories = [c[0] for c in BusinessExpense.CATEGORY_CHOICES]
+    if category not in valid_categories:
+        category = 'other'
+
+    if station not in ('bar', 'kitchen'):
+        station = ''
+
+    # Backdate to a specific day (the whole point of this feature) — never
+    # into the future, silently falls back to today rather than blocking.
+    expense_date = timezone.localdate()
+    if date_raw:
+        try:
+            parsed = date_type.fromisoformat(date_raw)
+            if parsed <= timezone.localdate():
+                expense_date = parsed
+        except ValueError:
+            pass
+
+    expense = BusinessExpense.objects.create(
+        business=business, description=description, amount=amount,
+        category=category, date=expense_date, notes=notes,
+        station=station, recorded_by=request.user,
+    )
+
+    day_total = BusinessExpense.objects.filter(
+        business=business, date=expense_date, station=station,
+    ).aggregate(t=Sum('amount'))['t'] or Decimal('0')
+
+    return JsonResponse({
+        'ok': True,
+        'message': (
+            f"✓ Matumizi yamerekodiwa: {description} — KES {amount:,.0f} "
+            f"({expense_date.strftime('%d %b %Y')})"
+        ),
+        'expense': {
+            'id': expense.id, 'description': expense.description,
+            'amount': float(expense.amount), 'category': expense.category,
+            'date': expense.date.isoformat(), 'station': expense.station,
+        },
+        'day_total': float(day_total),
+    })
+
+
+@login_required
+def expense_day_total_api(request):
+    """Read-only — today's (or a given date's) station-scoped expense total,
+    for the small informational readout on Bar/Kitchen Board. Deliberately
+    separate from till_expected_cash() — this number never subtracts from
+    expected cash, it's purely for visibility."""
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'total': 0})
+    business = up.business
+    station = (request.GET.get('station') or '').strip()
+    if station not in ('bar', 'kitchen'):
+        return JsonResponse({'total': 0})
+    date_raw = (request.GET.get('date') or '').strip()
+    the_date = timezone.localdate()
+    if date_raw:
+        try:
+            the_date = date_type.fromisoformat(date_raw)
+        except ValueError:
+            pass
+    total = BusinessExpense.objects.filter(
+        business=business, date=the_date, station=station,
+    ).aggregate(t=Sum('amount'))['t'] or Decimal('0')
+    return JsonResponse({'total': float(total), 'date': the_date.isoformat()})

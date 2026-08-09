@@ -267,6 +267,17 @@
       <div class="kb-revenue-badge">
         🍽 Leo: <strong id="kb-revenue-amount">KES {{ kitchen_revenue_today|floatformat:0 }}</strong>
       </div>
+      <!-- 2026-08-09 live request (Roy): "record expenses for a certain
+           day" from Kitchen Board's own reconciliation area — deliberately
+           informational only, never subtracted from the till/expected cash
+           figure above (that's Counter Cash's job). See
+           record_ad_hoc_expense/expense_day_total_api in
+           core/recurring_expense_views.py. -->
+      {% if is_owner %}
+      <div class="kb-revenue-badge" style="background:rgba(232,144,144,.08);border-color:rgba(232,144,144,.3);color:#e89090;">
+        💸 Matumizi ya Leo: <strong id="kb-expense-amount">KES 0</strong>
+      </div>
+      {% endif %}
       <!-- 2026-08-06 live request (Monsoon Inn) — a waitress with kitchen
            access can now place Table Orders for kitchen items too; this is
            the counter-side queue where kitchen staff see/accept/prepare/
@@ -283,6 +294,10 @@
       </button>
       <button class="btn btn-sm" style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);color:#ff9800;font-size:.8rem;"
               onclick="window.openPettyCashModal()">🪙 Counter Cash</button>
+      {% if is_owner %}
+      <button class="btn btn-sm" style="background:rgba(232,144,144,.08);border:1px solid rgba(232,144,144,.3);color:#e89090;font-size:.8rem;"
+              onclick="window.openExpenseModal()">💸 Matumizi</button>
+      {% endif %}
       <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.35);color:#e87090;font-size:.8rem;"
               onclick="window.openKbWastageModal()">🗑️ Chakula Taka</button>
       <!-- 2026-07-30 — counter-parity with bar_board.html's identical addition:
@@ -1179,6 +1194,9 @@
 <!-- Petty Cash modal -->
 {% include "core/petty_cash_modal.html" %}
 
+<!-- Ad-hoc expense modal (2026-08-09) -->
+{% if is_owner %}{% include "core/expense_modal.html" %}{% endif %}
+
 <!-- ── Food Wastage modal ── -->
 <div id="kbWastageBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1200; align-items:center; justify-content:center;">
   <div style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:16px; width:100%; max-width:400px; margin:1rem; padding:1.25rem;">
@@ -1706,6 +1724,7 @@
   setInterval(koqLoadOrderQueue, 20000);
 
   window.PETTY_CASH_STATION = 'kitchen';  // 2026-07-27 — which till the shared petty cash modal records against on this board
+  window.EXPENSE_STATION = 'kitchen';  // 2026-08-09 — which counter the shared ad-hoc expense modal tags entries with
   // Seeded server-side so the shift gate fires immediately on page load,
   // before the async /kitchen/shift/active/ fetch completes.
   var _myShiftOpen = {% if is_owner %}true{% elif has_my_shift %}true{% else %}false{% endif %};
@@ -4104,10 +4123,18 @@
     // one option PER PRESET, so the receiving line matches how the real
     // supplier receipt actually itemises them. option value encodes
     // "itemId" or "itemId:presetId" (2026-07-25, per-cut costing).
+    //
+    // 2026-08-09 (Roy, same principle as the +Pata Stok fix): uses
+    // `all_presets` (already excludes tethered presets, e.g. "Half Chicken
+    // Leg" tracks_stock_of "Full Chicken Leg") instead of the sell-tile
+    // `presets` list — a tethered preset has no independent physical
+    // delivery to receive against; receiving under its own name would
+    // silently mis-attribute the line's cost onto the wrong preset instead
+    // of the anchor it's tethered to.
     var ksrOptions = ['<option value="">— bidhaa —</option>'];
     _portionItems.forEach(function(i){
-      if (i.presets && i.presets.length) {
-        i.presets.forEach(function(p){
+      if (i.all_presets && i.all_presets.length) {
+        i.all_presets.forEach(function(p){
           ksrOptions.push('<option value="' + i.id + ':' + p.id + '">' + i.name + ' — ' + p.label + '</option>');
         });
       } else {
@@ -5439,6 +5466,12 @@
 
 /* ── Petty Cash ── */
 {% include "core/petty_cash_js.html" %}
+
+/* ── Ad-hoc expense (2026-08-09) ── */
+{% if is_owner %}
+{% include "core/expense_js.html" %}
+window._refreshExpenseTotal();
+{% endif %}
 
 /* ── Food Wastage ── */
 (function () {

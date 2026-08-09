@@ -10,7 +10,7 @@ from django.utils import timezone
 from accounts.models import Business, UserProfile
 from core.models import (
     Appointment, AppointmentService, BarCupLog, BarTab, BarTabEntry,
-    BusinessException, County, Customer, FittingRoomLog, GlobalProduct, Item,
+    BusinessException, BusinessExpense, County, Customer, FittingRoomLog, GlobalProduct, Item,
     ItemPortionPreset, ItemPriceHistory, KegBarrel, KegWeightReading,
     KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
     KitchenStockReceiptLine, MaintenanceTicket, MarketPriceIndex,
@@ -26927,6 +26927,49 @@ class PresetStockTrackingTetherTest(TestCase):
         self.assertIn('Wing', all_labels)
         self.assertIn('Full Chicken Leg', all_labels)
 
+    def test_tethered_preset_never_offered_in_receive_picker(self):
+        """2026-08-09, same-day correction (Roy): "Half Chicken Leg" tracks_
+        stock_of "Full Chicken Leg" — it has no independent physical
+        existence to receive, so it must never appear in the RECEIVE
+        modal's picker, only the anchor it's tethered to. It should still
+        appear in the ordinary sell-tile presets list."""
+        resp = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        all_labels = [p['label'] for p in kuku['all_presets']]
+        self.assertNotIn('Half Chicken Leg', all_labels)
+        self.assertIn('Full Chicken Leg', all_labels)
+        # Sell-tile presets are unaffected — Half Chicken Leg still sells.
+        sell_labels = [p['label'] for p in kuku['presets']]
+        self.assertIn('Half Chicken Leg', sell_labels)
+
+    def test_stock_receipt_create_resolves_tethered_preset_to_anchor(self):
+        """2026-08-09 defense-in-depth: the Stock Receipt modal's own
+        "Chagua Bidhaa" picker (a second, separate receive-cost entry point
+        from the +Pata Stok modal covered above) is likewise fixed to never
+        offer a tethered preset — but if a stale client still submits one
+        (e.g. Half Chicken Leg's id), the server must resolve it to its
+        anchor preset (Full Chicken Leg) rather than writing cost_price
+        onto the tethered preset itself."""
+        import json as _json
+        import uuid
+        resp = self.client.post('/kitchen/stock-receipt/create/', {
+            'supplier': 'Meatco', 'invoice_no': 'A999',
+            'lines': _json.dumps([{
+                'item_id': self.kuku.id, 'preset_id': self.half_leg.id,
+                'qty': '12', 'cost': '2400',
+            }]),
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.full_leg.refresh_from_db()
+        self.half_leg.refresh_from_db()
+        self.assertEqual(self.full_leg.cost_price, Decimal('200.00'))
+        self.assertIsNone(self.half_leg.cost_price)
+        line = KitchenStockReceiptLine.objects.get(item=self.kuku)
+        self.assertEqual(line.preset_id, self.full_leg.id)
+
     def test_edit_item_saves_tracks_stock_of(self):
         resp = self.client.post(f'/stock/edit/{self.wing.item_id}/', {
             'description': 'Kuku', 'unit': 'Pcs', 'selling_price': '0',
@@ -27669,3 +27712,151 @@ class DebtPaymentBackdateTest(TestCase):
         self.assertEqual(resp.status_code, 302)
         payment = CustomerDebtPayment.objects.get(customer=self.customer)
         self.assertEqual(timezone.localtime(payment.paid_at).date(), timezone.localdate())
+
+
+class AdHocExpenseTest(TestCase):
+    """2026-08-09 live request (Roy), from Kitchen Board's own reconciliation
+    area: "can I record expenses for a certain day" — followed by an
+    explicit design decision: "it should not touch today's expected drawer
+    just for that specified day." Deliberately separate from Petty Cash (a
+    till drawdown, always "now") — this is a bookkeeping-only
+    BusinessExpense, backdatable, optionally station-tagged, that must
+    never be read by till_expected_cash()/_reconcile()."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Ad Hoc Expense Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='adhoc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='adhoc_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='adhoc_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+
+    def _record(self, user, **overrides):
+        import uuid
+        self.client.force_login(user)
+        payload = {
+            'amount': '500', 'description': 'Kuni za kupikia',
+            'category': 'supplies', 'station': 'kitchen',
+            'date': timezone.localdate().isoformat(), 'notes': '',
+            'idempotency_token': str(uuid.uuid4()),
+        }
+        payload.update(overrides)
+        return self.client.post('/expenses/record/', payload)
+
+    def test_owner_can_record_expense(self):
+        resp = self._record(self.owner)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        expense = BusinessExpense.objects.get(business=self.biz)
+        self.assertEqual(expense.amount, Decimal('500'))
+        self.assertEqual(expense.description, 'Kuni za kupikia')
+        self.assertEqual(expense.category, 'supplies')
+        self.assertEqual(expense.station, 'kitchen')
+        self.assertEqual(expense.recorded_by, self.owner)
+
+    def test_manager_can_record_expense(self):
+        resp = self._record(self.manager)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_plain_staff_blocked(self):
+        resp = self._record(self.staff)
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(BusinessExpense.objects.filter(business=self.biz).exists())
+
+    def test_backdated_expense_records_the_given_date(self):
+        real_date = (timezone.localdate() - timedelta(days=10)).isoformat()
+        resp = self._record(self.owner, date=real_date)
+        self.assertTrue(resp.json()['ok'])
+        expense = BusinessExpense.objects.get(business=self.biz)
+        self.assertEqual(expense.date.isoformat(), real_date)
+
+    def test_future_date_falls_back_to_today_not_blocked(self):
+        future_date = (timezone.localdate() + timedelta(days=5)).isoformat()
+        resp = self._record(self.owner, date=future_date)
+        self.assertTrue(resp.json()['ok'])
+        expense = BusinessExpense.objects.get(business=self.biz)
+        self.assertEqual(expense.date, timezone.localdate())
+
+    def test_invalid_amount_rejected(self):
+        resp = self._record(self.owner, amount='0')
+        self.assertFalse(resp.json()['ok'])
+        resp2 = self._record(self.owner, amount='not-a-number')
+        self.assertFalse(resp2.json()['ok'])
+
+    def test_blank_description_rejected(self):
+        resp = self._record(self.owner, description='')
+        self.assertFalse(resp.json()['ok'])
+
+    def test_invalid_category_falls_back_to_other(self):
+        resp = self._record(self.owner, category='not-a-real-category')
+        self.assertTrue(resp.json()['ok'])
+        expense = BusinessExpense.objects.get(business=self.biz)
+        self.assertEqual(expense.category, 'other')
+
+    def test_invalid_station_falls_back_to_blank(self):
+        resp = self._record(self.owner, station='not-a-real-station')
+        self.assertTrue(resp.json()['ok'])
+        expense = BusinessExpense.objects.get(business=self.biz)
+        self.assertEqual(expense.station, '')
+
+    def test_duplicate_token_blocked(self):
+        import uuid
+        token = str(uuid.uuid4())
+        self.client.force_login(self.owner)
+        resp1 = self.client.post('/expenses/record/', {
+            'amount': '300', 'description': 'X', 'category': 'other',
+            'station': 'kitchen', 'date': timezone.localdate().isoformat(),
+            'idempotency_token': token,
+        })
+        resp2 = self.client.post('/expenses/record/', {
+            'amount': '300', 'description': 'X', 'category': 'other',
+            'station': 'kitchen', 'date': timezone.localdate().isoformat(),
+            'idempotency_token': token,
+        })
+        self.assertTrue(resp1.json()['ok'])
+        self.assertEqual(resp2.status_code, 409)
+        self.assertEqual(BusinessExpense.objects.filter(business=self.biz).count(), 1)
+
+    def test_day_total_api_sums_station_scoped_expenses(self):
+        self._record(self.owner, amount='300')
+        self._record(self.owner, amount='200')
+        self._record(self.owner, amount='999', station='bar')  # different station
+        self.client.force_login(self.owner)
+        resp = self.client.get('/expenses/day-total/', {'station': 'kitchen'})
+        data = resp.json()
+        self.assertEqual(data['total'], 500.0)
+
+    def test_day_total_api_scoped_to_the_given_date(self):
+        old_date = (timezone.localdate() - timedelta(days=3)).isoformat()
+        self._record(self.owner, amount='700', date=old_date)
+        self.client.force_login(self.owner)
+        resp_today = self.client.get('/expenses/day-total/', {'station': 'kitchen'})
+        resp_old = self.client.get('/expenses/day-total/', {'station': 'kitchen', 'date': old_date})
+        self.assertEqual(resp_today.json()['total'], 0.0)
+        self.assertEqual(resp_old.json()['total'], 700.0)
+
+    def test_day_total_api_invalid_station_returns_zero(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/expenses/day-total/')
+        self.assertEqual(resp.json()['total'], 0)
+
+    def test_ad_hoc_expense_never_affects_till_expected_cash(self):
+        """The core regression lock matching Roy's own explicit requirement:
+        recording an ad-hoc expense for today must leave till_expected_
+        cash()'s figure completely unchanged — this is a pure bookkeeping
+        record, never a till drawdown."""
+        from core.shift_views import till_expected_cash
+        store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        Shift.objects.create(
+            business=self.biz, store=store, staff=self.staff,
+            opening_float=Decimal('0'), status='CLOSED', station='kitchen',
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('1000'),
+        )
+        before = till_expected_cash(self.biz, 'kitchen')
+        self._record(self.owner, amount='5000')  # a large expense — would be obvious if it leaked in
+        after = till_expected_cash(self.biz, 'kitchen')
+        self.assertEqual(before['expected_cash'], after['expected_cash'])
+        self.assertTrue(after['anchor_established'])

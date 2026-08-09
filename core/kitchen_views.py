@@ -390,9 +390,26 @@ def kitchen_board(request):
                     # sell-tile `presets` above) — not just the ones
                     # currently sellable, since receiving is exactly how an
                     # out-of-stock cut comes back.
+                    #
+                    # 2026-08-09, same-day correction (Roy): a TETHERED
+                    # preset (tracks_stock_of set — e.g. "Half Chicken Leg"
+                    # tracks_stock_of "Full Chicken Leg") must NOT be
+                    # offered here at all. It has no independent physical
+                    # existence to receive — it's only ever a way of
+                    # SELLING part of what was received under the anchor's
+                    # own name. Letting staff pick it here wouldn't actually
+                    # break the quantity tally (received_by_preset already
+                    # groups by stock_tracking_anchor_id), but it WOULD
+                    # silently write the received unit cost onto the wrong
+                    # preset's own cost_price field (the tethered one, not
+                    # the anchor) — a real cost-attribution bug hiding
+                    # behind an otherwise-correct stock count. Only the
+                    # tile-tap sell picker (`presets` above) should ever
+                    # show a tethered preset.
                     'all_presets': [
                         {'id': p.id, 'label': p.label}
                         for p in item.portion_presets.all().order_by('display_order', 'price')
+                        if p.tracks_stock_of_id is None
                     ],
                     # 2026-08-09 live report (Roy — Raw Potatoes pencil bug):
                     # a raw-material-source item (e.g. "Raw Potatoes" feeding
@@ -1448,6 +1465,15 @@ def kitchen_stock_receipt_create(request):
                     preset = ItemPortionPreset.objects.filter(id=preset_id, item=item).first()
                     if preset is None:
                         continue
+                    # 2026-08-09 defense-in-depth (Roy): the frontend picker no
+                    # longer offers a tethered preset (tracks_stock_of set, e.g.
+                    # "Half Chicken Leg") as its own receivable line — but a
+                    # stale cached page could still submit one. Resolve to its
+                    # anchor preset ("Full Chicken Leg") so the cost is always
+                    # written to the real, physically-received preset, never
+                    # the tethered one.
+                    if preset.tracks_stock_of_id:
+                        preset = preset.tracks_stock_of
                 txn = Transaction.objects.create(
                     business=business, item=item, type='Receipt',
                     qty=qty, payment_method='cash',

@@ -1,0 +1,85 @@
+/* Ad-hoc expense JS — included inside existing <script> blocks, alongside
+   petty_cash_js.html. window.EXPENSE_STATION set by the including board
+   before this modal is ever opened, same convention as
+   window.PETTY_CASH_STATION. */
+window.openExpenseModal = function() {
+  document.getElementById('exp-amount').value = '';
+  document.getElementById('exp-description').value = '';
+  document.getElementById('exp-notes').value = '';
+  document.getElementById('exp-category').value = 'other';
+  var todayIso = new Date().toISOString().slice(0, 10);
+  document.getElementById('exp-date').value = todayIso;
+  document.getElementById('exp-date').max = todayIso;
+  document.getElementById('exp-error').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('expenseModal')).show();
+  setTimeout(function(){ document.getElementById('exp-amount').focus(); }, 300);
+};
+
+window._submitExpense = function() {
+  var amount = (document.getElementById('exp-amount').value || '').trim();
+  var description = (document.getElementById('exp-description').value || '').trim();
+  var category = document.getElementById('exp-category').value;
+  var date = document.getElementById('exp-date').value;
+  var notes = (document.getElementById('exp-notes').value || '').trim();
+  var errEl = document.getElementById('exp-error');
+  var btn = document.getElementById('exp-submit-btn');
+
+  if (!amount || parseFloat(amount) <= 0) {
+    errEl.textContent = 'Ingiza kiasi sahihi.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!description) {
+    errEl.textContent = 'Weka maelezo mafupi ya matumizi haya.';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Inatuma...';
+
+  var CSRF_TOKEN = document.querySelector('[name=csrfmiddlewaretoken]');
+  var csrf = CSRF_TOKEN ? CSRF_TOKEN.value : '{{ csrf_token }}';
+  var station = window.EXPENSE_STATION || '';
+  var token = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+  var body = new URLSearchParams({
+    amount: amount, description: description, category: category,
+    date: date, notes: notes, station: station,
+    idempotency_token: token, csrfmiddlewaretoken: csrf,
+  });
+  fetch('/expenses/record/', {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      btn.disabled = false; btn.textContent = '💸 Rekodi Matumizi';
+      if (d.ok) {
+        var m = bootstrap.Modal.getInstance(document.getElementById('expenseModal'));
+        if (m) m.hide();
+        if (typeof showToast === 'function') {
+          showToast(d.message, 3500);
+        } else if (typeof window.showQsToast === 'function') {
+          window.showQsToast(d.message);
+        } else {
+          alert(d.message);
+        }
+        if (typeof window._refreshExpenseTotal === 'function') window._refreshExpenseTotal();
+      } else {
+        errEl.textContent = d.error || 'Hitilafu. Jaribu tena.';
+        errEl.style.display = 'block';
+      }
+    })
+    .catch(function(){
+      btn.disabled = false; btn.textContent = '💸 Rekodi Matumizi';
+      errEl.textContent = 'Hitilafu ya mtandao.';
+      errEl.style.display = 'block';
+    });
+};
+
+window._refreshExpenseTotal = function() {
+  var el = document.getElementById('kb-expense-amount') || document.getElementById('bb-expense-amount');
+  if (!el || !window.EXPENSE_STATION) return;
+  fetch('/expenses/day-total/?station=' + window.EXPENSE_STATION)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      el.textContent = 'KES ' + Math.round(d.total || 0).toLocaleString('en-KE');
+    })
+    .catch(function(){});
+};

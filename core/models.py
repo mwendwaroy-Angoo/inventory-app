@@ -1649,12 +1649,31 @@ class BusinessExpense(models.Model):
         ('other', _('Other')),
     ]
 
+    STATION_CHOICES = [
+        ('bar', _('Bar')),
+        ('kitchen', _('Kitchen')),
+    ]
+
     business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='expenses')
     description = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='other')
     date = models.DateField(default=timezone.now)
     notes = models.TextField(blank=True)
+    # 2026-08-09 live request (Roy): a one-off expense recorded from a
+    # specific counter's own reconciliation area (e.g. Kitchen Board) so it
+    # shows up in that counter's own picture — blank for whole-business
+    # expenses (rent, recurring rules, DJ/MC payouts) which predate this
+    # field and were never meant to be attributed to one station.
+    # Deliberately NEVER read by till_expected_cash()/_reconcile() — Roy's
+    # explicit requirement: this must not touch today's expected drawer
+    # cash, it's a bookkeeping record only (feeds Expense Intelligence/P&L,
+    # nothing else).
+    station = models.CharField(max_length=10, choices=STATION_CHOICES, blank=True)
+    recorded_by = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='expenses_recorded',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
