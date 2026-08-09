@@ -5090,3 +5090,17 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   same fix. 15 new tests (`AdHocExpenseEditRecoverTest` ×10,
   `KitchenBoardRevenueConfirmedCreditSplitTest` ×6 — one test file addition covers both). No
   migrations. 1601 tests pass (core + accounts).
+- Kitchen Board "Leo" tile, second gap: `[SVQ]` exclusion (2026-08-09, same-day follow-up).
+  After the confirmed-vs-credit split shipped, Roy reported "Leo" STILL showed KES 2550
+  against an open shift with KES 0 cash/mpesa of its own — "not the actual sales recorded
+  for today." Found a second, independent gap in the same hand-rolled query: `kitchen_
+  revenue_today`/`kitchen_stats_api` never excluded `invoice_no='[SVQ]'` — the corrective
+  cash/mpesa transaction a stock-take variance ACCEPT creates on a physical recount
+  discrepancy (2026-07-25 entry above). That earlier fix swept `home()`'s bar/kitchen_
+  today_revenue, the dashboard poll, the revenue-target bar, and `_reconcile()`'s own
+  cash/mpesa totals — but Kitchen Board's own header tile is a genuinely separate query
+  that was never part of that sweep, so it silently kept counting stock-count corrections
+  as if they were real sales. Given active Kuku/chicken stock corrections this session,
+  this is the likely source of the figure — not a data-entry mistake needing a backfill.
+  Fixed with the same `.exclude(invoice_no='[SVQ]')` `home()` already uses. 2 new tests. No
+  migrations. 1603 tests pass (core + accounts).
