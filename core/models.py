@@ -5858,45 +5858,26 @@ class KitchenStockReceipt(models.Model):
         once closed). Excludes void sales, matches Transaction.revenue()'s
         own sale_amount-preferred convention.
 
-        2026-08-09 (Roy, live follow-up — "ensure the stock receipt
-        appends and adjusts sales/profits accordingly"): two real gaps
-        fixed, both matching the same classes of bug just found and fixed
-        on kitchen_board()'s "Leo" tile. (1) PER-PRESET attribution — a
-        line for one specific preset (e.g. "Full Chicken Leg" on a Kuku
-        item that ALSO sells as Wing/Bawa/Half Chicken Leg via other
-        presets) previously matched on item_id alone, so a sale of a
-        DIFFERENT preset of the same shared item — possibly received under
-        a completely separate receipt — silently counted toward THIS
-        receipt's own Mapato/Faida. Now filtered per (item_id, preset_id)
-        for a preset-specific line; a line with no preset (a plain item
-        with no per-cut cost split) still counts every sale of that item
-        regardless of preset, matching the original single-cost-price
-        design. (2) `[SVQ]`-tagged corrective transactions (a stock-take
-        variance-accept's book-vs-physical-count correction, never a real
-        sale) are now excluded, matching every other revenue computation
-        in the app.
-
-        Same-day follow-up: the strict per-preset match above (correct on
-        its own) silently excluded a real class of HISTORICAL sale — the
-        single-preset tile-tap path never attached `preset_id` to the
-        Transaction it created until the fix shipped earlier the same day
-        (see tileClick()'s own 2026-08-09 comment in kitchen_board.html) —
-        so a sale rung up before that fix has `preset=None` even though it
-        was genuinely sold as this receipt's own preset (often the ONLY
-        sellable preset on the item at the time, since an unreceived cut
-        stays hidden — see the "cut visibility" gating). Roy: "chicken
-        data i recorded for previous days for that given receipt have not
-        reflected yet, but the stock has reduced" confirmed this exact
-        gap. A `preset=None` sale of the receipt's own item is now also
-        counted — it can't be positively ruled out, and historically
-        `preset=None` was the norm, not the exception. Only a sale
-        explicitly tagged with a DIFFERENT, non-null preset (the original,
-        confirmed Wing-vs-Full-Leg bug) is still excluded — that's the one
-        case with positive proof it belongs elsewhere."""
-        from django.db.models import Sum, Case, When, F, Value, Q, DecimalField as _DF
+        2026-08-09, reverted back to this simple item-level form same-day —
+        Roy: "if you can't fix the receipt issue based on the recordings of
+        previous days when it comes to stock count and sales, just leave it
+        be." A same-day attempt at per-preset attribution (only count sales
+        of the exact preset a receipt line covers) plus a preset=None
+        historical-sale fallback chased a real precision problem but never
+        fully resolved what Roy was seeing, and added complexity on top of
+        complexity during an already long session. Reverted to the
+        original, plain item-level match: any Issue-type sale of an item
+        this receipt received counts, regardless of preset. Known, accepted
+        limitation carried over unchanged from the original design: a
+        stock-count correction (Rekebisha) recorded against the item does
+        NOT create revenue here, by design — Rekebisha has no concept of a
+        selling price, only a physical count, so "sales reconciled via a
+        count correction" will never show real Mapato; only an actual
+        recorded sale (with a real amount) does."""
+        from django.db.models import Sum, Case, When, F, Value, DecimalField as _DF
         from django.db.models.functions import Abs, Coalesce
-        lines = list(self.lines.values_list('item_id', 'preset_id'))
-        if not lines:
+        item_ids = list(self.lines.values_list('item_id', flat=True))
+        if not item_ids:
             return Decimal('0')
         end = self.closed_at or timezone.now()
         _rev = Case(
@@ -5904,19 +5885,10 @@ class KitchenStockReceipt(models.Model):
             default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
             output_field=_DF(max_digits=12, decimal_places=2),
         )
-        item_q = Q(pk__in=[])
-        for item_id, preset_id in lines:
-            if preset_id:
-                item_q |= (
-                    Q(item_id=item_id, preset_id=preset_id) |
-                    Q(item_id=item_id, preset_id__isnull=True)
-                )
-            else:
-                item_q |= Q(item_id=item_id)
         total = Transaction.objects.filter(
-            item_q, business=self.business, type='Issue',
+            business=self.business, item_id__in=item_ids, type='Issue',
             created_at__gte=self.created_at, created_at__lte=end,
-        ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').aggregate(t=Sum(_rev))['t']
+        ).exclude(payment_method='void').aggregate(t=Sum(_rev))['t']
         return total or Decimal('0')
 
     @property

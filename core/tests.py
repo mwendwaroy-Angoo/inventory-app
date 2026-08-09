@@ -28230,16 +28230,24 @@ class KitchenBoardRevenueConfirmedCreditSplitTest(TestCase):
 
 
 class KitchenStockReceiptRevenuePrecisionTest(TestCase):
-    """2026-08-09 live follow-up (Roy): "ensure the stock receipt appends
-    and adjusts sales/profits accordingly." Two real gaps fixed in
-    KitchenStockReceipt.total_revenue(), the same classes of bug just
-    found on kitchen_board()'s "Leo" tile: (1) it matched on item_id alone,
-    so a sale of a DIFFERENT preset of the same shared item (e.g. "Wing"
-    sold while a receipt for "Full Chicken Leg" is open) silently counted
-    toward this receipt's own Mapato/Faida; (2) it never excluded
-    invoice_no='[SVQ]' stock-count corrective transactions. Also covers
-    the new reopen() safety net for a receipt closed before all its sales
-    were rung up."""
+    """2026-08-09 — total_revenue() is the plain, original item-level match:
+    any Issue-type sale of an item this receipt received counts toward its
+    Mapato, regardless of which preset (if any) the sale went through.
+
+    History: a same-day attempt narrowed this to per-preset attribution
+    (only count sales of the exact preset a receipt line covers, e.g. "Full
+    Chicken Leg" vs "Wing" on the same shared Kuku item) plus a preset=None
+    historical-sale fallback, chasing a real precision problem. It never
+    fully resolved what Roy was seeing and added complexity during an
+    already long session — reverted back to this simple form the same day
+    per Roy's own explicit call: "if you can't fix the receipt issue based
+    on the recordings of previous days when it comes to stock count and
+    sales, just leave it be." Known, accepted limitation: a stock-count
+    correction (Rekebisha) never creates revenue here — Rekebisha has no
+    concept of a selling price, only a physical count.
+
+    Also covers the reopen() safety net for a receipt closed before all its
+    sales were rung up."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='KSR Precision Biz', has_kitchen=True)
@@ -28273,30 +28281,19 @@ class KitchenStockReceiptRevenuePrecisionTest(TestCase):
             created_at=timezone.now(),
         )
 
-    def test_different_preset_sale_not_counted(self):
-        """A Wing sale must NOT count toward the Full Chicken Leg receipt's
-        own Mapato — they're different presets of the same shared item."""
+    def test_any_preset_sale_of_the_item_counts(self):
+        """Item-level match: a Wing sale counts toward the receipt just
+        like a Full Chicken Leg sale does — both are the same shared item,
+        and this receipt covers the item, not one specific preset."""
         self._sell(self.wing, '70')
-        self.assertEqual(self.receipt.total_revenue(), Decimal('0'))
+        self.assertEqual(self.receipt.total_revenue(), Decimal('70'))
 
     def test_matching_preset_sale_counted(self):
         self._sell(self.full_leg, '250')
         self.assertEqual(self.receipt.total_revenue(), Decimal('250'))
 
     def test_no_preset_historical_sale_still_counted(self):
-        """2026-08-09, same-day follow-up (Roy): "chicken data i recorded
-        for previous days for that given receipt have not reflected yet,
-        but the stock has reduced" — a sale rung up via the single-preset
-        tile-tap path BEFORE its own preset_id-passing fix shipped the same
-        day has preset=None on its Transaction. It must still count toward
-        the receipt's own preset line — it can't be positively ruled out,
-        and preset=None was the historical norm, not the exception."""
         self._sell(None, '250')
-        self.assertEqual(self.receipt.total_revenue(), Decimal('250'))
-
-    def test_svq_corrective_transaction_excluded(self):
-        self._sell(self.full_leg, '250')
-        self._sell(self.full_leg, '999', invoice_no='[SVQ]')
         self.assertEqual(self.receipt.total_revenue(), Decimal('250'))
 
     def test_plain_item_line_counts_every_preset(self):
