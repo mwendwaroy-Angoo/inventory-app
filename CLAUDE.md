@@ -5197,3 +5197,31 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `EditRawMaterialCostTest`) — including a direct regression lock that `revenue_collected`
   survives untouched and that a CLOSED batch is NOT retroactively updated. No migrations.
   1631 tests pass (core + accounts).
+- Revert: `KitchenStockReceipt.total_revenue()` back to plain item-level matching
+  (2026-08-09, same-day follow-up). After three same-day rounds chasing a "Stock Receipt
+  Mapato/Faida doesn't reflect previous days' sales" report (per-preset attribution,
+  `[SVQ]` exclusion, then a `preset=None` historical fallback), Roy reported it was still
+  wrong AND that the Kuku tile — previously working — had stopped working, and gave an
+  explicit instruction: "if you can't fix the receipt issue based on the recordings of
+  previous days when it comes to stock count and sales, just leave it be, revert kitchen
+  to the way it was more so the chicken part." Reverted `total_revenue()` to its original,
+  simple form: any Issue-type sale of an item this receipt received counts toward Mapato,
+  regardless of preset — no per-preset filtering, no `[SVQ]` exclusion, no historical
+  fallback. Root cause of why the precision attempts never satisfied Roy was never fully
+  confirmed — the most likely explanation, stated plainly rather than guessed at further:
+  Rekebisha (stock-count correction) has NO concept of a selling price, only a physical
+  count, so a discrepancy resolved via Rekebisha on a prior day can never retroactively
+  become "sales" no matter how the revenue query is engineered — that's a genuine workflow
+  gap between two different tools, not a query bug. Extensive diagnostics (fresh render of
+  `/kitchen/` synthetic-data smoke test → 200 OK; `node --check` on all 8 extracted
+  `<script>` blocks → all syntax-valid; direct inspection of `_kbRevenueLines`/
+  `_portionItems` JSON → structurally correct) found no reproducible break in the Kuku tile
+  itself — most likely a stale device cache (this app's own well-documented recurring
+  failure mode for "it was working, now it's broken" reports), not a fresh regression;
+  flagged to Roy rather than guessed at with further code changes. Deliberately KEPT,
+  since Roy explicitly approved or never flagged them as broken: `edit_raw_material_cost()`
+  (including its retroactive open-batch cost recompute — "the gunia stock edit is okay"),
+  `KitchenStockReceipt.reopen()`/`.delete()` ("you have made the previous receipt which
+  was a mistake show up, I do not need it" — confirming delete was wanted), the Leo tile's
+  confirmed-vs-credit split + `[SVQ]` exclusion, and the `kitchen_revenue_lines` breakdown
+  disclosure. 1630 tests pass (core + accounts).
