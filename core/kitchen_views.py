@@ -464,10 +464,27 @@ def kitchen_board(request):
         .order_by('customer_name')
     )
 
-    # Today's kitchen revenue — cash + mpesa + credit (food tab, bar tab, deni).
-    # 'void' is excluded. Credit-method transactions are the same DB rows as
-    # the later settled ones, so there is no double-counting when tabs settle.
+    # Today's kitchen revenue. 'void' is excluded.
+    #
+    # 2026-08-09 live report (Roy, Monsoon Inn): the "🍽 Leo" header tile
+    # showed KES 2550 with an OPEN shift whose own cash/mpesa were both
+    # KES 0 — "i have not [rung/confirmed] today's entries so that amount
+    # is inaccurate". Root cause: this figure blended cash+mpesa+credit into
+    # one number with no distinction — the exact "confirmed vs unpaid
+    # revenue conflation" bug already found and fixed on 2026-07-31 for
+    # daily_sales()/home()/stock_list.html/the close-shift result panel, but
+    # never extended to Kitchen Board's OWN live header tile (a genuinely
+    # separate code path — this view never called _reconcile()). A credit
+    # (deni/tab) sale is stock given out, not yet collected — counting it
+    # in "today's revenue" with no label makes an unconfirmed figure read
+    # as money already in hand. kitchen_revenue_today is now CONFIRMED
+    # (cash+mpesa) only — the one figure the header tile shows as "Leo";
+    # kitchen_revenue_credit is kept separate for an explicit "Deni" note,
+    # never silently folded in, matching daily_sales()'s own confirmed_rev/
+    # credit_rev split and the "Mikopo Mapya" wording already used
+    # elsewhere on this same page's shift panel.
     kitchen_revenue_today = Decimal('0')
+    kitchen_revenue_credit = Decimal('0')
     if kitchen_store:
         txns = Transaction.objects.filter(
             business=business,
@@ -476,7 +493,12 @@ def kitchen_board(request):
             item__store=kitchen_store,
             payment_method__in=['cash', 'mpesa', 'credit'],
         ).select_related('item')
-        kitchen_revenue_today = sum(Decimal(str(t.revenue())) for t in txns)
+        for t in txns:
+            rev = Decimal(str(t.revenue()))
+            if t.payment_method == 'credit':
+                kitchen_revenue_credit += rev
+            else:
+                kitchen_revenue_today += rev
 
     has_stk = bool(
         business.daraja_consumer_key and
@@ -510,6 +532,7 @@ def kitchen_board(request):
         'food_tabs': json.dumps(food_tabs_data),
         'bar_tab_names': json.dumps(bar_tab_names),  # all kitchen staff can add food to bar tabs
         'kitchen_revenue_today': kitchen_revenue_today,
+        'kitchen_revenue_credit': kitchen_revenue_credit,
         'food_tab_count': len(food_tabs_data),
         'has_stk': has_stk,
         'has_my_shift': has_my_shift,
@@ -2195,7 +2218,12 @@ def kitchen_stats_api(request):
         return JsonResponse({'ok': False}, status=403)
     business = up.business
     kitchen_store = _kitchen_store(business)
+    # 2026-08-09 — same confirmed-vs-credit split as kitchen_board()'s own
+    # initial render (see that view's detailed comment); this is the LIVE
+    # poll refreshing the same "🍽 Leo" header tile, so it must stay
+    # consistent with what the page shows on load.
     revenue_today = Decimal('0')
+    revenue_credit = Decimal('0')
     if kitchen_store:
         txns = Transaction.objects.filter(
             business=business,
@@ -2204,5 +2232,14 @@ def kitchen_stats_api(request):
             item__store=kitchen_store,
             payment_method__in=['cash', 'mpesa', 'credit'],
         ).select_related('item')
-        revenue_today = sum(Decimal(str(t.revenue())) for t in txns)
-    return JsonResponse({'ok': True, 'revenue_today': float(revenue_today)})
+        for t in txns:
+            rev = Decimal(str(t.revenue()))
+            if t.payment_method == 'credit':
+                revenue_credit += rev
+            else:
+                revenue_today += rev
+    return JsonResponse({
+        'ok': True,
+        'revenue_today': float(revenue_today),
+        'revenue_credit': float(revenue_credit),
+    })

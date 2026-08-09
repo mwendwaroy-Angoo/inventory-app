@@ -28013,3 +28013,198 @@ class AdHocExpenseDayReconciliationTest(TestCase):
         resp = self.client.get('/bar/z-report/')
         # Must be exactly 300 (deduped), not 600 (double-counted across two shifts)
         self.assertEqual(resp.context['day_ad_hoc_expenses'], 300.0)
+
+
+class AdHocExpenseEditRecoverTest(TestCase):
+    """2026-08-09, same-day follow-up (Roy): "can i recover a counter cash
+    entry placed on a wrong date mistakenly" — confirmed this means the
+    ad-hoc expense (Matumizi) tool. edit_ad_hoc_expense() lets an
+    owner/manager correct an already-recorded entry (most often its date);
+    ad_hoc_expenses_list() is how the entry is found in the first place.
+    No separate "recompute" step is needed for Shift History/Z-report to
+    pick up the correction — both already read BusinessExpense fresh on
+    every render (see the AdHocExpenseDayReconciliationTest class above)."""
+
+    def setUp(self):
+        import uuid
+        self.biz = Business.objects.create(name='Ad Hoc Edit Biz')
+        self.owner = User.objects.create_user(username='adhocedit_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='adhocedit_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='adhocedit_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.client.force_login(self.owner)
+        wrong_date = (timezone.localdate() - timedelta(days=3)).isoformat()
+        resp = self.client.post('/expenses/record/', {
+            'amount': '500', 'description': 'Firewood', 'category': 'supplies',
+            'station': 'bar', 'date': wrong_date, 'notes': '',
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        self.expense_id = resp.json()['expense']['id']
+        self.wrong_date = wrong_date
+
+    def test_owner_can_correct_the_date(self):
+        real_date = (timezone.localdate() - timedelta(days=1)).isoformat()
+        resp = self.client.post(f'/expenses/{self.expense_id}/edit/', {
+            'amount': '500', 'description': 'Firewood', 'category': 'supplies',
+            'station': 'bar', 'date': real_date, 'notes': '',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        expense = BusinessExpense.objects.get(id=self.expense_id)
+        self.assertEqual(expense.date.isoformat(), real_date)
+
+    def test_editing_moves_it_between_days_reconciliation(self):
+        """The literal point of the feature: after correcting the date, the
+        entry disappears from the WRONG day's Z-report and appears on the
+        CORRECT day's — with zero extra action, since both reports read
+        BusinessExpense fresh on every render."""
+        real_date = (timezone.localdate() - timedelta(days=1)).isoformat()
+        self.client.post(f'/expenses/{self.expense_id}/edit/', {
+            'amount': '500', 'description': 'Firewood', 'category': 'supplies',
+            'station': 'bar', 'date': real_date, 'notes': '',
+        })
+        resp_wrong = self.client.get('/bar/z-report/', {'date': self.wrong_date})
+        resp_right = self.client.get('/bar/z-report/', {'date': real_date})
+        self.assertEqual(resp_wrong.context['day_ad_hoc_expenses'], 0.0)
+        self.assertEqual(resp_right.context['day_ad_hoc_expenses'], 500.0)
+
+    def test_manager_can_edit(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/expenses/{self.expense_id}/edit/', {
+            'amount': '600', 'description': 'Firewood', 'category': 'supplies',
+            'station': 'bar', 'date': self.wrong_date, 'notes': '',
+        })
+        self.assertTrue(resp.json()['ok'])
+
+    def test_plain_staff_blocked(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/expenses/{self.expense_id}/edit/', {
+            'amount': '600', 'description': 'X', 'category': 'other',
+            'station': 'bar', 'date': self.wrong_date, 'notes': '',
+        })
+        self.assertEqual(resp.status_code, 302)
+        expense = BusinessExpense.objects.get(id=self.expense_id)
+        self.assertEqual(expense.amount, Decimal('500'))
+
+    def test_cross_business_expense_not_editable(self):
+        other_biz = Business.objects.create(name='Other Biz')
+        other_owner = User.objects.create_user(username='adhocedit_other', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        self.client.force_login(other_owner)
+        resp = self.client.post(f'/expenses/{self.expense_id}/edit/', {
+            'amount': '999', 'description': 'X', 'category': 'other',
+            'station': 'bar', 'date': self.wrong_date, 'notes': '',
+        })
+        self.assertEqual(resp.status_code, 404)
+        expense = BusinessExpense.objects.get(id=self.expense_id)
+        self.assertEqual(expense.amount, Decimal('500'))
+
+    def test_invalid_amount_rejected_leaves_original_unchanged(self):
+        resp = self.client.post(f'/expenses/{self.expense_id}/edit/', {
+            'amount': '0', 'description': 'Firewood', 'category': 'supplies',
+            'station': 'bar', 'date': self.wrong_date, 'notes': '',
+        })
+        self.assertFalse(resp.json()['ok'])
+        expense = BusinessExpense.objects.get(id=self.expense_id)
+        self.assertEqual(expense.amount, Decimal('500'))
+
+    def test_future_date_falls_back_to_existing_date_not_today(self):
+        """Distinct from record's own fallback (which falls back to TODAY) —
+        an edit that submits a bad/future date must not silently move an
+        otherwise-correct entry to today; it keeps the entry's own existing
+        date instead."""
+        future_date = (timezone.localdate() + timedelta(days=5)).isoformat()
+        resp = self.client.post(f'/expenses/{self.expense_id}/edit/', {
+            'amount': '700', 'description': 'Firewood', 'category': 'supplies',
+            'station': 'bar', 'date': future_date, 'notes': '',
+        })
+        self.assertTrue(resp.json()['ok'])
+        expense = BusinessExpense.objects.get(id=self.expense_id)
+        self.assertEqual(expense.date.isoformat(), self.wrong_date)
+        self.assertEqual(expense.amount, Decimal('700'))
+
+    def test_list_scoped_to_station_and_date(self):
+        resp = self.client.get('/expenses/list/', {'station': 'bar', 'date': self.wrong_date})
+        data = resp.json()
+        self.assertEqual(len(data['expenses']), 1)
+        self.assertEqual(data['expenses'][0]['id'], self.expense_id)
+
+    def test_list_empty_for_wrong_station(self):
+        resp = self.client.get('/expenses/list/', {'station': 'kitchen', 'date': self.wrong_date})
+        self.assertEqual(resp.json()['expenses'], [])
+
+    def test_list_blocked_for_plain_staff(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/expenses/list/', {'station': 'bar', 'date': self.wrong_date})
+        self.assertEqual(resp.status_code, 302)
+
+
+class KitchenBoardRevenueConfirmedCreditSplitTest(TestCase):
+    """2026-08-09 live report (Roy, Monsoon Inn): the "🍽 Leo" header tile
+    on Kitchen Board showed KES 2550 while the currently-open shift's own
+    cash/mpesa were both KES 0 — "i have not [rung/confirmed] today's
+    entries so that amount is inaccurate". Root cause: kitchen_board()'s
+    kitchen_revenue_today blended cash+mpesa+credit into one number with
+    no distinction — the same "confirmed vs unpaid revenue" conflation bug
+    already fixed elsewhere (daily_sales, home, stock_list, close-shift
+    result panel) on 2026-07-31, but never extended to this specific tile
+    (a genuinely separate code path that never calls _reconcile())."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Revenue Split Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbrev_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='KBREV-01', unit='Plate', selling_price=Decimal('100'),
+        )
+        self.client.force_login(self.owner)
+
+    def _make_txn(self, payment_method, amount='100'):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal(amount),
+            payment_method=payment_method, date=timezone.localdate(),
+        )
+
+    def test_credit_excluded_from_leo_headline(self):
+        self._make_txn('cash', '400')
+        self._make_txn('credit', '2150')  # matches the live report's shape
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.context['kitchen_revenue_today'], Decimal('400'))
+        self.assertEqual(resp.context['kitchen_revenue_credit'], Decimal('2150'))
+
+    def test_no_credit_leaves_leo_unchanged(self):
+        self._make_txn('cash', '300')
+        self._make_txn('mpesa', '200')
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.context['kitchen_revenue_today'], Decimal('500'))
+        self.assertEqual(resp.context['kitchen_revenue_credit'], Decimal('0'))
+
+    def test_credit_badge_hidden_when_zero(self):
+        self._make_txn('cash', '100')
+        resp = self.client.get('/kitchen/')
+        body = resp.content.decode()
+        self.assertIn('display:none;', body.split('kb-revenue-credit-badge')[1][:200])
+
+    def test_credit_badge_shown_when_present(self):
+        self._make_txn('credit', '2150')
+        resp = self.client.get('/kitchen/')
+        body = resp.content.decode()
+        self.assertIn('KES 2150', body)
+
+    def test_kitchen_stats_api_matches_split(self):
+        self._make_txn('cash', '400')
+        self._make_txn('credit', '2150')
+        resp = self.client.get('/kitchen/stats/')
+        data = resp.json()
+        self.assertEqual(data['revenue_today'], 400.0)
+        self.assertEqual(data['revenue_credit'], 2150.0)
+
+    def test_void_still_excluded(self):
+        self._make_txn('cash', '500')
+        self._make_txn('void', '999')
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.context['kitchen_revenue_today'], Decimal('500'))

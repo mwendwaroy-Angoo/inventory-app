@@ -1,15 +1,45 @@
 /* Ad-hoc expense JS — included inside existing <script> blocks, alongside
    petty_cash_js.html. window.EXPENSE_STATION set by the including board
    before this modal is ever opened, same convention as
-   window.PETTY_CASH_STATION. */
-window.openExpenseModal = function() {
-  document.getElementById('exp-amount').value = '';
-  document.getElementById('exp-description').value = '';
-  document.getElementById('exp-notes').value = '';
-  document.getElementById('exp-category').value = 'other';
+   window.PETTY_CASH_STATION.
+
+   2026-08-09 same-day follow-up (Roy): "can i recover a counter cash entry
+   placed on a wrong date mistakenly" — openExpenseModal() now doubles as
+   the EDIT entry point when called with an expense object (from the
+   History panel below); _submitExpense() branches POST target/method
+   accordingly. No separate "recompute" step is needed after an edit —
+   Shift History / the Z-report both recompute the ad-hoc-expense figure
+   fresh on every page render (see shift_views._ad_hoc_expense_total_for_
+   shift()'s docstring), so moving an expense's date here makes it
+   disappear from the wrong day's reconciliation and appear on the correct
+   day's the very next time either report is opened. */
+window._expEditingId = null;
+
+window.openExpenseModal = function(expense) {
+  var titleEl = document.getElementById('exp-modal-title');
+  var btnEl = document.getElementById('exp-submit-btn');
   var todayIso = new Date().toISOString().slice(0, 10);
-  document.getElementById('exp-date').value = todayIso;
-  document.getElementById('exp-date').max = todayIso;
+  if (expense) {
+    window._expEditingId = expense.id;
+    document.getElementById('exp-amount').value = expense.amount;
+    document.getElementById('exp-description').value = expense.description;
+    document.getElementById('exp-notes').value = expense.notes || '';
+    document.getElementById('exp-category').value = expense.category;
+    document.getElementById('exp-date').value = expense.date;
+    document.getElementById('exp-date').max = todayIso;
+    if (titleEl) titleEl.textContent = '✏️ Sahihisha Matumizi';
+    if (btnEl) btnEl.textContent = '✓ Hifadhi Marekebisho';
+  } else {
+    window._expEditingId = null;
+    document.getElementById('exp-amount').value = '';
+    document.getElementById('exp-description').value = '';
+    document.getElementById('exp-notes').value = '';
+    document.getElementById('exp-category').value = 'other';
+    document.getElementById('exp-date').value = todayIso;
+    document.getElementById('exp-date').max = todayIso;
+    if (titleEl) titleEl.textContent = '💸 Matumizi';
+    if (btnEl) btnEl.textContent = '💸 Rekodi Matumizi';
+  }
   document.getElementById('exp-error').style.display = 'none';
   new bootstrap.Modal(document.getElementById('expenseModal')).show();
   setTimeout(function(){ document.getElementById('exp-amount').focus(); }, 300);
@@ -35,21 +65,27 @@ window._submitExpense = function() {
     return;
   }
   errEl.style.display = 'none';
-  btn.disabled = true; btn.textContent = 'Inatuma...';
+  var editingId = window._expEditingId;
+  var busyLabel = editingId ? 'Inahifadhi...' : 'Inatuma...';
+  var doneLabel = editingId ? '✓ Hifadhi Marekebisho' : '💸 Rekodi Matumizi';
+  btn.disabled = true; btn.textContent = busyLabel;
 
   var CSRF_TOKEN = document.querySelector('[name=csrfmiddlewaretoken]');
   var csrf = CSRF_TOKEN ? CSRF_TOKEN.value : '{{ csrf_token }}';
   var station = window.EXPENSE_STATION || '';
-  var token = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+  var url = editingId ? ('/expenses/' + editingId + '/edit/') : '/expenses/record/';
   var body = new URLSearchParams({
     amount: amount, description: description, category: category,
-    date: date, notes: notes, station: station,
-    idempotency_token: token, csrfmiddlewaretoken: csrf,
+    date: date, notes: notes, station: station, csrfmiddlewaretoken: csrf,
   });
-  fetch('/expenses/record/', {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}})
+  if (!editingId) {
+    body.set('idempotency_token',
+      (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
+  }
+  fetch(url, {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}})
     .then(function(r){ return r.json(); })
     .then(function(d){
-      btn.disabled = false; btn.textContent = '💸 Rekodi Matumizi';
+      btn.disabled = false; btn.textContent = doneLabel;
       if (d.ok) {
         var m = bootstrap.Modal.getInstance(document.getElementById('expenseModal'));
         if (m) m.hide();
@@ -61,13 +97,14 @@ window._submitExpense = function() {
           alert(d.message);
         }
         if (typeof window._refreshExpenseTotal === 'function') window._refreshExpenseTotal();
+        if (editingId && typeof window.loadExpenseHistory === 'function') window.loadExpenseHistory();
       } else {
         errEl.textContent = d.error || 'Hitilafu. Jaribu tena.';
         errEl.style.display = 'block';
       }
     })
     .catch(function(){
-      btn.disabled = false; btn.textContent = '💸 Rekodi Matumizi';
+      btn.disabled = false; btn.textContent = doneLabel;
       errEl.textContent = 'Hitilafu ya mtandao.';
       errEl.style.display = 'block';
     });
@@ -82,4 +119,61 @@ window._refreshExpenseTotal = function() {
       el.textContent = 'KES ' + Math.round(d.total || 0).toLocaleString('en-KE');
     })
     .catch(function(){});
+};
+
+/* ── Historia ya Matumizi (find + edit an entry, e.g. one on a wrong date) ── */
+window.toggleExpenseHistory = function() {
+  var panel = document.getElementById('exp-history-panel');
+  var datebar = document.getElementById('exp-history-datebar');
+  var caret = document.getElementById('exp-history-caret');
+  var showing = panel.style.display !== 'none';
+  panel.style.display = showing ? 'none' : 'block';
+  datebar.style.display = showing ? 'none' : 'flex';
+  if (caret) caret.textContent = showing ? '▾' : '▴';
+  if (!showing) {
+    var dateEl = document.getElementById('exp-history-date');
+    if (!dateEl.value) dateEl.value = new Date().toISOString().slice(0, 10);
+    window.loadExpenseHistory();
+  }
+};
+
+window._expHistoryCache = [];
+
+window.loadExpenseHistory = function() {
+  var panel = document.getElementById('exp-history-panel');
+  var dateEl = document.getElementById('exp-history-date');
+  var sel = dateEl.value || new Date().toISOString().slice(0, 10);
+  var station = window.EXPENSE_STATION || '';
+  panel.innerHTML = '<div style="color:#888;font-size:.76rem;padding:.4rem;">Inapakia...</div>';
+  fetch('/expenses/list/?station=' + station + '&date=' + sel, {credentials: 'same-origin'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      window._expHistoryCache = d.expenses || [];
+      window._renderExpenseHistory();
+    })
+    .catch(function(){
+      panel.innerHTML = '<div style="color:#c0395a;font-size:.76rem;padding:.4rem;">Hitilafu ya mtandao.</div>';
+    });
+};
+
+window._renderExpenseHistory = function() {
+  var panel = document.getElementById('exp-history-panel');
+  var rows = window._expHistoryCache || [];
+  if (!rows.length) {
+    panel.innerHTML = '<div style="color:#888;font-size:.76rem;padding:.4rem;">Hakuna matumizi kwa tarehe hii.</div>';
+    return;
+  }
+  panel.innerHTML = rows.map(function(e){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.4rem;' +
+      'background:rgba(255,255,255,.03);border:1px solid #2a2a2a;border-radius:6px;padding:.4rem .5rem;margin-bottom:.3rem;">' +
+      '<div style="min-width:0;">' +
+        '<div style="color:#f0ece4;font-size:.8rem;font-weight:600;">' + e.description + '</div>' +
+        '<div style="color:#888;font-size:.72rem;">KES ' + Math.round(e.amount).toLocaleString('en-KE') +
+          (e.recorded_by ? ' — ' + e.recorded_by : '') + '</div>' +
+      '</div>' +
+      '<button onclick=\'window.openExpenseModal(' + JSON.stringify(e).replace(/'/g, "&#39;") + ')\' ' +
+        'style="flex-shrink:0;background:rgba(232,144,144,.1);border:1px solid rgba(232,144,144,.35);' +
+        'color:#e89090;border-radius:6px;padding:.25rem .55rem;font-size:.74rem;cursor:pointer;">✏️ Hariri</button>' +
+    '</div>';
+  }).join('');
 };

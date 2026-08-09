@@ -454,6 +454,122 @@ def record_ad_hoc_expense(request):
 
 
 @login_required
+@owner_or_manager_required
+def ad_hoc_expenses_list(request):
+    """Read-only — the ad-hoc expenses recorded for one station+date, so a
+    wrong entry (most often a wrong DATE, per Roy's 2026-08-09 live report)
+    can actually be found in order to correct it via edit_ad_hoc_expense()
+    below. Owner/manager only, matching the recording permission tier."""
+    up = get_user_profile(request)
+    business = up.business
+    station = (request.GET.get('station') or '').strip()
+    if station not in ('bar', 'kitchen'):
+        return JsonResponse({'expenses': []})
+    date_raw = (request.GET.get('date') or '').strip()
+    the_date = timezone.localdate()
+    if date_raw:
+        try:
+            the_date = date_type.fromisoformat(date_raw)
+        except ValueError:
+            pass
+    rows = BusinessExpense.objects.filter(
+        business=business, date=the_date, station=station,
+    ).order_by('-id')
+    return JsonResponse({
+        'date': the_date.isoformat(),
+        'expenses': [
+            {
+                'id': e.id, 'description': e.description,
+                'amount': float(e.amount), 'category': e.category,
+                'date': e.date.isoformat(), 'notes': e.notes,
+                'recorded_by': e.recorded_by.get_full_name() or e.recorded_by.username if e.recorded_by else '',
+            }
+            for e in rows
+        ],
+    })
+
+
+@login_required
+@owner_or_manager_required
+@require_POST
+def edit_ad_hoc_expense(request, expense_id):
+    """Correct an already-recorded ad-hoc expense — most often a wrong
+    DATE (2026-08-09 live report: Roy placed one on the wrong date by
+    mistake). No separate "recompute" step is needed after this: Shift
+    History and the Z-report both call shift_views._ad_hoc_expense_total_
+    for_shift() / the day-level BusinessExpense query fresh on EVERY page
+    render, never from a frozen snapshot — so moving an expense's date here
+    makes it disappear from the wrong day's reconciliation and appear on
+    the correct day's the very next time either report is opened, with
+    zero extra action required."""
+    up = get_user_profile(request)
+    business = up.business
+    expense = BusinessExpense.objects.filter(id=expense_id, business=business).first()
+    if expense is None:
+        return JsonResponse({'ok': False, 'error': 'Haipatikani.'}, status=404)
+
+    amount_raw = (request.POST.get('amount') or '').strip()
+    description = (request.POST.get('description') or '').strip()
+    category = (request.POST.get('category') or 'other').strip()
+    station = (request.POST.get('station') or '').strip()
+    date_raw = (request.POST.get('date') or '').strip()
+    notes = (request.POST.get('notes') or '').strip()
+
+    try:
+        amount = Decimal(amount_raw)
+        if amount <= 0:
+            raise InvalidOperation
+    except (InvalidOperation, ValueError, TypeError):
+        return JsonResponse({'ok': False, 'error': 'Weka kiasi sahihi.'}, status=400)
+
+    if not description:
+        return JsonResponse({'ok': False, 'error': 'Weka maelezo mafupi ya matumizi haya.'}, status=400)
+
+    valid_categories = [c[0] for c in BusinessExpense.CATEGORY_CHOICES]
+    if category not in valid_categories:
+        category = 'other'
+
+    if station not in ('bar', 'kitchen'):
+        station = ''
+
+    # Same "never in the future, never blocks" rule as record — but here a
+    # blank/invalid date falls back to the entry's OWN existing date, not
+    # today, since an edit that touches other fields but leaves the date box
+    # untouched must never silently move the date to today.
+    new_date = expense.date
+    if date_raw:
+        try:
+            parsed = date_type.fromisoformat(date_raw)
+            if parsed <= timezone.localdate():
+                new_date = parsed
+        except ValueError:
+            pass
+
+    old_date = expense.date
+    expense.amount = amount
+    expense.description = description
+    expense.category = category
+    expense.station = station
+    expense.date = new_date
+    expense.notes = notes
+    expense.save(update_fields=['amount', 'description', 'category', 'station', 'date', 'notes'])
+
+    return JsonResponse({
+        'ok': True,
+        'message': (
+            f"✓ Imesahihishwa: {description} — KES {amount:,.0f} "
+            f"({new_date.strftime('%d %b %Y')})"
+            + (f" — ilikuwa {old_date.strftime('%d %b %Y')}" if new_date != old_date else "")
+        ),
+        'expense': {
+            'id': expense.id, 'description': expense.description,
+            'amount': float(expense.amount), 'category': expense.category,
+            'date': expense.date.isoformat(), 'station': expense.station,
+        },
+    })
+
+
+@login_required
 def expense_day_total_api(request):
     """Read-only — today's (or a given date's) station-scoped expense total,
     for the small informational readout on Bar/Kitchen Board. Deliberately

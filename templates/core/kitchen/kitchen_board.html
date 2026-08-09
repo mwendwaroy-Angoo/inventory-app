@@ -267,6 +267,18 @@
       <div class="kb-revenue-badge">
         🍽 Leo: <strong id="kb-revenue-amount">KES {{ kitchen_revenue_today|floatformat:0 }}</strong>
       </div>
+      <!-- 2026-08-09 live report (Roy): "Leo" used to blend cash+mpesa+
+           credit into one number — a deni/tab sale not yet collected made
+           the tile look inflated with no way to tell why. Now "Leo" is
+           confirmed (cash+mpesa) only; this note only appears when there's
+           credit revenue today, and is never silently folded into "Leo"
+           itself. Same wording convention as this page's own shift panel
+           ("Mikopo Mapya"). -->
+      <div id="kb-revenue-credit-badge" class="kb-revenue-badge"
+           style="background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.3);color:#f87171;{% if not kitchen_revenue_credit %}display:none;{% endif %}"
+           title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa, bado hazijalipwa">
+        + Deni: <strong id="kb-revenue-credit-amount">KES {{ kitchen_revenue_credit|floatformat:0 }}</strong>
+      </div>
       <!-- 2026-08-09 live request (Roy): "record expenses for a certain
            day" from Kitchen Board's own reconciliation area — deliberately
            informational only, never subtracted from the till/expected cash
@@ -320,6 +332,10 @@
   {% if can_receive_stock %}
   <!-- ── Open Kitchen Stock Receipts panel — populated by loadStockReceipts() ── -->
   <div id="kb-stock-receipts-panel" style="display:none; margin-bottom:.75rem;"></div>
+  {% endif %}
+
+  {% if is_owner %}
+  {% include "core/expense_history_panel.html" %}
   {% endif %}
 
   <!-- ── Shift panel ─────────────────────────────────────── -->
@@ -2798,6 +2814,19 @@
         if (d.ok) {
           var el = document.getElementById('kb-revenue-amount');
           if (el) el.textContent = 'KES ' + Math.round(d.revenue_today).toLocaleString();
+          // 2026-08-09 — keep the "+ Deni" note in sync with the same
+          // confirmed/credit split the page loads with (see kitchen_board()'s
+          // own detailed comment on kitchen_revenue_today/kitchen_revenue_credit).
+          var creditBadge = document.getElementById('kb-revenue-credit-badge');
+          var creditEl = document.getElementById('kb-revenue-credit-amount');
+          if (creditBadge && creditEl) {
+            if (d.revenue_credit > 0) {
+              creditEl.textContent = 'KES ' + Math.round(d.revenue_credit).toLocaleString();
+              creditBadge.style.display = '';
+            } else {
+              creditBadge.style.display = 'none';
+            }
+          }
         }
       })
       .catch(function(){});

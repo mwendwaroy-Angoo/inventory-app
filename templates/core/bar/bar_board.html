@@ -752,6 +752,10 @@
   <!-- Shift panel — populated by loadShift() -->
   <div id="shift-panel" style="display:none;"></div>
 
+  {% if is_owner %}
+  {% include "core/expense_history_panel.html" %}
+  {% endif %}
+
   <!-- Active waitresses panel — updated by loadBoard() -->
   <div id="waitress-panel" style="display:none; margin-bottom:0.75rem;
        background:rgba(255,152,0,0.06); border:1px solid rgba(255,152,0,0.2);
