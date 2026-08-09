@@ -5104,3 +5104,46 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   this is the likely source of the figure — not a data-entry mistake needing a backfill.
   Fixed with the same `.exclude(invoice_no='[SVQ]')` `home()` already uses. 2 new tests. No
   migrations. 1603 tests pass (core + accounts).
+- Stock Receipt profit precision + direct raw-material sack-cost editing (2026-08-09,
+  same-day follow-up). **(1)** Roy: "ensure the stock receipt appends and adjusts sales/
+  profits accordingly", then "chicken data i recorded for previous days for that given
+  receipt have not reflected yet, but the stock has reduced." Three real gaps fixed in
+  `KitchenStockReceipt.total_revenue()`. PER-PRESET attribution: a line for one specific
+  preset (e.g. "Full Chicken Leg" on a Kuku item that also sells Wing/Bawa via other
+  presets) previously matched on `item_id` alone, so a sale of a DIFFERENT preset of the
+  same shared item — possibly received under a completely separate receipt — silently
+  counted toward THIS receipt's own Mapato/Faida; now filtered per `(item_id, preset_id)`
+  for a preset-specific line, unchanged for a plain no-preset line. `[SVQ]`-tagged stock-
+  count corrective transactions now excluded, matching every other revenue computation in
+  the app. Then, fixing those two surfaced a THIRD gap: the strict per-preset match
+  silently excluded a real class of historical sale — the single-preset tile-tap path
+  never attached `preset_id` to the Transaction it created until earlier the SAME day's
+  fix (see the entry above), so a sale rung up before that shipped has `preset=None` even
+  though it was genuinely sold as the receipt's own preset (often the only sellable one at
+  the time, per the "cut visibility" gating). A `preset=None` sale of the receipt's item
+  now also counts — can't be positively ruled out, and `preset=None` was the historical
+  norm — while a sale explicitly tagged with a DIFFERENT, non-null preset (the original,
+  confirmed bug) still stays excluded. New `KitchenStockReceipt.reopen()` +
+  `kitchen_stock_receipt_reopen` view/URL (owner/manager only): undoes a close from before
+  all its sales were rung up — `total_revenue()`'s window freezes at `closed_at`, so a
+  prematurely-closed receipt could otherwise never earn revenue again. Kitchen Board now
+  shows recently-closed receipts too (previously only open ones rendered, even though the
+  API already returned both), with a "↩️ Fungua Tena" button. **(2)** Live report: "the
+  pencil icon is directing me to the add transaction, that is bogus... put [the cost
+  editor] in the raw potatoes tile so that when I put it in, it represents the 6 buckets
+  equivalent to a whole sack division, it is easier that way" — rejecting the SAME
+  session's own earlier design (hand off to Add Transaction, per the "one designed writer"
+  rule for `Item.cost_price`). New `edit_raw_material_cost` view/URL — owner/manager only,
+  scoped to items that ARE actually a `raw_material_source` for some batch item
+  (`item.derived_batch_items.exists()`) — takes a sack's whole cost + units-per-sack
+  (defaults to 6), divides, writes `item.cost_price` directly. A new, deliberately
+  narrow exception to the "one designed writer" rule, same category as
+  `KitchenBatch.open_batch()`'s pre-existing exception. The raw-material tile's pencil
+  now calls this instead of linking to Add Transaction; "✏️ Hariri Gharama" is removed
+  from a raw-material-tracked `KitchenBatch` tile specifically (`item.raw_source_id` set)
+  — `open_batch()` already derives `cost_total` automatically from `kg_drawn ×
+  raw_item.cost_price` for every future draw once the raw item's own cost is fixed, so
+  correcting THAT item is now the right lever — kept for a batch with no raw material
+  source, which has no other item to correct instead. 16 new tests
+  (`KitchenStockReceiptRevenuePrecisionTest` ×10, `EditRawMaterialCostTest` ×6). No
+  migrations. 1619 tests pass (core + accounts).
