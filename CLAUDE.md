@@ -5251,3 +5251,45 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   directly and asserts all 3 presets reappear; `test_genuinely_depleted_item_still_hides_all_
   presets` — the same fully-sold case as the existing test, confirming the fallback doesn't
   fire when it shouldn't). No migrations. 1632 tests pass (core + accounts).
+- Fix: the same-day preset-fallback fix itself was wrong — remove it, add owner-only
+  diagnostic numbers instead (2026-08-09, same-day follow-up, live screenshots). Roy caught
+  it immediately: "it is bringing unnecessary portion presets unlike before where I saw full
+  chicken legs and the tether." Tracing his exact real-world sequence (23 full legs received
+  as a single Kitchen Stock Receipt, backdated sales recorded against Full/Half Chicken Leg
+  for 7th/8th August, an earlier "mistake" duplicate receipt deleted the same session) showed
+  the "cut visibility" gate's received-vs-sold anchor tally can legitimately drift negative
+  for a preset that WAS genuinely received (e.g. a receipt line lost from a delete, a
+  backdated sale landing before the gate's aggregate window) — and the earlier same-day
+  fallback ("if presets end up empty but real balance is positive, show every configured
+  preset") then surfaced Wing and Drumstick, which were never received, right alongside the
+  correct Full/Half Chicken Leg. Fabricating a sellable tile for stock that was never
+  received is a worse failure than hiding a real one — a business owner could not tell fact
+  from fiction from the tile alone. Removed the fallback outright; a drift now correctly
+  hides only the affected preset, never invents extras. Since the root numeric mismatch
+  itself remains real and not yet fully diagnosed (no direct production DB access this
+  session), added an owner/manager-only diagnostic line to every preset in the sell-tile
+  modal — `_received`/`_sold` numbers computed exactly as the gate itself uses them — visible
+  as "imepokewa: X · imeuzwa: Y · iliyobaki: Z" under each preset label, staff never see it.
+  This turns the next report from a blind guess into a direct read of the real ledger state.
+  Same investigation also traced (with code evidence, not guessed) why Stock Receipt Mapato
+  never reflected Roy's backdated 7th/8th sales all day: `KitchenStockReceipt.created_at` is
+  always stamped to the exact moment the receipt row is saved (never backdatable — confirmed
+  by reading `kitchen_stock_receipt_create()`, which passes no `created_at`/`received_on`
+  override), while a backdated sale explicitly sets `Transaction.created_at` to the past date
+  the sale actually happened on (`_kitchen_checkout`'s `kb_backdated_at` override). Since
+  `total_revenue()`'s window starts at `self.created_at`, a backdated sale's timestamp will
+  always fall BEFORE a receipt created after the fact — structurally, regardless of any
+  item/preset matching logic, which is why three separate matching-logic attempts earlier
+  this same day never once fixed it. Reported to Roy with the concrete fix available
+  (`KitchenStockReceipt` already has an editable `received_on` DateField unused by
+  `total_revenue()`'s window; using it instead of `created_at` as the floor would close this)
+  but deliberately not touched without his go-ahead, honoring his own "leave the receipt
+  issue be" instruction from earlier the same day. Separately verified from Roy's own two
+  screenshots (Faida KES 4,217 → KES 4,317, a clean +KES 100 matching one "Ya 100" fries
+  sale) that the Chipo batch sell→profit mechanism is NOT currently broken — reported this
+  plainly rather than changing code with no reproducible symptom, and asked for a specific
+  failing sale if he still sees a gap. 3 tests rewritten to match the new hide-don't-fabricate
+  contract (`test_ledger_drift_hides_rather_than_fabricates` replaces the old fallback test;
+  `test_genuinely_depleted_item_still_hides_all_presets` unchanged), 1 new test
+  (`test_owner_sees_received_sold_diagnostic_numbers` — owner sees `_received`/`_sold`, staff
+  never does). No migrations. 1633 tests pass (core + accounts).
