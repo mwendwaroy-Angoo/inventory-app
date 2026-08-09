@@ -5014,3 +5014,31 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `test_stock_receipt_create_resolves_tethered_preset_to_anchor` ×1 on
   `PresetStockTrackingTetherTest`). One migration (0158, additive). 1576 tests pass (core
   + accounts).
+- Ad-hoc expense day-specific reconciliation (2026-08-09, same-day follow-up). Roy's
+  explicit confirmation, asked directly: a backdated ad-hoc expense should reconcile
+  against "both shift history and z report" for the SPECIFIC DAY it's dated for
+  (inclusive of that day's shift data), never the day it happens to be recorded on if
+  different, and never `till_expected_cash()` (the continuous "right now" dashboard tile,
+  which stays untouched by design per the original sprint entry above). New
+  `shift_views._ad_hoc_expense_total_for_shift(shift)` sums same-day, station-scoped
+  `BusinessExpense` rows for a shift's own active window (`_shift_active_segments()`).
+  Deliberately NOT folded into `_reconcile()` itself — that function also backs the LIVE
+  in-progress shift panel (`active_shift_api`) and the moment-of-close comparison
+  (`close_shift`), which must keep showing exactly the figure staff physically compared
+  their count against at the time; folding it in there would have silently moved a number
+  Roy explicitly said must never move. Instead wired in additively, at DISPLAY time, only
+  in the two named surfaces: `shift_history()` (each row gains
+  `ad_hoc_expenses`/`expected_cash_after_expenses`/`variance_after_expenses`; the
+  colour-coded variance badge now reflects the after-expenses figure — equal to the
+  original whenever no same-day expense exists — matching this app's own established
+  precedent that a later correction should self-correct the live standing record, not stay
+  frozen at close time, same as the petty-cash-review-undo mechanism) and `bar_z_report()`
+  (same per-shift fields, plus a single DEDUPED day-level query — `report_date`,
+  `station='bar'` — rather than summing per overlapping shift, mirroring the existing
+  day_cash/day_mpesa dedup fix for two staff sharing one till). Regression-locked: a
+  same-day expense leaves the live shift panel and close-time comparison completely
+  unadjusted (`test_live_shift_panel_and_close_shift_unaffected_by_same_day_expense`); a
+  backdated expense only shows up in Shift History/Z-report rows for its own date, never
+  today's; the day-level Z-report total stays deduped across overlapping shifts. No new
+  migrations. 9 new tests (`AdHocExpenseDayReconciliationTest`). 1585 tests pass (core +
+  accounts).
