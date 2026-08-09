@@ -4976,3 +4976,41 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `rental_board.html` (L3) deferred — every mechanism is a tested JSON endpoint today. 16
   new tests. 1371 total, OK. **Phase 4 (Rentals) L1/L2 complete.** Next: Phase 5 (Supply
   Chain) — X2 (Goods Received Note), X3 (rider POD/COD).
+- Ad-hoc expense recording + tethered-preset receive-picker leak fix (2026-08-09). Live
+  request: "can I record expenses for a certain day" — confirmed with Roy this must be
+  station-scoped, backdatable, and NEVER touch today's expected drawer cash (bookkeeping
+  only, not a till-affecting event like PettyCash). New `BusinessExpense.station`/
+  `recorded_by` (migration 0158, additive); new `record_ad_hoc_expense`/
+  `expense_day_total_api` (owner/manager only, idempotency-guarded via
+  `claim_checkout_token`) in `core/recurring_expense_views.py`; new shared
+  `expense_modal.html`/`expense_js.html` partials (same convention as
+  `petty_cash_modal.html`/`petty_cash_js.html`), wired into Bar Board and Kitchen Board
+  with a "💸 Matumizi ya Leo" readout + button, owner-only. Deliberately never read by
+  `till_expected_cash()`/`_reconcile()` — locked in by
+  `test_ad_hoc_expense_never_affects_till_expected_cash`. Roy's own follow-up message
+  ("it should reconcile the relevant cash entries for that specific day inclusive of
+  shifts data for that day but it should not touch the day it is been recorded if it is
+  not for that day") appears to ask for MORE than pure bookkeeping — that a backdated
+  entry should also factor into THAT PAST day's own historical shift/day reconciliation
+  report, not just Expense Intelligence — a real nuance beyond what's built here; flagged
+  to Roy for confirmation before touching `till_expected_cash()`/`_reconcile()` further,
+  since those are this app's own documented most money-sensitive functions.
+  Same session, separate live report: after receiving "Full Chicken Leg" via a
+  preset-attributed Kitchen Stock Receipt line, Roy could not sell the Kuku tile — traced
+  and fixed (real bug: `tileClick()`'s single-preset branch in kitchen_board.html never
+  handled the price=0 custom-price sentinel). Roy's own follow-up, mid-fix, caught a
+  second real bug from a screenshot of the "+Pata Stok" receive modal: "Half Chicken Leg"
+  (tethered to "Full Chicken Leg" via `tracks_stock_of`) was still offered as its own line
+  in TWO receive-style pickers — the "+Pata Stok" "Chagua Kipande" step AND the separate
+  Kitchen Stock Receipt modal's "Chagua Bidhaa" step. A tethered preset has no independent
+  physical delivery to receive against — picking it would silently misattribute the
+  line's cost onto the tethered preset instead of its anchor. Fixed both pickers to source
+  options from `all_presets` (already excludes tethered presets in the
+  `portion_items` view builder, `core/kitchen_views.py`); Kitchen Stock Receipt's create
+  endpoint also gained a server-side defensive resolve-to-anchor step
+  (`preset.tracks_stock_of` fallback) for a stale cached client that still submits a
+  tethered preset id. Tethered presets remain fully sellable on the ordinary tile grid —
+  only the two receive pickers are affected. 15 new tests (`AdHocExpenseTest` ×14,
+  `test_stock_receipt_create_resolves_tethered_preset_to_anchor` ×1 on
+  `PresetStockTrackingTetherTest`). One migration (0158, additive). 1576 tests pass (core
+  + accounts).
