@@ -501,7 +501,7 @@
                                 style="background:rgba(110,231,183,0.08);border:1px solid rgba(110,231,183,0.3);border-radius:5px;
                                        color:#6ee7b7;font-size:0.68rem;padding:0.12rem 0.45rem;cursor:pointer;margin-left:0.3rem;"
                                 title="Idhinisha kufutwa">✅</button>
-                            <button onclick="woReject({{ entry.write_off.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }}, '{{ entry.write_off.requested_by.get_full_name|default:entry.write_off.requested_by.username|escapejs }}', '{{ entry.write_off.request_type }}')"
+                            <button onclick="woReject({{ entry.write_off.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }}, '{% if entry.write_off.requested_by %}{{ entry.write_off.requested_by.get_full_name|default:entry.write_off.requested_by.username|escapejs }}{% else %}—{% endif %}', '{{ entry.write_off.request_type }}')"
                                 style="background:rgba(192,57,90,0.08);border:1px solid rgba(192,57,90,0.3);border-radius:5px;
                                        color:#c0395a;font-size:0.68rem;padding:0.12rem 0.45rem;cursor:pointer;margin-left:0.15rem;"
                                 title="Kataa{% if entry.write_off.request_type != 'erase_mistake' %} — Haki deduction{% endif %}">❌</button>
@@ -560,7 +560,19 @@
                         KES {{ payment.amount_paid|floatformat:2 }}
                     </td>
                     <td style="color:#b0b0b0; font-size:0.82rem;">
-                        {{ payment.recorded_by.get_full_name|default:payment.recorded_by.username|default:'—' }}
+                        <!-- 2026-08-09: recorded_by is None for every STK-settled
+                             payment (_settle_debt_customer_from_payment, no staff
+                             involved) — the old chained-default expression tried to
+                             resolve payment.recorded_by.username as a filter ARGUMENT
+                             even when recorded_by itself was None, which Django's
+                             template engine does not silently swallow the way it does
+                             for an ordinary value lookup, crashing this page outright
+                             for any customer who ever paid off debt via STK. -->
+                        {% if payment.recorded_by %}
+                            {{ payment.recorded_by.get_full_name|default:payment.recorded_by.username }}
+                        {% else %}
+                            📲 STK Push
+                        {% endif %}
                     </td>
                     <td style="color:#888; font-size:0.82rem;" class="pe-4">
                         {{ payment.notes|default:'—' }}
@@ -787,13 +799,25 @@
                         {% endif %}
                     </div>
 
-                    <div class="mb-1">
+                    <div class="mb-3">
                         <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
                             {% trans 'Notes' %}
                             <span style="color:#888; font-size:0.78rem;">({% trans 'optional' %})</span>
                         </label>
                         <input type="text" name="notes" class="form-control"
                                placeholder="{% trans 'e.g. Partial payment, remainder next Friday' %}">
+                    </div>
+
+                    <!-- 2026-08-09 live request (Roy): a debt that was actually
+                         paid off weeks ago, just never recorded at the time,
+                         should show its real date, not today's. Blank = today,
+                         exactly as before this field existed. -->
+                    <div class="mb-1">
+                        <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
+                            📅 {% trans 'Payment Date' %}
+                            <span style="color:#888; font-size:0.78rem;">({% trans 'leave blank for today — use this only if the payment actually happened earlier and was never recorded' %})</span>
+                        </label>
+                        <input type="date" name="paid_date" class="form-control" max="{{ today }}">
                     </div>
 
                 </div>

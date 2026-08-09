@@ -27272,3 +27272,175 @@ class DuplicateCustomerDebtDoubleDisplayTest(TestCase):
         self.client.force_login(staff)
         resp = self.client.get('/debt/')
         self.assertEqual(resp.context['duplicate_groups'], [])
+
+
+class CombinedLedgerDebtAttributionTest(TestCase):
+    """2026-08-09 live report (Roy) — on a combo bar+kitchen business, the
+    customer debt profile's "Unpaid Credit Transactions" table could show a
+    kitchen item as still owed even though the Kitchen Ledger tile right
+    above it correctly said "All paid", while the genuinely-still-owed bar
+    item didn't appear at all. Root cause: _get_customer_debt_data(scope=
+    'all') ran ONE FIFO pass over every bar+kitchen credit transaction
+    sorted purely by date, applying the SUM of every payment regardless of
+    which ledger CustomerDebtPayment.source actually tagged it for — so a
+    kitchen-tagged payment could get consumed against an older BAR
+    transaction just because it came first chronologically."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Combo Ledger Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='cld_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Keg Gold',
+            material_no='CLD-BAR-01', unit='Cup', selling_price=Decimal('100'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Kuku',
+            material_no='CLD-KIT-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='Genro', credit_approved=True)
+
+        today = timezone.localdate()
+        # Bar item sold FIRST (older) — never paid.
+        self.bar_txn = Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Genro',
+            date=today - timedelta(days=5),
+        )
+        # Kitchen item sold LATER (newer) — fully paid via a kitchen-tagged payment.
+        self.kitchen_txn = Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Genro',
+            date=today - timedelta(days=2),
+        )
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('100'),
+            source='kitchen', payment_method='mpesa',
+        )
+
+    def test_kitchen_ledger_correctly_shows_fully_paid(self):
+        from core.debt_views import _get_customer_debt_data
+        kitchen_data = _get_customer_debt_data(self.customer, self.biz, scope='kitchen')
+        self.assertEqual(kitchen_data['outstanding'], 0.0)
+        self.assertEqual(kitchen_data['unpaid_transactions'], [])
+
+    def test_bar_ledger_correctly_shows_still_owed(self):
+        from core.debt_views import _get_customer_debt_data
+        bar_data = _get_customer_debt_data(self.customer, self.biz, scope='bar')
+        self.assertEqual(bar_data['outstanding'], 100.0)
+        self.assertEqual(len(bar_data['unpaid_transactions']), 1)
+        self.assertEqual(bar_data['unpaid_transactions'][0]['txn'].id, self.bar_txn.id)
+
+    def test_combined_scope_attributes_unpaid_item_to_the_correct_ledger(self):
+        """The core regression lock: before the fix, this would have shown
+        the KITCHEN item as unpaid (wrong — it was fully covered by its own
+        kitchen-tagged payment) and hidden the BAR item (actually still
+        owed) — because the combined FIFO consumed whichever transaction
+        was chronologically OLDEST (the bar one) using money that was
+        actually earmarked for kitchen."""
+        from core.debt_views import _get_customer_debt_data
+        data = _get_customer_debt_data(self.customer, self.biz, scope='all')
+        self.assertEqual(data['outstanding'], 100.0)
+        self.assertEqual(len(data['unpaid_transactions']), 1)
+        self.assertEqual(
+            data['unpaid_transactions'][0]['txn'].id, self.bar_txn.id,
+            "combined view must attribute the unpaid item to the BAR transaction, "
+            "not the already-kitchen-paid one",
+        )
+
+    def test_combined_totals_match_sum_of_both_ledgers(self):
+        from core.debt_views import _get_customer_debt_data
+        bar_data = _get_customer_debt_data(self.customer, self.biz, scope='bar')
+        kitchen_data = _get_customer_debt_data(self.customer, self.biz, scope='kitchen')
+        data = _get_customer_debt_data(self.customer, self.biz, scope='all')
+        self.assertEqual(data['total_credit'], bar_data['total_credit'] + kitchen_data['total_credit'])
+        self.assertEqual(data['total_paid'], bar_data['total_paid'] + kitchen_data['total_paid'])
+        self.assertEqual(data['outstanding'], round(bar_data['outstanding'] + kitchen_data['outstanding'], 2))
+
+    def test_customer_profile_page_renders_consistent_unpaid_list(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertEqual(resp.status_code, 200)
+        unpaid = resp.context['unpaid_transactions']
+        self.assertEqual(len(unpaid), 1)
+        self.assertEqual(unpaid[0]['txn'].id, self.bar_txn.id)
+
+    def test_evaluate_credit_sees_the_correct_overdue_state_on_combo_business(self):
+        """evaluate_credit() (Quick Sell's own credit gate) defaults to
+        scope='all'. Window=3 days: the bar txn (5 days old, still unpaid)
+        is genuinely overdue; the kitchen txn (2 days old) is fully paid.
+        Before the fix, the combined FIFO would have marked the BAR txn as
+        "paid" (oldest consumed first) and the KITCHEN txn as "unpaid" —
+        which is within the 3-day window, so has_overdue would wrongly be
+        False and this customer would wrongly be allowed more credit."""
+        from core.credit_policy import evaluate_credit
+        self.biz.credit_window_days = 3
+        self.biz.save(update_fields=['credit_window_days'])
+        decision = evaluate_credit(self.biz, self.customer)
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.tier, 'blocked')
+
+
+class DebtPaymentBackdateTest(TestCase):
+    """2026-08-09 live request (Roy): "debts that were already paid but a
+    long time ago but were not recorded at the time/day they were paid" —
+    optional paid_date field on Record Payment lets staff record the real
+    historical date instead of always stamping "now"."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Backdate Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='backdate_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='BD-01', unit='Bottle', selling_price=Decimal('200'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='Kamau', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='credit', recipient='Kamau',
+            date=timezone.localdate() - timedelta(days=20),
+        )
+
+    def test_backdated_payment_records_the_given_date(self):
+        import uuid
+        self.client.force_login(self.owner)
+        real_date = (timezone.localdate() - timedelta(days=15)).isoformat()
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'cash', 'notes': '',
+            'paid_date': real_date,
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 302)
+        payment = CustomerDebtPayment.objects.get(customer=self.customer)
+        self.assertEqual(timezone.localtime(payment.paid_at).date().isoformat(), real_date)
+
+    def test_blank_paid_date_still_defaults_to_now(self):
+        import uuid
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'cash', 'notes': '',
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 302)
+        payment = CustomerDebtPayment.objects.get(customer=self.customer)
+        self.assertEqual(timezone.localtime(payment.paid_at).date(), timezone.localdate())
+
+    def test_future_paid_date_is_ignored_not_blocked(self):
+        """A correction feature must never itself block the payment — an
+        invalid/future date silently falls back to now rather than
+        rejecting the whole submission."""
+        import uuid
+        self.client.force_login(self.owner)
+        future_date = (timezone.localdate() + timedelta(days=5)).isoformat()
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'cash', 'notes': '',
+            'paid_date': future_date,
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 302)
+        payment = CustomerDebtPayment.objects.get(customer=self.customer)
+        self.assertEqual(timezone.localtime(payment.paid_at).date(), timezone.localdate())

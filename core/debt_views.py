@@ -64,15 +64,122 @@ def _txn_transfer_note(txn):
     return entry.transfer_reason_note()
 
 
+def _score_from_metrics(has_credit_txns, total_credit_amount, total_paid,
+                          has_overdue, outstanding, avg_days, window, has_payments):
+    """Shared credit-score formula, factored out of _get_customer_debt_data
+    so the scope='all' merge path (see that function's own docstring) can
+    recompute a score from combined bar+kitchen metrics using the EXACT
+    same thresholds as the single-ledger path, rather than re-deriving a
+    parallel formula that could quietly drift out of sync with it.
+    """
+    if not has_credit_txns:
+        return 'new', _('New — No History'), '#888', 0
+
+    completion_rate = (total_paid / total_credit_amount * 100) if total_credit_amount > 0 else 0
+
+    if has_overdue and outstanding > 0:
+        return 'high_risk', _('High Risk'), '#f87171', max(10, int(completion_rate * 0.4))
+    elif completion_rate >= 90 and (avg_days is None or avg_days <= window * 0.6):
+        return 'reliable', _('Reliable'), '#6ee7b7', min(100, int(70 + completion_rate * 0.3))
+    elif completion_rate >= 50:
+        return 'moderate', _('Moderate'), '#fbbf24', int(40 + completion_rate * 0.3)
+    elif not has_payments:
+        # Credit transactions exist (e.g. open tab entries) but no debt payments
+        # recorded yet — treat as new rather than high_risk; the customer has no
+        # established payment behaviour in our system yet.
+        return 'new', _('New — No History'), '#888', 0
+    else:
+        # completion_rate < 50% but no overdue items yet — new/partial payer.
+        # high_risk fires only when there are OVERDUE items above.
+        # A partial first payment on a fresh tab should not brand the customer
+        # as high_risk before their window has even elapsed.
+        return 'moderate', _('Moderate'), '#fbbf24', max(5, int(completion_rate * 0.3))
+
+
 def _get_customer_debt_data(customer, business, scope='all'):
     """Compute debt data for one customer, optionally filtered to a sub-ledger.
 
     scope='bar'     → only bar-origin credit txns + bar-tagged payments
     scope='kitchen' → only kitchen-origin txns + kitchen-tagged payments
-    scope='all'     → entire ledger (owner view / businesses without kitchen)
+    scope='all'     → both ledgers combined (owner view / businesses without kitchen)
+
+    2026-08-09 live report (Roy) — on a combo bar+kitchen business, the
+    "Unpaid Credit Transactions" table on a customer's debt profile could
+    list a kitchen item as still owed even though the Kitchen Ledger tile
+    right above it correctly showed that ledger as fully paid (and vice
+    versa a genuinely-overdue bar item could hide behind it). Root cause:
+    CustomerDebtPayment.source is a real, deliberate tag saying which
+    sub-ledger a payment settles — but scope='all' used to run ONE FIFO
+    pass over every bar+kitchen credit transaction (sorted purely by date)
+    against the SUM of every bar+kitchen payment, with no regard for which
+    ledger either side actually belonged to. The aggregate totals
+    (outstanding/total_credit/total_paid) always balanced regardless — a
+    sum doesn't care how it's distributed — but WHICH specific transaction
+    got marked "still owed" could land on the wrong ledger's item whenever
+    a payment tagged for one ledger was chronologically applied against the
+    other ledger's older transaction. This wasn't just a display bug:
+    evaluate_credit() (core/credit_policy.py) and Quick Sell's own credit
+    gate (core/views.py) both call this function with the scope='all'
+    default on every business, so a combo business's overdue/blocked
+    decision — and the debt dashboard's own "Overdue" total — could be
+    computed from this same wrong per-transaction picture.
+
+    Fixed by making scope='all' a true union of two independently-correct
+    FIFO runs (recurse into 'bar' and 'kitchen', each of which already
+    respects its own payments-only-settle-its-own-ledger reality) rather
+    than one ledger-blind pool — every aggregate figure this returns was
+    already correct under the old code (sums don't care about
+    attribution), only the per-transaction breakdown (and anything derived
+    from it: aged buckets, has_overdue, score) changes.
     """
     today = timezone.localdate()
     window = business.credit_window_days or 30
+
+    if scope == 'all':
+        bar_d     = _get_customer_debt_data(customer, business, scope='bar')
+        kitchen_d = _get_customer_debt_data(customer, business, scope='kitchen')
+
+        unpaid_transactions = sorted(
+            bar_d['unpaid_transactions'] + kitchen_d['unpaid_transactions'],
+            key=lambda e: e['txn'].date,
+        )
+        payments = sorted(
+            bar_d['payments'] + kitchen_d['payments'],
+            key=lambda p: p.paid_at, reverse=True,
+        )
+        total_credit_amount = bar_d['total_credit'] + kitchen_d['total_credit']
+        total_paid          = bar_d['total_paid'] + kitchen_d['total_paid']
+        outstanding          = round(max(0.0, total_credit_amount - total_paid), 2)
+        aged = {k: round(bar_d['aged'][k] + kitchen_d['aged'][k], 2) for k in bar_d['aged']}
+        has_overdue = bar_d['has_overdue'] or kitchen_d['has_overdue']
+        credit_txns_exist = bool(bar_d['txn_count'] or kitchen_d['txn_count'])
+        avg_days = _calc_avg_payment_days(customer, business, scope='all')
+
+        score, score_label, score_color, score_pct = _score_from_metrics(
+            credit_txns_exist, total_credit_amount, total_paid,
+            has_overdue, outstanding, avg_days, window, bool(payments),
+        )
+
+        effective_window = min(customer.expected_payment_days or window, window)
+
+        return {
+            'customer':            customer,
+            'outstanding':         outstanding,
+            'total_credit':        round(total_credit_amount, 2),
+            'total_paid':          round(total_paid, 2),
+            'unpaid_transactions': unpaid_transactions,
+            'payments':            payments,
+            'aged':                aged,
+            'has_overdue':         has_overdue,
+            'score':               score,
+            'score_label':         score_label,
+            'score_color':         score_color,
+            'score_pct':           score_pct,
+            'effective_window':    effective_window,
+            'global_window':       window,
+            'txn_count':           bar_d['txn_count'] + kitchen_d['txn_count'],
+            'payment_count':       bar_d['payment_count'] + kitchen_d['payment_count'],
+        }
 
     credit_qs = Transaction.objects.filter(
         business=business,
@@ -146,47 +253,11 @@ def _get_customer_debt_data(customer, business, scope='all'):
 
     has_overdue = any(e['is_overdue'] for e in unpaid_transactions)
 
-    if not credit_txns:
-        score = 'new'
-        score_label = _('New — No History')
-        score_color = '#888'
-        score_pct   = 0
-    else:
-        completion_rate = (total_paid / total_credit_amount * 100) if total_credit_amount > 0 else 0
-        avg_days = _calc_avg_payment_days(customer, business, scope)
-
-        if has_overdue and outstanding > 0:
-            score = 'high_risk'
-            score_label = _('High Risk')
-            score_color = '#f87171'
-            score_pct   = max(10, int(completion_rate * 0.4))
-        elif completion_rate >= 90 and (avg_days is None or avg_days <= window * 0.6):
-            score = 'reliable'
-            score_label = _('Reliable')
-            score_color = '#6ee7b7'
-            score_pct   = min(100, int(70 + completion_rate * 0.3))
-        elif completion_rate >= 50:
-            score = 'moderate'
-            score_label = _('Moderate')
-            score_color = '#fbbf24'
-            score_pct   = int(40 + completion_rate * 0.3)
-        elif not payments:
-            # Credit transactions exist (e.g. open tab entries) but no debt payments
-            # recorded yet — treat as new rather than high_risk; the customer has no
-            # established payment behaviour in our system yet.
-            score = 'new'
-            score_label = _('New — No History')
-            score_color = '#888'
-            score_pct   = 0
-        else:
-            # completion_rate < 50% but no overdue items yet — new/partial payer.
-            # high_risk fires only when there are OVERDUE items (line 132 above).
-            # A partial first payment on a fresh tab should not brand the customer
-            # as high_risk before their window has even elapsed.
-            score = 'moderate'
-            score_label = _('Moderate')
-            score_color = '#fbbf24'
-            score_pct   = max(5, int(completion_rate * 0.3))
+    avg_days = _calc_avg_payment_days(customer, business, scope) if credit_txns else None
+    score, score_label, score_color, score_pct = _score_from_metrics(
+        bool(credit_txns), total_credit_amount, total_paid,
+        has_overdue, outstanding, avg_days, window, bool(payments),
+    )
 
     effective_window = min(
         customer.expected_payment_days or window,
@@ -423,12 +494,17 @@ def customer_debt_profile(request, customer_id):
 
 def _do_settle_debt_payment(customer, business, amount, payment_method, source,
                              notes='', recorded_by=None,
-                             site_url='https://www.dukamwecheche.co.ke'):
+                             site_url='https://www.dukamwecheche.co.ke',
+                             paid_at=None):
     """Create CustomerDebtPayment + FIFO reconciliation + issue receipt + SMS.
 
     Shared by record_debt_payment (HTTP view) and _settle_debt_customer_from_payment
     (M-Pesa callback). Returns (receipt, post_data) on success, raises on fatal error.
     post_data is _get_customer_debt_data recomputed AFTER the payment is recorded.
+
+    paid_at (2026-08-09 live request): optional backdate for a debt that
+    was genuinely settled earlier and never recorded at the time — None
+    (every existing caller) keeps the model's own default of "now".
     """
     from .models import BarTabEntry, BarTab, Receipt
     from .notifications import normalize_ke_phone, send_sms_notification
@@ -449,6 +525,7 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
         source=source,
         notes=notes,
         recorded_by=recorded_by,
+        **({'paid_at': paid_at} if paid_at else {}),
     )
 
     # FIFO BarTabEntry reconciliation — only flip is_paid when fully covered
@@ -643,6 +720,11 @@ def record_debt_payment(request, customer_id):
     amount_raw = request.POST.get('amount_paid', '').strip()
     method     = request.POST.get('payment_method', 'cash')
     notes      = request.POST.get('notes', '').strip()
+    # 2026-08-09 live request (Roy): "debts that were already paid but a
+    # long time ago but were not recorded at the time/day they were paid" —
+    # optional backdate, blank means "now" exactly as before (fully
+    # backward compatible — no existing caller/test sends this field).
+    paid_date_raw = request.POST.get('paid_date', '').strip()
     confirm_duplicate = request.POST.get('confirm_duplicate') == '1'
     session_key = f'debt_dup_pending_{customer.id}'
 
@@ -669,6 +751,7 @@ def record_debt_payment(request, customer_id):
         amount_raw = pending['amount_paid']
         method = pending['payment_method']
         notes = pending['notes']
+        paid_date_raw = pending.get('paid_date', '')
         debt_source_override = pending['debt_source']
 
     if scope == 'all':
@@ -754,6 +837,7 @@ def record_debt_payment(request, customer_id):
             request.session[session_key] = {
                 'amount_paid': str(amount), 'payment_method': method,
                 'notes': notes, 'debt_source': payment_scope, 'matched_when': when,
+                'paid_date': paid_date_raw,
             }
             _flag_possible_duplicate_debt_payment(business, customer, amount, recent_match)
             messages.warning(
@@ -778,6 +862,21 @@ def record_debt_payment(request, customer_id):
         messages.info(request, _('Malipo haya tayari yamerekodiwa.'))
         return redirect('customer_debt_profile', customer_id=customer_id)
 
+    # Optional backdate (2026-08-09 live request — Roy: a debt genuinely
+    # paid off weeks ago, just never recorded at the time, should show its
+    # real payment date, not today's). Blank/unparseable/future dates all
+    # silently fall back to "now" — a correction feature must never itself
+    # block a payment from being recorded.
+    paid_at_override = None
+    if paid_date_raw:
+        try:
+            from datetime import datetime as _dt, time as _time
+            parsed_date = _dt.strptime(paid_date_raw, '%Y-%m-%d').date()
+            if parsed_date <= timezone.localdate():
+                paid_at_override = timezone.make_aware(_dt.combine(parsed_date, _time(12, 0)))
+        except (ValueError, TypeError):
+            pass
+
     site_url = request.build_absolute_uri('/')[:-1]
     try:
         rcpt, post_data = _do_settle_debt_payment(
@@ -785,6 +884,7 @@ def record_debt_payment(request, customer_id):
             amount=amount, payment_method=method,
             source=payment_scope, notes=notes,
             recorded_by=request.user, site_url=site_url,
+            paid_at=paid_at_override,
         )
         if confirm_duplicate:
             # Confirmed despite the flag — still worth a background note to
