@@ -1,2 +1,2 @@
 release: python manage.py migrate && python manage.py fix_staff_profiles && python manage.py reset_superuser
-web: gunicorn stockapp.wsgi:application --workers 1 --threads 3 --worker-class gthread --timeout 120 --log-file -
+web: gunicorn stockapp.wsgi:application --workers 1 --threads 8 --worker-class gthread --timeout 120 --log-file -

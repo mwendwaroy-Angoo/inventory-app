@@ -18,7 +18,7 @@ services:
     runtime: python
     plan: free
     buildCommand: "./build.sh"
-    startCommand: "gunicorn stockapp.wsgi:application --workers 1 --threads 3 --worker-class gthread --timeout 120 --log-file -"
+    startCommand: "gunicorn stockapp.wsgi:application --workers 1 --threads 8 --worker-class gthread --timeout 120 --log-file -"
     healthCheckPath: /health/
     preDeployCommand: "python manage.py migrate --noinput"
     envVars:
