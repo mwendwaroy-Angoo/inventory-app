@@ -27029,6 +27029,66 @@ class PresetStockTrackingTetherTest(TestCase):
         self.kuku.refresh_from_db()
         self.assertEqual(self.kuku.current_balance(), 12)
 
+    def test_ledger_drift_falls_back_to_showing_all_presets(self):
+        """2026-08-09 live report (Roy): "clicking that chicken tile and it
+        is no longer showing the presets as it was before." Reproduces a
+        drift between the per-preset received-vs-sold ledger (used only to
+        gate which presets are sellable) and the item's own real
+        current_balance() — e.g. a Rekebisha/stock-count correction that
+        doesn't post through KitchenStockReceiptLine/Transaction.preset at
+        all. Received 12 full legs (anchor tally=12), then a plain Receipt
+        transaction with NO preset attached tops up the real balance further
+        without touching the anchor tally, then enough half-leg sales are
+        made to drain the ANCHOR tally to zero while real stock remains —
+        the presets must NOT all vanish from the tile in that case."""
+        self._receive_full_legs(qty=1, cost=200)
+        # Plain receipt with no preset — real balance grows, anchor tally doesn't.
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('20'),
+            recorded_by=self.owner, invoice_no='PLAIN-TOPUP',
+        )
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), Decimal('21'))
+        # Drain the anchor tally to zero via the one full leg actually received.
+        import json as _json
+        cart = _json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': self.half_leg.id,
+            'qty': 0.5, 'amount': 150, 'description': 'Kuku — Half Chicken Leg',
+        }])
+        for _i in range(2):
+            resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+            self.assertTrue(resp.json().get('ok'), resp.json())
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), Decimal('20'), "real stock remains")
+        resp2 = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp2.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        labels = [p['label'] for p in kuku['presets']]
+        self.assertTrue(labels, "tile must never lose every preset while real stock remains")
+        self.assertIn('Full Chicken Leg', labels)
+        self.assertIn('Half Chicken Leg', labels)
+        self.assertIn('Wing', labels)
+
+    def test_genuinely_depleted_item_still_hides_all_presets(self):
+        """The fallback above must NOT undo the intentional 'fully sold —
+        hide everything' case where both ledgers genuinely agree on zero."""
+        self._receive_full_legs(qty=1, cost=200)
+        import json as _json
+        cart = _json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': self.half_leg.id,
+            'qty': 0.5, 'amount': 150, 'description': 'Kuku — Half Chicken Leg',
+        }])
+        for _i in range(2):
+            resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+            self.assertTrue(resp.json().get('ok'), resp.json())
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), Decimal('0'))
+        resp2 = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp2.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        labels = [p['label'] for p in kuku['presets']]
+        self.assertEqual(labels, [])
+
 
 class KitchenBackdatedCheckoutTest(TestCase):
     """2026-08-09 live urgent request (Roy) — Kitchen Board's own checkout
