@@ -26981,3 +26981,186 @@ class RenameSettledTabTest(TestCase):
         self.assertTrue(resp.json()['ok'])
         open_receipt.refresh_from_db()
         self.assertEqual(open_receipt.customer_name, 'Mary')
+
+
+class RenameConsolidatesReceiptAndFindableTest(TestCase):
+    """2026-08-09 same-day live follow-up (Roy) — renaming an already-paid
+    "Table 4" tab to "Charles" (a name another, separate tab/receipt
+    already used) left TWO disconnected "Charles" — the wall-scan QR
+    search couldn't find him at all, and the rename produced a second,
+    unlinked receipt instead of joining his existing one."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Rename Consolidate Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='RC-01', unit='Pcs', selling_price=Decimal('250'),
+        )
+
+    def _make_settled_tab_with_receipt(self, name, amount, receipt_number, token):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='SETTLED', source='bar',
+            store=self.store, settled_at=timezone.now(), tab_receipt_token=token,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='cash', recipient=name,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Tusker',
+            amount=amount, is_paid=True, payment_method='cash',
+        )
+        receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=receipt_number, token=f'rc-tok-{token}',
+            customer_name=name, payment_method='cash', total=amount,
+            meta={'tab_id': tab.id},
+        )
+        return tab, receipt
+
+    def test_rename_to_existing_name_links_into_that_receipt(self):
+        charles_tab, charles_receipt = self._make_settled_tab_with_receipt(
+            'Charles', Decimal('1150'), 1, 'charles',
+        )
+        table4_tab, table4_receipt = self._make_settled_tab_with_receipt(
+            'Table 4', Decimal('150'), 2, 'table4',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{table4_tab.id}/rename/', {'name': 'Charles'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+        charles_receipt.refresh_from_db()
+        table4_receipt.refresh_from_db()
+        # The renamed tab must now be linked into Charles's EXISTING receipt.
+        self.assertIn(table4_tab.id, charles_receipt.meta.get('linked_tab_ids', []))
+        # Its own old receipt must release its direct claim on that tab, so
+        # lookups fall through to the consolidated one instead of the stale
+        # first receipt.
+        self.assertNotEqual(table4_receipt.meta.get('tab_id'), table4_tab.id)
+
+    def test_renamed_tab_resolves_to_the_consolidated_receipt_via_own_receipt_first(self):
+        """meta.tab_id (direct ownership) is checked BEFORE linked_tab_ids —
+        this part of resolution works identically on SQLite and Postgres,
+        so it's exercised as a genuine end-to-end check. The linked_tab_ids
+        fallback itself (the OTHER tab's own resolution) uses a JSONField
+        `contains` lookup Postgres-only (see _safe_linked_query's own
+        docstring) — degrades to "no match" on SQLite, same documented,
+        pre-existing constraint CrossCounterReceiptLinkingTest already
+        works around by asserting on meta state directly rather than the
+        full URL round trip; production (Postgres) resolves it live."""
+        charles_tab, charles_receipt = self._make_settled_tab_with_receipt(
+            'Charles', Decimal('1150'), 1, 'charles2',
+        )
+        table4_tab, table4_receipt = self._make_settled_tab_with_receipt(
+            'Table 4', Decimal('150'), 2, 'table4-2',
+        )
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{table4_tab.id}/rename/', {'name': 'Charles'})
+
+        from core.keg_views import _resolve_tab_public_url
+        # Charles's own tab still resolves correctly to its own receipt.
+        self.assertEqual(_resolve_tab_public_url(charles_tab), f'/r/{charles_receipt.token}/')
+        # The renamed tab's OWN former direct claim is gone — it must
+        # never resolve back to its own stale receipt.
+        table4_receipt.refresh_from_db()
+        charles_receipt.refresh_from_db()
+        self.assertNotEqual(table4_receipt.meta.get('tab_id'), table4_tab.id)
+        self.assertIn(table4_tab.id, charles_receipt.meta.get('linked_tab_ids', []))
+
+    def test_wall_scan_search_finds_a_plain_settled_tab_by_name(self):
+        tab, receipt = self._make_settled_tab_with_receipt('Charles', Decimal('1150'), 1, 'charles3')
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Charles')
+        data = resp.json()
+        self.assertEqual(len(data['tabs']), 1)
+        self.assertEqual(data['tabs'][0]['url'], f'/r/{receipt.token}/')
+
+    def test_void_tab_never_findable_by_name(self):
+        tab, receipt = self._make_settled_tab_with_receipt('Ghost', Decimal('100'), 1, 'ghost')
+        tab.status = 'VOID'
+        tab.save(update_fields=['status'])
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Ghost')
+        self.assertEqual(resp.json()['tabs'], [])
+
+    def test_rename_with_no_existing_receipt_under_new_name_keeps_old_behavior(self):
+        table4_tab, table4_receipt = self._make_settled_tab_with_receipt(
+            'Table 4', Decimal('150'), 1, 'table4-solo',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{table4_tab.id}/rename/', {'name': 'Brand New Name'})
+        self.assertTrue(resp.json()['ok'])
+        table4_receipt.refresh_from_db()
+        self.assertEqual(table4_receipt.customer_name, 'Brand New Name')
+        self.assertEqual(table4_receipt.meta.get('tab_id'), table4_tab.id)
+
+
+class SearchFindsReceiptsRegardlessOfAgeTest(TestCase):
+    """2026-08-09 same-day live clarification (Roy): "each customer should
+    be able to access their receipts when scanning and searching their
+    names regardless of when that bill settlement or unsettlement was
+    from." _findable_tabs_qs_by_name() has no date restriction at all —
+    this locks in that an OLD (many days ago) settled tab is still found,
+    not just recent ones."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Age Search Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='AGE-01', unit='Pcs', selling_price=Decimal('250'),
+        )
+
+    def test_a_tab_settled_90_days_ago_is_still_findable_by_name(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Old Timer', status='SETTLED', source='bar',
+            store=self.store, settled_at=timezone.now() - timedelta(days=90),
+            tab_receipt_token='old-timer-tok',
+        )
+        BarTab.objects.filter(id=tab.id).update(opened_at=timezone.now() - timedelta(days=90))
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Tusker',
+            amount=Decimal('250'), is_paid=True, payment_method='cash',
+        )
+        receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=1, token='old-timer-receipt',
+            customer_name='Old Timer', payment_method='cash', total=Decimal('250'),
+            meta={'tab_id': tab.id},
+        )
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Old Timer')
+        data = resp.json()
+        self.assertEqual(len(data['tabs']), 1, data['tabs'])
+        self.assertEqual(data['tabs'][0]['url'], f'/r/{receipt.token}/')
+
+    def test_a_debt_converted_tab_from_months_ago_is_still_findable(self):
+        """The un-settled (still-owing) side of Roy's ask — a tab converted
+        to debt long ago must still be found, matching _findable_tabs_qs()'s
+        own existing debt-converted-SETTLED handling."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Old Debtor', status='SETTLED', source='bar',
+            store=self.store, settled_at=timezone.now() - timedelta(days=60),
+            tab_receipt_token='old-debtor-tok',
+        )
+        BarTab.objects.filter(id=tab.id).update(opened_at=timezone.now() - timedelta(days=60))
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('400'), payment_method='credit',
+            recipient='Old Debtor',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Tusker',
+            amount=Decimal('400'), is_paid=False,
+        )
+        receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=2, token='old-debtor-receipt',
+            customer_name='Old Debtor', payment_method='credit', total=Decimal('400'),
+            meta={'tab_id': tab.id},
+        )
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Old Debtor')
+        data = resp.json()
+        self.assertEqual(len(data['tabs']), 1, data['tabs'])
+        self.assertEqual(data['tabs'][0]['url'], f'/r/{receipt.token}/')

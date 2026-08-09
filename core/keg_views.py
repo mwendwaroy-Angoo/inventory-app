@@ -107,19 +107,62 @@ def _sync_master_receipt_payment_method(business, tab, payment_method):
 
 
 def _sync_master_receipt_customer_name(business, tab, new_name):
-    """Keep a tab's master receipt's customer_name in sync when the tab is
-    renamed AFTER the fact — 2026-08-09 live request: "a way of editing the
-    name of a recently paid bill... staff did not have the name before...
-    the receipt should reconcile accordingly." Mirrors
-    _sync_master_receipt_payment_method's own established pattern exactly.
-    Never raises — a receipt display glitch must never block the rename.
+    """Rename-and-consolidate a tab's receipt(s) after the fact — 2026-08-09
+    live report: a "Table 4" tab renamed to "Charles" showed up as a SECOND,
+    disconnected "Charles" (search + wall-scan QR couldn't find him at all,
+    and the Recent Payments panel showed two separate entries) instead of
+    joining his existing bill.
+
+    If another receipt already exists under `new_name` (any status, any
+    date — this is a deliberate owner/staff correction, not the best-effort
+    same-day heuristic resolve_master_receipt() uses at sale time), this
+    tab — and anything already linked to its OWN receipt — is folded into
+    that one via Receipt.meta.linked_tab_ids, and this tab's own former
+    receipt (if any) has its direct meta.tab_id claim cleared so
+    _resolve_tab_public_url() correctly falls through to the consolidated
+    receipt instead of the stale one. Never raises — a receipt display
+    glitch must never block the rename itself.
     """
     try:
-        from core.tab_receipts import resolve_master_receipt
-        master_rcpt, _ = resolve_master_receipt(business, tab)
-        if master_rcpt and master_rcpt.customer_name != new_name:
-            master_rcpt.customer_name = new_name
-            master_rcpt.save(update_fields=['customer_name'])
+        from core.tab_receipts import _link_tab_into_receipt, _receipt_linked_to
+        from core.models import Receipt as _Receipt
+
+        this_receipt = _Receipt.objects.filter(business=business, meta__tab_id=tab.id).first()
+        if this_receipt is None:
+            this_receipt = _receipt_linked_to(business, tab.id)
+
+        target_qs = _Receipt.objects.filter(
+            business=business, customer_name__iexact=new_name,
+        ).exclude(payment_method='statement')
+        if this_receipt:
+            target_qs = target_qs.exclude(id=this_receipt.id)
+        target = target_qs.order_by('-created_at').first()
+
+        if target:
+            _link_tab_into_receipt(target, tab.id)
+            if this_receipt and this_receipt.id != target.id:
+                # Fold anything already consolidated under this tab's own
+                # receipt into the target too — moved, not copied, so a
+                # later lookup for one of those tabs can never resolve
+                # ambiguously between two receipts that both list it.
+                extra_ids = list(this_receipt.meta.get('linked_tab_ids') or [])
+                changed = False
+                for extra_tab_id in extra_ids:
+                    _link_tab_into_receipt(target, extra_tab_id)
+                    changed = True
+                if this_receipt.meta.get('tab_id') == tab.id:
+                    this_receipt.meta.pop('tab_id', None)
+                    changed = True
+                if changed:
+                    this_receipt.meta['linked_tab_ids'] = []
+                    this_receipt.save(update_fields=['meta'])
+            return
+
+        # No pre-existing receipt under this name — just keep this tab's
+        # own receipt's display name in sync (the original, simpler fix).
+        if this_receipt and this_receipt.customer_name != new_name:
+            this_receipt.customer_name = new_name
+            this_receipt.save(update_fields=['customer_name'])
     except Exception:
         logger.exception('_sync_master_receipt_customer_name failed (tab=%s)', tab.id)
 
@@ -4811,6 +4854,25 @@ def _findable_tabs_qs(business):
     )
 
 
+def _findable_tabs_qs_by_name(business):
+    """Every tab a customer could reasonably search for by NAME — including
+    a plain, fully-paid SETTLED tab with nothing left owing (2026-08-09
+    live report: renaming an already-paid "Table 4" tab to "Charles" and
+    then searching "Charles" on the wall-scan QR found nothing at all — the
+    tab was correctly renamed but _findable_tabs_qs() only ever surfaced
+    OPEN or debt-converted tabs).
+
+    Deliberately a SEPARATE, wider queryset from _findable_tabs_qs() rather
+    than widening that one in place — PIN lookup there must stay scoped
+    narrower: BarTab.tab_pin only enforces uniqueness while a tab is OPEN
+    (see the model's own partial UniqueConstraint), so multiple historical
+    closed tabs can legitimately share the same 4-digit PIN and a wide-open
+    PIN search could resolve to the wrong one. A NAME search has no such
+    collision risk — find_tab_search's own dedup-by-resolved-URL already
+    collapses multiple tabs that share one receipt into a single result."""
+    return BarTab.objects.filter(business=business).exclude(status='VOID')
+
+
 def find_tab_search(request, business_id):
     """Public AJAX name-or-PIN lookup for find_tab_public — no login required.
 
@@ -4844,8 +4906,10 @@ def find_tab_search(request, business_id):
             return JsonResponse({'tabs': [], 'redirect': url})
         return JsonResponse({'tabs': [], 'pin_not_found': True})
 
-    # Name search: case-insensitive substring match
-    tabs = _findable_tabs_qs(business).filter(
+    # Name search: case-insensitive substring match. Wider than PIN lookup
+    # (any status except VOID, not just OPEN/debt-converted) — a customer
+    # searching their own corrected name must find an already-paid tab too.
+    tabs = _findable_tabs_qs_by_name(business).filter(
         customer_name__icontains=q,
     ).order_by('-opened_at')[:10]
 
