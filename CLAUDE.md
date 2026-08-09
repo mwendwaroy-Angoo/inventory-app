@@ -5225,3 +5225,29 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   was a mistake show up, I do not need it" — confirming delete was wanted), the Leo tile's
   confirmed-vs-credit split + `[SVQ]` exclusion, and the `kitchen_revenue_lines` breakdown
   disclosure. 1630 tests pass (core + accounts).
+- Fix: Kuku tile lost all its presets (2026-08-09, same-day follow-up). Roy, sharply: "I am
+  clicking that chicken tile and it is no longer showing the presets as it was before, there
+  is something that you have done that has caused this, so find it and fix it" — with a
+  screenshot showing the Kuku tile reduced to a bare "✓ Imekwisha" button, no preset picker,
+  price shown as "KES 0". Root-caused (not guessed): the "cut visibility" gate built earlier
+  the same session (2026-08-05, refined 2026-08-09) hides a preset from the sell tile once an
+  item has ANY preset-attributed receipt, unless that specific preset's own received-vs-sold
+  anchor tally (`_received_by_preset`/`_sold_by_preset`, grouped by
+  `stock_tracking_anchor_id()`) is still positive — a completely separate ledger from the
+  item's own real `current_balance()`. If every preset's anchor tally nets to zero or
+  negative (plausible after today's raw-material-cost/stock-take/Rekebisha activity — any
+  plain Receipt or correction that doesn't attach a `preset_id` grows the real balance
+  without ever touching the anchor tally) while real stock is still positive, ALL presets
+  silently vanished from the tile at once — `tileClick()`'s branch for zero presets falls
+  straight to a plain no-picker add. Fixed in `kitchen_board()` (`core/kitchen_views.py`)
+  with a safety net: if the gate would leave an item with configured presets showing NONE of
+  them, but the item's real `current_balance()` is still positive, fall back to showing every
+  configured preset instead of hiding them all. Deliberately gated on real balance
+  specifically (not just "presets list is empty") so the intentional "genuinely fully
+  sold — hide everything" case, where both ledgers agree on zero, stays correctly hidden —
+  already locked in by the pre-existing `test_selling_enough_half_legs_hides_both_presets`,
+  confirmed still passing unmodified. 2 new tests
+  (`test_ledger_drift_falls_back_to_showing_all_presets` — reproduces the drift scenario
+  directly and asserts all 3 presets reappear; `test_genuinely_depleted_item_still_hides_all_
+  presets` — the same fully-sold case as the existing test, confirming the fallback doesn't
+  fire when it shouldn't). No migrations. 1632 tests pass (core + accounts).
