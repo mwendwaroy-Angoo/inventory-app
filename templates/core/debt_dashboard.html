@@ -110,6 +110,53 @@
     </div>
 </div>
 
+{% if duplicate_groups %}
+<!-- 2026-08-09 live report (Roy) — "two Eugenes with the same amount and
+     same items". Root cause: duplicate Customer rows sharing a name each
+     independently show the SAME underlying debt (see
+     _find_duplicate_customer_groups' docstring in core/debt_views.py).
+     Merging (below) only reassigns FK references/name strings — it never
+     touches stock. -->
+<div class="card border-0 mb-3" style="background:rgba(248,113,113,0.06); border:1px solid rgba(248,113,113,0.3) !important;">
+    <div class="card-body">
+        <div style="color:#f87171; font-weight:700; font-size:0.9rem; margin-bottom:0.5rem;">
+            ⚠️ {% trans 'Duplicate customers found — the same debt may be showing twice' %}
+        </div>
+        <div style="color:#b0b0b0; font-size:0.78rem; margin-bottom:0.9rem;">
+            {% trans 'These customer records share the same name. Each one independently shows the same unpaid balance, so it looks doubled — and a payment recorded against one will not clear the other. Merge them into one record; this only combines the records, it never changes stock.' %}
+        </div>
+        {% for group in duplicate_groups %}
+        <div style="background:rgba(0,0,0,0.2); border-radius:8px; padding:0.7rem 0.9rem; margin-bottom:0.6rem;">
+            <div style="color:var(--gold); font-weight:600; font-size:0.85rem; margin-bottom:0.5rem;">
+                {{ group.0.customer.name }} ({{ group|length }} {% trans 'records' %})
+            </div>
+            {% for entry in group %}
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2" style="padding:0.25rem 0;">
+                <div style="color:var(--pearl); font-size:0.8rem;">
+                    #{{ entry.customer.id }} —
+                    <a href="{% url 'customer_debt_profile' entry.customer.id %}" style="color:var(--pearl); text-decoration:underline;">
+                        {% trans 'View profile' %}
+                    </a>
+                    — {% trans 'Outstanding' %}: KES {{ entry.outstanding|floatformat:0 }}
+                </div>
+                {% if not forloop.first %}
+                <form method="post" action="{% url 'merge_customer' group.0.customer.id %}" style="display:inline;"
+                      onsubmit="return confirm('{% trans "Merge this record into the first one? This cannot be undone." %}');">
+                    {% csrf_token %}
+                    <input type="hidden" name="absorb_id" value="{{ entry.customer.id }}">
+                    <button type="submit" class="btn btn-sm" style="background:rgba(93,168,240,.12); border:1px solid rgba(93,168,240,.35); color:#5da8f0; font-size:0.75rem; padding:0.25rem 0.7rem; border-radius:6px;">
+                        🔀 {% trans 'Merge into' %} #{{ group.0.customer.id }}
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 {% if rows %}
 <div class="card border-0" style="background:rgba(255,255,255,0.03); border:1px solid #2a2a2a !important;">
     <div class="table-responsive">

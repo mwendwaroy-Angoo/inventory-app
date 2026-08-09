@@ -245,6 +245,39 @@ def _calc_avg_payment_days(customer, business, scope='all'):
     return max(0, days)
 
 
+def _find_duplicate_customer_groups(business):
+    """Customer rows sharing the same name (case/whitespace-insensitive).
+
+    2026-08-09 live report (Roy) — "two Eugenes with the same amount and
+    same items" in the debt dashboard, and a receipt showing a debt as
+    cleared while the debt tracker still showed it open. Root cause traced:
+    _get_customer_debt_data()'s credit_qs matches Transactions by
+    `Transaction.recipient=customer.name` — a plain STRING match, never the
+    Customer FK (see that function's own code). So if two Customer rows
+    share a name, BOTH independently query and display the SAME underlying
+    unpaid transactions as their own outstanding balance — and a payment
+    recorded against one (via CustomerDebtPayment.customer, which IS FK-
+    scoped) clears only that one row, leaving the other showing the exact
+    same debt as still open. `Customer` has no unique_together on
+    (business, name) (see this file's own Known Issues) — every known
+    creation site already uses name__iexact before creating, but a
+    duplicate can still occur (a genuine race between two near-simultaneous
+    requests, or a duplicate that predates that convention). Merging two
+    duplicates (Customer.merge_locked) is the correct fix: it only
+    reassigns FK references and name strings, never touches
+    Transaction.qty — so it corrects the display with zero stock impact,
+    exactly matching Roy's own explicit requirement. This is the proactive
+    detector so an owner can find and merge duplicates before they cause
+    exactly this kind of confusion.
+    """
+    groups = defaultdict(list)
+    for c in Customer.objects.filter(business=business).order_by('id'):
+        key = (c.name or '').strip().lower()
+        if key:
+            groups[key].append(c)
+    return [g for g in groups.values() if len(g) > 1]
+
+
 # ── Views ─────────────────────────────────────────────────────────────────────
 
 @login_required
@@ -275,6 +308,20 @@ def debt_dashboard(request):
 
     scope_label = {'bar': 'Bar', 'kitchen': 'Kitchen', 'all': 'All'}.get(scope, 'All')
 
+    # 2026-08-09 live report — duplicate Customer rows sharing a name each
+    # independently show the SAME underlying debt (see
+    # _find_duplicate_customer_groups' own docstring); surfaced here,
+    # owner/manager only, since resolving it is a merge action, not a
+    # routine debt-collection one.
+    duplicate_groups = []
+    if getattr(user_profile, 'is_owner_or_manager', False):
+        for group in _find_duplicate_customer_groups(business):
+            entries = []
+            for c in group:
+                d = _get_customer_debt_data(c, business, scope)
+                entries.append({'customer': c, 'outstanding': d['outstanding']})
+            duplicate_groups.append(entries)
+
     return render(request, 'core/debt_dashboard.html', {
         'rows':              dashboard_rows,
         'total_outstanding': round(total_outstanding, 2),
@@ -284,6 +331,7 @@ def debt_dashboard(request):
         'today':             today.strftime('%B %d, %Y'),
         'scope':             scope,
         'scope_label':       scope_label,
+        'duplicate_groups':  duplicate_groups,
     })
 
 

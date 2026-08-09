@@ -27175,3 +27175,100 @@ class SearchFindsReceiptsRegardlessOfAgeTest(TestCase):
         data = resp.json()
         self.assertEqual(len(data['tabs']), 1, data['tabs'])
         self.assertEqual(data['tabs'][0]['url'], f'/r/{receipt.token}/')
+
+
+class DuplicateCustomerDebtDoubleDisplayTest(TestCase):
+    """2026-08-09 live report (Roy) — "two Eugenes with the same amount and
+    same items" in the debt dashboard, and a receipt showing a debt as
+    cleared while the debt tracker still showed it open. Root cause:
+    _get_customer_debt_data() matches Transactions by
+    Transaction.recipient=customer.name (a plain string, never the
+    Customer FK) — so two duplicate Customer rows sharing a name both
+    independently display the SAME underlying unpaid transactions as their
+    own outstanding balance, and a payment recorded against one (FK-scoped
+    via CustomerDebtPayment.customer) never clears the other."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Dup Debt Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='dupdebt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='DD-01', unit='Cup', selling_price=Decimal('80'),
+        )
+        self.eugene1 = Customer.objects.create(business=self.biz, name='Eugene', credit_approved=True)
+        self.eugene2 = Customer.objects.create(business=self.biz, name='Eugene', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-6'),
+            sale_amount=Decimal('480'), payment_method='credit', recipient='Eugene',
+        )
+
+    def test_both_duplicate_customers_independently_show_the_same_debt(self):
+        from core.debt_views import _get_customer_debt_data
+        data1 = _get_customer_debt_data(self.eugene1, self.biz, scope='all')
+        data2 = _get_customer_debt_data(self.eugene2, self.biz, scope='all')
+        self.assertEqual(data1['outstanding'], 480.0)
+        self.assertEqual(data2['outstanding'], 480.0, "confirms the double-display bug — same debt, two customers")
+
+    def test_paying_off_one_duplicate_does_not_clear_the_other(self):
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.eugene1, amount_paid=Decimal('480'), source='bar',
+        )
+        from core.debt_views import _get_customer_debt_data
+        data1 = _get_customer_debt_data(self.eugene1, self.biz, scope='all')
+        data2 = _get_customer_debt_data(self.eugene2, self.biz, scope='all')
+        self.assertEqual(data1['outstanding'], 0.0, "eugene1 correctly shows cleared")
+        self.assertEqual(data2['outstanding'], 480.0, "eugene2 (the duplicate) still shows the same debt as open")
+
+    def test_debt_dashboard_lists_both_duplicates_separately(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/')
+        rows = resp.context['rows']
+        eugene_rows = [r for r in rows if r['customer'].name == 'Eugene']
+        self.assertEqual(len(eugene_rows), 2)
+
+    def test_debt_dashboard_flags_the_duplicate_group(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/')
+        groups = resp.context['duplicate_groups']
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0]), 2)
+        ids = {e['customer'].id for e in groups[0]}
+        self.assertEqual(ids, {self.eugene1.id, self.eugene2.id})
+
+    def test_merging_the_duplicates_fixes_the_double_display_with_no_stock_change(self):
+        item_balance_before = self.item.current_balance()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.eugene1.id}/merge/', {'absorb_id': str(self.eugene2.id)})
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Customer.objects.filter(id=self.eugene2.id).exists())
+        from core.debt_views import _get_customer_debt_data
+        data1 = _get_customer_debt_data(self.eugene1, self.biz, scope='all')
+        self.assertEqual(data1['outstanding'], 480.0)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), item_balance_before,
+            "merging must never touch stock — same physical items, only the customer record changed")
+
+    def test_no_false_positive_for_two_genuinely_different_customers(self):
+        Customer.objects.create(business=self.biz, name='Bosco', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Charles', credit_approved=True)
+        from core.debt_views import _find_duplicate_customer_groups
+        groups = _find_duplicate_customer_groups(self.biz)
+        self.assertEqual(len(groups), 1)
+        names = {c.name for c in groups[0]}
+        self.assertEqual(names, {'Eugene'})
+
+    def test_case_insensitive_duplicate_detection(self):
+        Customer.objects.create(business=self.biz, name='eugene ', credit_approved=True)
+        from core.debt_views import _find_duplicate_customer_groups
+        groups = _find_duplicate_customer_groups(self.biz)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0]), 3)
+
+    def test_non_owner_never_sees_duplicate_groups(self):
+        staff = User.objects.create_user(username='dupdebt_staff', password='x')
+        UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        self.client.force_login(staff)
+        resp = self.client.get('/debt/')
+        self.assertEqual(resp.context['duplicate_groups'], [])
