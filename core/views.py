@@ -904,6 +904,103 @@ def dashboard_revenue_api(request):
 # ── STOCK LIST ────────────────────────────────────────────────────────────────
 
 
+def _batch_stock_metrics(items):
+    """Compute current_balance/physical_balance/deficit/surplus/on_order/
+    reorder_point/recommended_order_qty/needs_reorder for a list of Items in
+    a handful of batch queries instead of the per-item cascade each of those
+    Item methods triggers individually — current_balance()/physical_balance()
+    each re-query self.transactions fresh every call; needs_reorder()/
+    recommended_order_qty() each cascade into current_balance()+on_order()+
+    reorder_point(), and reorder_point() itself calls avg_daily_issues()
+    TWICE (once via lead_time_demand(), once via safety_stock()), each its
+    own query. The stock_list.html template calls current_balance alone 5
+    times per row plus needs_reorder 3 times — for a 100-item list this adds
+    up to 1000+ separate DB round-trips on one page load.
+
+    2026-08-09 live report (Roy): "the system is slow when transitioning
+    through various sections... accessing stock list." Traced to exactly
+    this N+1 pattern.
+
+    Deliberately scoped to this one view only, not a global Item-model
+    memoization — a blanket instance-level cache on the model methods
+    themselves would risk returning a stale balance to any OTHER caller
+    elsewhere in the app that reads a balance, writes a Transaction, then
+    re-reads the SAME Python Item instance expecting a fresh value within
+    one request; auditing every such call site across this codebase isn't
+    something to risk getting wrong on a live, money-critical system at
+    short notice. This function mutates each item in place with NEW
+    `stock_*`-prefixed attributes instead — the original methods
+    (current_balance(), needs_reorder(), etc.) are completely untouched and
+    still behave exactly as before for every other caller in the app.
+
+    Mirrors each method's exact arithmetic — proven, not assumed: see
+    StockListBatchMetricsTest, which asserts these match the real per-item
+    method results across varied scenarios (mixed balances, PO on-order
+    quantities, reorder settings, historical issue volume)."""
+    if not items:
+        return
+    item_ids = [i.id for i in items]
+
+    movement_map = dict(
+        Transaction.objects.filter(item_id__in=item_ids)
+        .values('item_id').annotate(t=Sum('qty')).values_list('item_id', 't')
+    )
+    since = timezone.now().date() - timedelta(days=30)
+    issues_map = dict(
+        Transaction.objects.filter(
+            item_id__in=item_ids, type__in=['Issue', 'Draw'], date__gte=since,
+        ).values('item_id').annotate(t=Sum('qty')).values_list('item_id', 't')
+    )
+    po_rows = (
+        PurchaseOrderLine.objects.filter(
+            item_id__in=item_ids, po__status__in=['draft', 'ordered', 'part_received'],
+        )
+        .values('item_id')
+        .annotate(ordered=Sum('quantity_ordered'), received=Sum('quantity_received'))
+    )
+    on_order_map = {}
+    for row in po_rows:
+        try:
+            on_order_map[row['item_id']] = max(0, int((row['ordered'] or 0) - (row['received'] or 0)))
+        except Exception:
+            on_order_map[row['item_id']] = 0
+
+    for item in items:
+        movement = movement_map.get(item.id) or 0
+        balance = item.opening_bin_balance + movement
+        physical = item.opening_physical + movement
+        item.stock_balance = balance
+        item.stock_physical_balance = physical
+        item.stock_deficit = max(0, balance - physical)
+        item.stock_surplus = max(0, physical - balance)
+
+        issues_total = abs(issues_map.get(item.id) or 0)
+        try:
+            avg_daily_issues = float(issues_total) / 30.0
+        except Exception:
+            avg_daily_issues = 0.0
+        lead_time_demand = int(round(avg_daily_issues * (item.lead_time_days or 0)))
+        safety_stock = int(round(avg_daily_issues * (item.safety_days or 0)))
+        reorder_point = int(round(lead_time_demand + safety_stock))
+        target_stock = int(round(reorder_point + (item.reorder_quantity or 0)))
+
+        on_order = on_order_map.get(item.id, 0)
+        item.stock_on_order = on_order
+        item.stock_reorder_point = reorder_point
+
+        req = target_stock - (balance + on_order)
+        if req <= 0:
+            item.stock_recommended_order_qty = 0
+        else:
+            min_qty = item.reorder_quantity or 0
+            item.stock_recommended_order_qty = max(min_qty, int(req))
+
+        try:
+            item.stock_needs_reorder = (balance + on_order) <= max(item.reorder_level or 0, reorder_point)
+        except Exception:
+            item.stock_needs_reorder = balance <= item.reorder_level
+
+
 @login_required
 def stock_list(request):
     user_profile = get_user_profile(request)
@@ -956,11 +1053,12 @@ def stock_list(request):
             pass
 
     all_items = list(items)
+    _batch_stock_metrics(all_items)
 
     if status_filter == "low_stock":
-        all_items = [i for i in all_items if i.current_balance() <= i.reorder_level]
+        all_items = [i for i in all_items if i.stock_balance <= i.reorder_level]
     elif status_filter == "reorder":
-        all_items = [i for i in all_items if i.needs_reorder()]
+        all_items = [i for i in all_items if i.stock_needs_reorder]
 
     # Annotate each item with its earliest expiry date from Receipt batches
     from datetime import date as _date, timedelta as _td

@@ -193,8 +193,8 @@
         <tbody>
             {% for item in items %}
             <tr class="clickable-row
-                {% if item.current_balance <= 0 %}out-of-stock
-                {% elif item.needs_reorder %}reorder{% endif %}"
+                {% if item.stock_balance <= 0 %}out-of-stock
+                {% elif item.stock_needs_reorder %}reorder{% endif %}"
                 onclick="window.location='{% url 'item_detail' item.id %}'">
                 <td><strong>{{ item.material_no }}</strong></td>
                 <td>{{ item.description }}
@@ -205,23 +205,23 @@
                     {% endif %}
                 </td>
                 <td>{{ item.unit }}</td>
-                <td>{% if item.is_produce %}{{ item.current_balance|floatformat:2 }}{% else %}{{ item.current_balance|floatformat:0 }}{% endif %}</td>
-                <td>{{ item.physical_balance }}</td>
-                <td>{% if item.deficit > 0 %}<span style="color:var(--danger)">{{ item.deficit }}</span>{% else %}—{% endif %}</td>
-                <td>{% if item.surplus > 0 %}<span style="color:var(--success)">{{ item.surplus }}</span>{% else %}—{% endif %}</td>
+                <td>{% if item.is_produce %}{{ item.stock_balance|floatformat:2 }}{% else %}{{ item.stock_balance|floatformat:0 }}{% endif %}</td>
+                <td>{{ item.stock_physical_balance }}</td>
+                <td>{% if item.stock_deficit > 0 %}<span style="color:var(--danger)">{{ item.stock_deficit }}</span>{% else %}—{% endif %}</td>
+                <td>{% if item.stock_surplus > 0 %}<span style="color:var(--success)">{{ item.stock_surplus }}</span>{% else %}—{% endif %}</td>
                 <td>{{ item.lead_time_days }}</td>
-                <td>{% if item.reorder_point > 0 %}{{ item.reorder_point }}{% else %}—{% endif %}</td>
-                <td>{% if item.on_order > 0 %}<span style="color:var(--muted)">{{ item.on_order }}</span>{% else %}—{% endif %}</td>
-                <td>{% if item.recommended_order_qty > 0 %}<strong style="color:var(--gold)">{{ item.recommended_order_qty }}</strong>{% else %}—{% endif %}</td>
+                <td>{% if item.stock_reorder_point > 0 %}{{ item.stock_reorder_point }}{% else %}—{% endif %}</td>
+                <td>{% if item.stock_on_order > 0 %}<span style="color:var(--muted)">{{ item.stock_on_order }}</span>{% else %}—{% endif %}</td>
+                <td>{% if item.stock_recommended_order_qty > 0 %}<strong style="color:var(--gold)">{{ item.stock_recommended_order_qty }}</strong>{% else %}—{% endif %}</td>
                 <td>{{ item.reorder_level }}</td>
                 <td>{{ item.reorder_quantity }}</td>
                 {% if user.userprofile.is_owner %}
                 <td>{{ item.selling_price|default:"—" }}</td>
                 {% endif %}
                 <td onclick="event.stopPropagation()">
-                    {% if item.current_balance <= 0 %}
+                    {% if item.stock_balance <= 0 %}
                         <span class="badge bg-danger">{% trans 'Out of Stock' %}</span>
-                    {% elif item.needs_reorder %}
+                    {% elif item.stock_needs_reorder %}
                         <span class="badge bg-warning">{% trans 'Reorder' %}</span>
                     {% else %}
                         <span class="badge bg-success">{% trans 'Available' %}</span>
@@ -231,7 +231,7 @@
                             📦 Requested
                         </span>
                     {% elif not is_owner %}
-                        {% if item.current_balance <= 0 or item.needs_reorder %}
+                        {% if item.stock_balance <= 0 or item.stock_needs_reorder %}
                         <button
                             class="btn btn-sm mt-1 d-block w-100"
                             style="background:rgba(192,57,90,.1); color:#c0395a; border:1px solid rgba(192,57,90,.3); font-size:.72rem; padding:.15rem .4rem;"
@@ -264,7 +264,7 @@
                         {% if not item.is_keg and not item.is_produce %}
                         <button class="btn btn-sm" data-adjust-item="{{ item.id }}"
                                 style="border:1px solid rgba(201,168,76,0.4); color:var(--gold); background:rgba(201,168,76,0.07);"
-                                onclick="openAdjustModal({{ item.id }}, '{{ item.description|escapejs }}', '{{ item.unit|escapejs }}', {{ item.current_balance }})">
+                                onclick="openAdjustModal({{ item.id }}, '{{ item.description|escapejs }}', '{{ item.unit|escapejs }}', {{ item.stock_balance }})">
                             ⚖️ {% trans 'Rekebisha' %}
                         </button>
                         {% endif %}

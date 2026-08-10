@@ -22795,6 +22795,161 @@ class StockListStoreAccessGateTest(TestCase):
         self.assertEqual(resp.status_code, 200)
 
 
+class StockListBatchMetricsTest(TestCase):
+    """2026-08-09 live report (Roy): "the system is slow when transitioning
+    through various sections... accessing stock list." Traced to stock_
+    list.html calling current_balance() 5 times and needs_reorder() 3 times
+    per row — each needs_reorder() call alone cascades into current_
+    balance() + on_order() + reorder_point() (which itself calls avg_daily_
+    issues() TWICE) — none of it cached, so a 100-item list issues 1000+
+    separate queries on one page load.
+
+    core.views._batch_stock_metrics() replaces this with a handful of batch
+    queries computed once per page load, scoped entirely to stock_list() —
+    the shared Item model methods (current_balance(), needs_reorder(), etc.)
+    are completely untouched, so every OTHER caller in the app is
+    unaffected. This test proves numerical equivalence directly: run the
+    batch helper, then call the REAL per-item methods on the same items and
+    assert they match exactly, across varied scenarios (mixed balances, a
+    PO on-order quantity, custom reorder settings, real historical issue
+    volume feeding avg_daily_issues())."""
+
+    def setUp(self):
+        from core.models import PurchaseOrder, PurchaseOrderLine
+        self.PurchaseOrder = PurchaseOrder
+        self.PurchaseOrderLine = PurchaseOrderLine
+        self.biz = Business.objects.create(name='Batch Metrics Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='bmetrics_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        # Plain item, no history at all — every metric should be its default/zero.
+        self.item_plain = Item.objects.create(
+            business=self.biz, store=self.store, description='Plain Item',
+            material_no='BMETRICS-PLAIN', unit='pcs', selling_price=Decimal('10'),
+            opening_bin_balance=20, opening_physical=18,
+            reorder_level=5, reorder_quantity=10,
+            lead_time_days=7, safety_days=2,
+        )
+        # Item with real Issue history (feeds avg_daily_issues), a low
+        # balance (triggers needs_reorder), and an open PO (on_order > 0).
+        self.item_active = Item.objects.create(
+            business=self.biz, store=self.store, description='Active Item',
+            material_no='BMETRICS-ACTIVE', unit='pcs', selling_price=Decimal('25'),
+            opening_bin_balance=100, opening_physical=95,
+            reorder_level=20, reorder_quantity=30,
+            lead_time_days=5, safety_days=3,
+        )
+        for day_offset in range(1, 11):
+            Transaction.objects.create(
+                business=self.biz, item=self.item_active, type='Issue',
+                qty=Decimal('-4'), recorded_by=self.owner,
+                date=timezone.now().date() - timedelta(days=day_offset),
+            )
+        # An out-of-window Issue (35 days ago) must NOT count toward the
+        # 30-day avg_daily_issues() window.
+        Transaction.objects.create(
+            business=self.biz, item=self.item_active, type='Issue',
+            qty=Decimal('-999'), recorded_by=self.owner,
+            date=timezone.now().date() - timedelta(days=35),
+        )
+        # A Draw transaction — must count toward avg_daily_issues() same as Issue.
+        Transaction.objects.create(
+            business=self.biz, item=self.item_active, type='Draw',
+            qty=Decimal('-6'), recorded_by=self.owner,
+        )
+        # Adjustment-style Receipt lowering physical vs book (creates a deficit).
+        Transaction.objects.create(
+            business=self.biz, item=self.item_active, type='Wastage',
+            qty=Decimal('-3'), recorded_by=self.owner,
+        )
+        self.po = self.PurchaseOrder.objects.create(business=self.biz, status='ordered')
+        self.PurchaseOrderLine.objects.create(
+            po=self.po, item=self.item_active, quantity_ordered=15,
+            quantity_received=5, unit_price=Decimal('20'),
+        )
+        # A PO on a CLOSED/received order must not contribute to on_order().
+        po_closed = self.PurchaseOrder.objects.create(business=self.biz, status='received')
+        self.PurchaseOrderLine.objects.create(
+            po=po_closed, item=self.item_active, quantity_ordered=999,
+            quantity_received=999, unit_price=Decimal('20'),
+        )
+
+        # Item driven to zero/negative balance — out-of-stock edge case.
+        self.item_depleted = Item.objects.create(
+            business=self.biz, store=self.store, description='Depleted Item',
+            material_no='BMETRICS-DEPLETED', unit='pcs', selling_price=Decimal('5'),
+            opening_bin_balance=0, opening_physical=0,
+            reorder_level=0, reorder_quantity=0,
+        )
+
+        self.all_items = [self.item_plain, self.item_active, self.item_depleted]
+
+    def test_batch_metrics_match_original_methods_exactly(self):
+        from core.views import _batch_stock_metrics
+        _batch_stock_metrics(self.all_items)
+        for item in self.all_items:
+            with self.subTest(item=item.description):
+                self.assertEqual(item.stock_balance, item.current_balance())
+                self.assertEqual(item.stock_physical_balance, item.physical_balance())
+                self.assertEqual(item.stock_deficit, item.deficit())
+                self.assertEqual(item.stock_surplus, item.surplus())
+                self.assertEqual(item.stock_on_order, item.on_order())
+                self.assertEqual(item.stock_reorder_point, item.reorder_point())
+                self.assertEqual(item.stock_recommended_order_qty, item.recommended_order_qty())
+                self.assertEqual(item.stock_needs_reorder, item.needs_reorder())
+
+    def test_active_item_has_nonzero_metrics(self):
+        """Sanity check the scenario actually exercises the interesting
+        branches, not just the zero/default case."""
+        from core.views import _batch_stock_metrics
+        _batch_stock_metrics(self.all_items)
+        self.assertGreater(self.item_active.stock_reorder_point, 0)
+        self.assertEqual(self.item_active.stock_on_order, 10)  # 15 ordered - 5 received
+        self.assertGreater(self.item_active.stock_deficit, 0)
+
+    def test_empty_list_is_a_noop(self):
+        from core.views import _batch_stock_metrics
+        _batch_stock_metrics([])  # must not raise
+
+    def test_stock_list_page_uses_batch_attributes(self):
+        """End-to-end: the real /stock/ page renders correctly and shows
+        the same balance the model method would report."""
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        self.assertIn('Active Item', body)
+        self.assertIn(str(self.item_active.current_balance()), body)
+
+    def test_query_count_stays_low_for_many_items(self):
+        """The whole point: a page with many items must not scale linearly
+        in query count the way the original per-item method calls did (that
+        would have been 100+ queries just for 20 extra items)."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        for i in range(20):
+            Item.objects.create(
+                business=self.biz, store=self.store, description=f'Bulk Item {i}',
+                material_no=f'BMETRICS-BULK-{i}', unit='pcs', selling_price=Decimal('5'),
+            )
+        self.client.force_login(self.owner)
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get('/stock/')
+        self.assertEqual(resp.status_code, 200)
+        # Without this fix, the per-item method cascade alone (current_balance
+        # x5 + needs_reorder x3, each cascading further) would have scaled to
+        # roughly 15-20 queries PER ITEM — 300-400+ for these 23 items alone,
+        # on top of ordinary page overhead (navbar, context processors, etc).
+        # A generous but still meaningful ceiling: well under what 23 items
+        # would cost per-item, proving the fix doesn't scale with item count.
+        self.assertLess(
+            len(ctx.captured_queries), 60,
+            f"stock_list issued {len(ctx.captured_queries)} queries for 23 items — "
+            "the batch-metrics helper should keep this roughly constant, not scale per item.",
+        )
+
+
 class AddTransactionStoreAccessGateTest(TestCase):
     """UBA M1-AC1: a staffer assigned to Store A who submits a transaction
     against a Store B item gets PermissionDenied."""
