@@ -5409,3 +5409,29 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `home()` (`stockapp/urls.py`). 3 new tests (`LoginPageNeverCachedTest`) — login/logout
   both carry `no-store`/`no-cache` headers, and the ordinary login flow still works
   end-to-end unaffected. No migrations. 1643 tests pass (core + accounts).
+- Fix: home() dashboard's own N+1 + duplicate revenue query (2026-08-10, same live-
+  incident follow-up, Roy: "go ahead" on tackling home() next). Two real, evidenced fixes.
+  (1) home() had the EXACT SAME per-item `needs_reorder()`/`current_balance()` cascade
+  already fixed on Stock List the same night (lines 305-329, unchanged since) — except it
+  ran on the WHOLE business's item list on EVERY dashboard load, which is the FIRST page
+  hit after every single login, making it arguably the higher-impact copy of the same bug.
+  Reused the already-tested `core.views._batch_stock_metrics()` helper directly instead of
+  duplicating the batch-query logic a second time — `reorder_items`/`low_stock_count`/
+  `reorder_count`/`total_items` now come from `item.stock_needs_reorder`/`item.stock_balance`
+  (precomputed once via 3 batch queries) instead of calling the cascading methods per item.
+  (2) For an owner/manager, `bar_today_revenue`/`kitchen_today_revenue` were being computed
+  TWICE per load — once via an inline `Transaction` query in `home()` itself, and again
+  inside `station_revenue_window_info()`'s own `total_revenue` (which calls the SAME shared
+  `_window_revenue()` helper `home()`'s inline version duplicated — confirmed identical
+  filter shape by reading both side by side, not assumed). `station_revenue_window_info()`
+  was already being called anyway (for the owner-only "vipi hesabu hii ilipatikana?"
+  disclosure) — home() now reads `total_revenue` straight from its return dict for
+  owner/manager instead of re-running the same query a second time; the non-owner/manager
+  path (which never calls `station_revenue_window_info()` at all) is completely unchanged.
+  Both changes are pure query-count reductions with provably zero behavior change — the
+  pre-existing `HomeDashboardRevenueSurvivesMidnightTest` and
+  `StockTakeVarianceDashboardExclusionTest` (both log in as owner, both assert
+  `bar_today_revenue`'s exact value including the `[SVQ]` exclusion) passed completely
+  unmodified against the new code path. New `HomeDashboardBatchMetricsTest` proves the
+  reorder/low-stock counts match calling the real per-item methods directly, plus a
+  query-count ceiling test. No migrations. 1646 tests pass (core + accounts).
