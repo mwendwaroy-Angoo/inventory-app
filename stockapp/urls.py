@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import path, include
+from django.views.decorators.cache import never_cache
 from accounts.forms import LocalizedAuthenticationForm
 from accounts.views import logout_view
 from stockapp.admin_site import duka_admin_site
@@ -373,10 +374,10 @@ urlpatterns = [
     path("admin/", duka_admin_site.urls),
     path(
         "accounts/login/",
-        auth_views.LoginView.as_view(authentication_form=LocalizedAuthenticationForm),
+        never_cache(auth_views.LoginView.as_view(authentication_form=LocalizedAuthenticationForm)),
         name="login",
     ),
-    path("accounts/logout/", logout_view, name="logout"),
+    path("accounts/logout/", never_cache(logout_view), name="logout"),
     path("accounts/", include("django.contrib.auth.urls")),
     path("business/", include("accounts.urls")),
     path("", home, name="home"),

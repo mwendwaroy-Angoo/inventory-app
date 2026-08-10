@@ -18140,6 +18140,56 @@ class CsrfFailureViewTest(TestCase):
         self.assertNotIn('accounts/login', resp.url)
 
 
+class LoginPageNeverCachedTest(TestCase):
+    """2026-08-10 live report (Roy): the CSRF "session expired, try again"
+    message kept appearing on EVERY login, not just leftover debris from an
+    earlier outage — a genuinely reproducible, ongoing symptom. Traced to a
+    gap in the SAME fix class that already protects home() (2026-07-28):
+    home() got @never_cache specifically because a dashboard this volatile
+    must never be served stale by ANY caching layer between the browser and
+    the view — the phone's own HTTP disk cache, or (explicitly documented
+    in that fix's own docstring) a mobile carrier's transparent compression
+    proxy, common on Kenyan mobile data. The login PAGE itself never got
+    the same treatment — a stale cached copy of /accounts/login/ carries a
+    CSRF token baked into its hidden form field at the time it was cached,
+    which fails validation the moment it's submitted, regardless of what
+    the CSRF_FAILURE_VIEW safety net (built the same day as this docstring
+    references) or the service worker's own /accounts/ network-only guard
+    (2026-07-27) do — neither of those addresses an upstream cache serving
+    a stale page BEFORE the service worker or Django's CSRF check ever gets
+    involved. Fixed by wrapping login/logout with the same @never_cache
+    used on home(), so no intermediate cache can ever hold a stale copy
+    with a stale token in the first place."""
+
+    def test_login_page_has_never_cache_headers(self):
+        resp = self.client.get('/accounts/login/')
+        self.assertEqual(resp.status_code, 200)
+        cache_control = resp.get('Cache-Control', '')
+        self.assertIn('no-store', cache_control)
+        self.assertIn('no-cache', cache_control)
+
+    def test_logout_has_never_cache_headers(self):
+        biz = Business.objects.create(name='Logout NeverCache Biz')
+        user = User.objects.create_user(username='logout_nc_user', password='x')
+        UserProfile.objects.create(user=user, business=biz, role='owner')
+        self.client.force_login(user)
+        resp = self.client.post('/accounts/logout/')
+        cache_control = resp.get('Cache-Control', '')
+        self.assertIn('no-store', cache_control)
+
+    def test_login_still_works_normally(self):
+        """The never_cache wrap must not break the ordinary login flow."""
+        biz = Business.objects.create(name='Login Still Works Biz')
+        user = User.objects.create_user(username='login_works_user', password='x')
+        UserProfile.objects.create(user=user, business=biz, role='owner')
+        resp = self.client.post(
+            '/accounts/login/', {'username': 'login_works_user', 'password': 'x'},
+            follow=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context['user'].is_authenticated)
+
+
 # ── Shift Station Misattribution Fix (2026-07-28 live report) ──────────────
 # Monsoon Inn's till showed KES 1400 attributed to Bar with ZERO bar sales
 # that day, while kitchen sales had happened. Root cause: station was
