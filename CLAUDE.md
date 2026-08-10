@@ -5515,3 +5515,82 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   rejected, and the STK-confirmed-money-never-dropped regression lock mirroring the
   existing `SettleTabFromPaymentPartialAmountTest` pattern. No migrations. 1664 tests
   pass (core + accounts).
+- Retroactive-correction audit: does a fix ever need to repair data it left behind,
+  not just prevent the bug going forward? (2026-08-10, same-day follow-up). Roy's own
+  question, with screenshots proving the point: several `Keg Gold` debt entries from
+  1–9 Aug were STILL sitting unpaid in the debt tracker despite Roy believing they'd
+  already been settled in the tabs drawer around those dates — direct, concrete
+  evidence that the settle_tab-redirect bug above had been silently discarding real
+  payments for over a week before today's fix, and a fair challenge: for THIS and
+  every other recent fix, does correcting the code also correct the data it already
+  produced? Audited every fix logged between 2026-07-27 and today (roughly 40 entries)
+  and sorted each into one of three buckets. **(1) Pure computation/display/access
+  fixes — self-heal automatically for ALL historical data the moment the fix deploys,
+  zero action needed.** This is the large majority: `confirmed_sales`/`credit_rev`
+  revenue-conflation separation, every `till_expected_cash()`/`station_revenue_window_*`
+  anchor-and-window fix, `_debt_scope()`'s cross-access bug, the Recent-Payments/
+  notification cross-counter-leak fixes, the Kitchen Board "Leo" `[SVQ]`/credit
+  exclusions, the Stock List/`home()` N+1 query fixes, the Kuku-tile preset-visibility
+  gate, and the (ultimately reverted, per Roy's own "leave it be") Kitchen Stock
+  Receipt Mapato/Faida precision attempts — none of these ever wrote a wrong stored
+  value; they only ever computed a number differently at DISPLAY time from data that
+  was always intact, so every past day's figures are already showing correctly right
+  now, with nothing to backfill. **(2) A real stored value was wrong or missing, but a
+  correct value CAN be deterministically re-derived from other data that's still
+  present** — the one case found this pass: `Shift.station` (added migration 0132,
+  2026-07-27/28) is blank on every shift closed before that migration, and
+  `_shift_station()`'s fallback for a blank row is the SAME buggy role-based guess the
+  fix replaced — wrong for exactly the population (managers, cross-access staff)
+  the bug report was about, meaning every till/reconciliation figure that still
+  anchors on one of these old shifts can still be silently misattributed today. New
+  `backfill_shift_station` management command infers the real station per blank-station
+  shift from that staffer's OWN Transactions actually recorded during the shift's own
+  time window (`item.store.is_kitchen` — a real activity signal, not a role guess) —
+  only writes when the signal is unambiguous (one station has zero transactions, or one
+  has ≥80% of them); genuinely mixed activity (e.g. a concurrent bar+kitchen shift pair
+  for the same cross-access staffer, where transactions from both legitimately overlap
+  in time) is deliberately left blank and reported for manual review rather than
+  guessed. `--dry-run` first, matching this app's own established backfill convention;
+  run once per deployed environment via Render's Shell tab. **(3) A real stored value
+  is MISSING with no reliable way to reconstruct it — the honest answer is "not
+  backfillable," and the fix only prevents recurrence.** This is where today's
+  settle_tab bug and Roy's screenshots land: the bug's failure mode was "record
+  nothing" — no `Payment`, no `CustomerDebtPayment`, no log row tying a specific staff
+  tap to a specific tab at a specific time — so there is no artifact anywhere to
+  recover from, and no way to distinguish "this old unpaid entry was actually paid and
+  silently dropped" from "this old unpaid entry is genuinely still owed" without asking
+  a human who remembers. Two more real-but-unrecoverable gaps found in the same audit,
+  both flagged rather than guessed at: the pre-2026-07-31 client-trusted preset stock
+  quantity bug (Roy's own KC Ginger half-bottle discrepancy) may have left some
+  historical `Transaction.qty` values off from the true physical amount, but the
+  correct historical value was never independently recorded anywhere to check against
+  — the existing ⚖️ Rekebisha physical-recount tool is and remains the only correct
+  fix for any resulting stock discrepancy, exactly as it already is for every other
+  cause of a wrong balance; and `order_views.py`'s pre-2026-07-31
+  `_create_transactions_for_order()` NameError (a served waitress table-order line
+  could get zero stock effect when `order.waitress` was falsy) has no FK from
+  `Transaction` back to `TableOrder` to detect which historical served orders were
+  actually affected, and guessing via fuzzy item/time matching risks creating
+  DUPLICATE transactions if wrong — worse than leaving it alone — so this is flagged
+  as a narrow, likely-rare historical gap with no safe automatic detection, not solved
+  here. **Two correct-but-blocked queues Roy should physically go check now**, found
+  by this same audit, distinct from both buckets above — nothing was ever computed
+  wrong, an approve/reject BUTTON was simply invisible until its fix shipped, so real
+  pending entries have been silently accumulating: the owner's own petty cash entries
+  (blocked until the 2026-07-31 `petty_cash_list.html` template-gap fix — check
+  `/petty-cash/` for anything still `status='pending'` that Roy himself recorded), and
+  — as of today — any debt-converted tab whose "Lipa Yote" tap silently no-op'd before
+  this session's settle_tab fix (check the debt tracker's per-customer "Unpaid Credit
+  Transactions" list against what staff actually remember collecting, and use
+  `record_debt_payment`'s existing `paid_date` backdate field — built 2026-08-09 for
+  precisely this "paid a while ago, never recorded at the time" scenario — to record
+  each one against its real payment date rather than today's). Also fixed, found only
+  because the full suite happened to run right at local midnight during this audit: a
+  pre-existing test-authoring bug in `AdHocExpenseDayReconciliationTest`
+  (`_make_closed_shift` anchored `started_at`/`ended_at` to `timezone.now() -
+  timedelta(hours=N)`, which slips into the previous LOCAL calendar day exactly like
+  every other instance of this bug class already documented in this file —
+  `PettyCashReviewUndoTest`, `BarZReportOverlappingShiftsTest`) — re-anchored to a
+  fixed mid-morning-today timestamp, same fix pattern as those two. 7 new tests
+  (`BackfillShiftStationTest`). No migrations (backfill command reads/writes existing
+  fields only). 1674 tests pass (core + accounts).
