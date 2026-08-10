@@ -21737,6 +21737,86 @@ class HomeDashboardRevenueSurvivesMidnightTest(TestCase):
         self.assertEqual(api_resp.json()['bar_revenue'], 200)
 
 
+class HomeDashboardBatchMetricsTest(TestCase):
+    """2026-08-10 live report (Roy) — home() had the EXACT same per-item
+    needs_reorder()/current_balance() N+1 cascade already fixed on Stock
+    List, but running on the whole business's item list on EVERY dashboard
+    load — the first page hit after every single login. Reuses the same
+    already-tested _batch_stock_metrics() helper. This proves the
+    reorder_items/low_stock_count/reorder_count/total_items context values
+    are unchanged from what the original per-item method calls would have
+    produced."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Home Batch Metrics Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='hbm_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.item_ok = Item.objects.create(
+            business=self.biz, store=self.store, description='Well Stocked Item',
+            material_no='HBM-OK', unit='pcs', selling_price=Decimal('10'),
+            opening_bin_balance=100, reorder_level=5, reorder_quantity=10,
+        )
+        self.item_low = Item.objects.create(
+            business=self.biz, store=self.store, description='Low Stock Item',
+            material_no='HBM-LOW', unit='pcs', selling_price=Decimal('10'),
+            opening_bin_balance=2, reorder_level=10, reorder_quantity=20,
+        )
+        self.item_reorder = Item.objects.create(
+            business=self.biz, store=self.store, description='Needs Reorder Item',
+            material_no='HBM-REORDER', unit='pcs', selling_price=Decimal('10'),
+            opening_bin_balance=50, reorder_level=5, reorder_quantity=10,
+            lead_time_days=10, safety_days=5,
+        )
+        for day_offset in range(1, 21):
+            Transaction.objects.create(
+                business=self.biz, item=self.item_reorder, type='Issue',
+                qty=Decimal('-3'), recorded_by=self.owner,
+                date=timezone.now().date() - timedelta(days=day_offset),
+            )
+        self.client.force_login(self.owner)
+
+    def test_reorder_and_low_stock_counts_match_per_item_methods(self):
+        expected_low_stock = sum(
+            1 for i in [self.item_ok, self.item_low, self.item_reorder]
+            if i.current_balance() <= i.reorder_level
+        )
+        expected_reorder = sum(
+            1 for i in [self.item_ok, self.item_low, self.item_reorder]
+            if i.needs_reorder()
+        )
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['low_stock_count'], expected_low_stock)
+        self.assertEqual(resp.context['reorder_count'], expected_reorder)
+        self.assertEqual(resp.context['total_items'], 3)
+
+    def test_low_stock_item_flagged(self):
+        resp = self.client.get('/')
+        self.assertGreaterEqual(resp.context['low_stock_count'], 1)
+        reorder_ids = [i.id for i in resp.context['reorder_items']]
+        self.assertIn(self.item_low.id, reorder_ids)
+
+    def test_query_count_does_not_scale_with_item_count(self):
+        for i in range(15):
+            Item.objects.create(
+                business=self.biz, store=self.store, description=f'Bulk Home Item {i}',
+                material_no=f'HBM-BULK-{i}', unit='pcs', selling_price=Decimal('5'),
+            )
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertLess(
+            len(ctx.captured_queries), 120,
+            f"home() issued {len(ctx.captured_queries)} queries for 18 items — "
+            "the batch-metrics helper should keep item-related queries roughly "
+            "constant, not scale per item.",
+        )
+
+
 class KitchenPerformancePerPresetBreakdownTest(TestCase):
     """2026-08-01 live request — Roy wants BOTH a single shared "Kuku" item
     (unified stock/selling) AND per-supplier accountability/profit

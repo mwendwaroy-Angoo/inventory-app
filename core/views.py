@@ -300,21 +300,25 @@ def home(request):
                 _item_qs = _item_qs.filter(store__is_kitchen=False)
             elif show_kitchen and not show_bar:
                 _item_qs = _item_qs.filter(store__is_kitchen=True)
-            all_items = _item_qs
+            # 2026-08-10 live report (Roy) — this business's WHOLE item list was
+            # being scanned with needs_reorder()/current_balance() called per
+            # item (each cascading into several more queries — see
+            # _batch_stock_metrics()'s own docstring for the full mechanism),
+            # on EVERY home() load — the same N+1 pattern already fixed on
+            # Stock List, but hit far more often since this is the first page
+            # after every login. Reuses the same already-tested batch helper.
+            all_items = list(_item_qs)
+            _batch_stock_metrics(all_items)
 
-            reorder_items = [item for item in all_items if item.needs_reorder()]
+            reorder_items = [item for item in all_items if item.stock_needs_reorder]
             low_stock_count = len(
-                [
-                    item
-                    for item in all_items
-                    if item.current_balance() <= item.reorder_level
-                ]
+                [item for item in all_items if item.stock_balance <= item.reorder_level]
             )
             reorder_count = len(reorder_items)
 
-            _reorder_sorted = sorted(reorder_items, key=lambda x: x.current_balance())[:20]
+            _reorder_sorted = sorted(reorder_items, key=lambda x: x.stock_balance)[:20]
             for _ri in _reorder_sorted:
-                _bal = _ri.current_balance()
+                _bal = _ri.stock_balance
                 _unit_raw = (_ri.unit or '').strip().upper()
                 if _unit_raw == 'ML' and abs(float(_bal)) >= 1000:
                     _litres = float(_bal) / 1000
@@ -329,7 +333,7 @@ def home(request):
                     _ri.unit_display = _ri.unit or ''
             context.update(
                 {
-                    "total_items": all_items.count(),
+                    "total_items": len(all_items),
                     "low_stock_count": low_stock_count,
                     "reorder_count": reorder_count,
                     "reorder_items": _reorder_sorted,
@@ -462,16 +466,27 @@ def home(request):
             try:
                 if show_bar:
                     from core.shift_views import station_revenue_window_start, station_revenue_window_info
-                    _bar_window_start = station_revenue_window_start(business, is_kitchen=False)
-                    _bar_txns = Transaction.objects.filter(
-                        business=business, type='Issue',
-                        created_at__gte=_bar_window_start,
-                        payment_method__in=['cash', 'mpesa'],
-                        item__store__is_kitchen=False,
-                    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
-                    context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
+                    # 2026-08-10 live report (Roy) — for an owner/manager,
+                    # station_revenue_window_info() ALREADY computes this exact
+                    # figure internally as its own 'total_revenue' (via the
+                    # shared _window_revenue() helper — same filter shape,
+                    # by design, "so the tile total and its own breakdown can
+                    # never silently drift apart"). Calling
+                    # station_revenue_window_start() AND running a second,
+                    # separate Transaction query here was computing the same
+                    # number twice on every single dashboard load. Reuse it.
                     if getattr(user_profile, 'is_owner_or_manager', False):
                         context['bar_revenue_info'] = station_revenue_window_info(business, is_kitchen=False)
+                        context['bar_today_revenue'] = context['bar_revenue_info']['total_revenue']
+                    else:
+                        _bar_window_start = station_revenue_window_start(business, is_kitchen=False)
+                        _bar_txns = Transaction.objects.filter(
+                            business=business, type='Issue',
+                            created_at__gte=_bar_window_start,
+                            payment_method__in=['cash', 'mpesa'],
+                            item__store__is_kitchen=False,
+                        ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
+                        context['bar_today_revenue'] = sum(t.revenue() for t in _bar_txns)
             except Exception:
                 context['bar_today_revenue'] = 0
 
@@ -519,16 +534,21 @@ def home(request):
             try:
                 if _has_kitchen and show_kitchen:
                     from core.shift_views import station_revenue_window_start, station_revenue_window_info
-                    _kitchen_window_start = station_revenue_window_start(business, is_kitchen=True)
-                    _kitchen_txns = Transaction.objects.filter(
-                        business=business, type='Issue',
-                        created_at__gte=_kitchen_window_start,
-                        payment_method__in=['cash', 'mpesa'],
-                        item__store__is_kitchen=True,
-                    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
-                    context['kitchen_today_revenue'] = sum(t.revenue() for t in _kitchen_txns)
+                    # 2026-08-10 — same redundant-computation fix as bar_today_
+                    # revenue above: station_revenue_window_info() already
+                    # computes this exact figure as its own 'total_revenue'.
                     if getattr(user_profile, 'is_owner_or_manager', False):
                         context['kitchen_revenue_info'] = station_revenue_window_info(business, is_kitchen=True)
+                        context['kitchen_today_revenue'] = context['kitchen_revenue_info']['total_revenue']
+                    else:
+                        _kitchen_window_start = station_revenue_window_start(business, is_kitchen=True)
+                        _kitchen_txns = Transaction.objects.filter(
+                            business=business, type='Issue',
+                            created_at__gte=_kitchen_window_start,
+                            payment_method__in=['cash', 'mpesa'],
+                            item__store__is_kitchen=True,
+                        ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
+                        context['kitchen_today_revenue'] = sum(t.revenue() for t in _kitchen_txns)
                 else:
                     context['kitchen_today_revenue'] = 0
             except Exception:
