@@ -20864,6 +20864,114 @@ class BackfillSplitPaidTxnPaymentMethodTest(TestCase):
         self.assertEqual(txn.payment_method, 'cash')  # unchanged, not double-touched
 
 
+class BackfillShiftStationTest(TestCase):
+    """core/management/commands/backfill_shift_station.py — 2026-08-10 live
+    request (Roy): historical Shift rows created before Shift.station
+    existed (migration 0132, 2026-07-27/28) still fall back to the buggy
+    role-based station guess every time _shift_station()/_station_q() read
+    them, silently wrong for a manager or cross-access staffer who worked
+    the counter that isn't their nominal role. This backfill infers the
+    real station from each blank-station shift's own recorded Transactions
+    instead of guessing from role."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Backfill Station Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Beer',
+            material_no='BFS-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chips',
+            material_no='BFS-02', unit='Pcs', selling_price=Decimal('100'),
+        )
+        # A manager, nominally neither bar nor kitchen by role — exactly the
+        # population the old role-based fallback got wrong.
+        self.manager = User.objects.create_user(username='bfs_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+
+    def _make_blank_shift(self, staff=None):
+        return Shift.objects.create(
+            business=self.biz, staff=staff or self.manager, status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now(), station='',
+        )
+
+    def _sale(self, shift, item, recorded_by):
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash',
+            recorded_by=recorded_by, created_at=shift.started_at + timedelta(minutes=5),
+        )
+
+    def test_infers_kitchen_from_activity_when_role_guess_was_wrong(self):
+        from django.core.management import call_command
+        shift = self._make_blank_shift()
+        self._sale(shift, self.kitchen_item, self.manager)
+        self._sale(shift, self.kitchen_item, self.manager)
+        call_command('backfill_shift_station')
+        shift.refresh_from_db()
+        self.assertEqual(shift.station, 'kitchen')
+
+    def test_infers_bar_from_activity(self):
+        from django.core.management import call_command
+        shift = self._make_blank_shift()
+        self._sale(shift, self.bar_item, self.manager)
+        call_command('backfill_shift_station')
+        shift.refresh_from_db()
+        self.assertEqual(shift.station, 'bar')
+
+    def test_dry_run_never_saves(self):
+        from django.core.management import call_command
+        shift = self._make_blank_shift()
+        self._sale(shift, self.kitchen_item, self.manager)
+        call_command('backfill_shift_station', '--dry-run')
+        shift.refresh_from_db()
+        self.assertEqual(shift.station, '')
+
+    def test_no_signal_left_blank(self):
+        from django.core.management import call_command
+        shift = self._make_blank_shift()
+        call_command('backfill_shift_station')
+        shift.refresh_from_db()
+        self.assertEqual(shift.station, '')
+
+    def test_genuinely_mixed_activity_left_blank_for_manual_review(self):
+        from django.core.management import call_command
+        shift = self._make_blank_shift()
+        self._sale(shift, self.kitchen_item, self.manager)
+        self._sale(shift, self.bar_item, self.manager)
+        call_command('backfill_shift_station')
+        shift.refresh_from_db()
+        self.assertEqual(shift.station, '')
+
+    def test_only_touches_this_staffers_own_transactions_in_window(self):
+        """A different staffer's sale during the same wall-clock window must
+        not bleed into this shift's own inference."""
+        from django.core.management import call_command
+        other = User.objects.create_user(username='bfs_other', password='x')
+        UserProfile.objects.create(user=other, business=self.biz, role='staff')
+        shift = self._make_blank_shift()
+        self._sale(shift, self.bar_item, self.manager)
+        self._sale(shift, self.kitchen_item, other)  # different staffer — must be ignored
+        call_command('backfill_shift_station')
+        shift.refresh_from_db()
+        self.assertEqual(shift.station, 'bar')
+
+    def test_already_stationed_shift_untouched(self):
+        from django.core.management import call_command
+        shift = Shift.objects.create(
+            business=self.biz, staff=self.manager, status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now(), station='bar',
+        )
+        self._sale(shift, self.kitchen_item, self.manager)
+        call_command('backfill_shift_station')
+        shift.refresh_from_db()
+        self.assertEqual(shift.station, 'bar')  # unchanged, not re-inferred
+
+
 # ── Customer merge (2026-07-31) ──────────────────────────────────────────────
 
 class CustomerMergeTest(TestCase):
@@ -28673,11 +28781,21 @@ class AdHocExpenseDayReconciliationTest(TestCase):
 
     def _make_closed_shift(self, cash=1000, counted=1000, station='bar', staff=None):
         staff = staff or self.staff
+        # Anchored to mid-morning TODAY (not `now() - timedelta(hours=N)`) —
+        # same day-boundary flakiness class documented elsewhere in this file
+        # (PettyCashReviewUndoTest, BarZReportOverlappingShiftsTest): a
+        # relative offset can slip into YESTERDAY when the suite happens to
+        # run in the first few hours after local midnight, while the sibling
+        # `_record_expense()` call always dates itself `timezone.localdate()`
+        # (today) — the two then land on different calendar days and every
+        # same-day reconciliation assertion in this class fails, unrelated to
+        # the actual feature under test.
+        today_10am = timezone.localtime().replace(hour=10, minute=0, second=0, microsecond=0)
         shift = Shift.objects.create(
             business=self.biz, store=self.store, staff=staff,
             opening_float=Decimal('0'), status='CLOSED', station=station,
-            started_at=timezone.now() - timedelta(hours=5),
-            ended_at=timezone.now() - timedelta(hours=4),
+            started_at=today_10am,
+            ended_at=today_10am + timedelta(hours=1),
             closing_cash_counted=Decimal(str(counted)),
         )
         Transaction.objects.create(
