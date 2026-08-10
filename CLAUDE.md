@@ -5314,3 +5314,77 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   exact timeline: batch opened before the link, link added after, manual editor still
   reachable, automatic path correctly can't touch it; `test_linked_batch_from_draw_true` —
   the positive case, unchanged). No migrations. 1635 tests pass (core + accounts).
+- Live production outage — gunicorn thread starvation, not a code crash (2026-08-09/10,
+  urgent). Roy reported repeated 502s "while a customer was scanning." Traced via Render's
+  own Events log: "HTTP health check failed (timed out after 5 seconds)" followed minutes
+  later by "Service recovered," repeating — the signature of thread starvation, not a crash
+  (a real crash stays down). Root cause: this app sends SMS (Africa's Talking) SYNCHRONOUSLY
+  in many request paths including customer-facing ones (payment/cash-request
+  notifications); the AT SDK's own bounded timeout allows up to ~9-12s per call. Worse: the
+  LIVE Render Start Command (dashboard-configured, independent of the repo) had drifted to
+  bare `gunicorn stockapp.wsgi:application --bind 0.0.0.0:$PORT` — zero worker/thread
+  flags, meaning gunicorn's default `sync` worker class with ONE thread, literally one
+  request at a time for the whole app. Any single slow SMS call blocked EVERYTHING else
+  behind it, including Render's own health check. `Procfile`/`render.yaml` in the repo had
+  already specified `--workers 1 --threads 3 --worker-class gthread`, bumped to `--threads
+  8` — but this had NO EFFECT until Roy manually corrected the actual dashboard Start
+  Command to match (config-only fix, zero app code touched, confirmed live via Render's own
+  request logs — `GET /health/` returning clean 200s every few seconds afterward).
+  **Lesson for next time a live incident shows this exact fail→recover→fail pattern**: check
+  the ACTUAL dashboard Start Command first — the repo's Procfile/render.yaml are not
+  guaranteed to be what's actually running.
+- Kitchen board root-cause deep dive during the same live incident, chicken shift (2026-08-09/10):
+  answered Roy's overlapping-shift question (Recheal never closed her shift, Susan opened
+  over her mid-outage) by tracing `_shift_active_segments()`/`_segments_q()` directly rather
+  than guessing — confirmed this exact scenario (bartender handover mid-shift, non-waitress
+  vs waitress roles) is ALREADY correctly handled: a later same-station shift automatically
+  caps the earlier one's own attribution window the moment it opens, regardless of when the
+  earlier shift is actually closed in the UI, and a waitress role is explicitly excluded
+  from capping anyone (2026-08-06/08 Monsoon Inn fixes, unchanged, still correct). Walked
+  Roy through the practical steps this DOES still require by hand: enter the physical
+  handover cash count (what the new staffer found) as the outgoing shift's closing count;
+  use the close-shift modal's existing "📵 Mauzo Yasiyorekodiwa (Optional)" field
+  (`Shift.offline_sales_amount`/`offline_sales_note`, built Sprint 4 2026-06-13, "Option A")
+  to reconcile the CASH figure immediately using the paper-recorded total, with the
+  template's own built-in warning to delete that figure later if/when the real line items
+  are entered via Add Transaction, so the cash never gets counted twice; correct the new
+  shift's own opening float via the existing `edit_shift_opening_float` tool if it doesn't
+  already match the same handover count. No code changes — confirmed the existing mechanism
+  already does the hard part correctly, this was a "trace and explain," not a fix.
+- Fix: Stock List's per-item query cascade (2026-08-10, same live-incident follow-up). Roy
+  flagged general slowness ("transitioning through various sections... accessing stock
+  list") once the crash itself was resolved. Traced concretely: `stock_list.html` calls
+  `item.current_balance` 5 times per row and `item.needs_reorder` 3 times, neither cached —
+  and `needs_reorder()`/`recommended_order_qty()` each internally cascade into
+  `current_balance()` + `on_order()` + `reorder_point()`, with `reorder_point()` itself
+  calling `avg_daily_issues()` TWICE (once via `lead_time_demand()`, once via
+  `safety_stock()`). `physical_balance()`/`deficit()`/`surplus()` add yet more uncached
+  re-querying. For a 100-item stock list this was issuing 1000+ separate database
+  round-trips on ONE page load — the dominant, concrete cause of "stock list is slow."
+  New `core/views.py::_batch_stock_metrics(items)` computes the SAME values via 3 batch
+  queries (balance/physical-balance movement sum, 30-day issues sum, PO on-order totals)
+  and mutates each item with new `stock_*`-prefixed attributes before the template renders.
+  Deliberately did NOT memoize the shared `Item` model methods themselves (`current_
+  balance()` etc.) — that's used everywhere across this codebase, and a blanket instance-
+  level cache would risk returning a stale balance to any OTHER caller that reads a
+  balance, writes a Transaction, then re-reads the SAME Python instance expecting a fresh
+  value within one request; auditing every such call site wasn't safe to do quickly on a
+  live, money-critical system. This fix is scoped entirely to `stock_list()`/
+  `stock_list.html` — every other page/view in the app is completely unaffected, and the
+  original methods still behave exactly as before for every other caller.
+  `StockListBatchMetricsTest.test_batch_metrics_match_original_methods_exactly` proves
+  numerical equivalence directly (not assumed) by running the batch helper and then calling
+  the REAL per-item methods on the same items, across mixed balances, a PO on-order
+  quantity, custom reorder settings, and real 30-day issue history (including an
+  out-of-window Issue that must NOT count, and a Draw transaction that MUST). A query-count
+  test confirms the page no longer scales per item. No migrations. 1640 tests pass (core +
+  accounts). Separately traced a batch of "session expired, try again" messages Roy saw
+  stacked 5-deep on login to the most likely explanation: leftover `csrf_failure_view`
+  warnings queued during the earlier crash window that never got displayed (since the page
+  kept failing to load before the message could render), surfacing all at once on the first
+  successful load afterward — not a new, ongoing bug; asked Roy to confirm with a fresh
+  login attempt rather than guessing further. `home()`'s own query load (till breakdown +
+  station revenue disclosure, each computed twice — bar and kitchen — every dashboard load)
+  flagged as the likely next target but deliberately NOT touched this pass — a different
+  shape of problem (many distinct single queries stacked up, not per-item multiplication)
+  needing its own careful, separately-tested pass rather than folding into this one.
