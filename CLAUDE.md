@@ -5388,3 +5388,24 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   flagged as the likely next target but deliberately NOT touched this pass — a different
   shape of problem (many distinct single queries stacked up, not per-item multiplication)
   needing its own careful, separately-tested pass rather than folding into this one.
+- Fix: login page never cached — closes the CSRF failure recurring on EVERY login
+  (2026-08-10, same live-incident follow-up). Roy reported the 2026-07-27 safety net
+  (`csrf_failure_view`) was firing on every single login, not just as leftover debris from
+  the earlier crash window as first suspected — a genuinely reproducible, ongoing symptom,
+  confirmed by him retesting after the crash was long resolved. Root cause: `home()` got
+  `@never_cache` (2026-07-28) specifically because a volatile dashboard must never be served
+  stale by ANY caching layer between browser and view — the phone's own HTTP disk cache, or
+  (per that fix's own documented root-cause list) a Kenyan mobile carrier's transparent
+  compression proxy. The LOGIN PAGE itself never got the same treatment — Django's built-in
+  `LoginView` sets no cache-prevention headers on its own. A stale cached copy of
+  `/accounts/login/` carries a CSRF token baked into its hidden form field at cache time,
+  which fails validation the moment it's submitted — regardless of what the 2026-07-27
+  `CSRF_FAILURE_VIEW` safety net or the service worker's `/accounts/` network-only guard do,
+  since NEITHER of those addresses an upstream cache (carrier proxy, browser HTTP cache)
+  serving a stale page BEFORE the service worker or Django's own CSRF check is ever
+  reached — this is a distinct mechanism from the SW-cache theory the 2026-07-27 fix
+  addressed, and explains why that fix alone didn't fully close the gap. Fixed by wrapping
+  both `login` and `logout` URL routes with the same `never_cache` already proven on
+  `home()` (`stockapp/urls.py`). 3 new tests (`LoginPageNeverCachedTest`) — login/logout
+  both carry `no-store`/`no-cache` headers, and the ordinary login flow still works
+  end-to-end unaffected. No migrations. 1643 tests pass (core + accounts).
