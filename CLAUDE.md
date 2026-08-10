@@ -5460,3 +5460,58 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   she's still blocked from Quick Sell credit and `convert_tab_to_debt`). All 129 pre-
   existing debt-tracker tests confirmed passing unmodified. No migrations. 1657 tests pass
   (core + accounts).
+- Fix: paying a debt-converted tab from the tabs drawer silently discarded the payment
+  (2026-08-10), live report from Roy — garbled at first, then confirmed directly: "a tab
+  still in the tabs drawer for over a day... the auto conversion is happening... at the
+  same time there is an addition to debt in the debt tracker, when the tab is paid and
+  cleared from the tabs drawer, the debt tracker still shows it as debt and unpaid."
+  Traced the full lifecycle rather than guessing (`convert_tab_to_debt`/
+  `_convert_tab_to_debt_core`, `_convert_open_tabs_to_debt_for_shift` — the shift-close
+  auto-convert sweep — `_debt_converted_tabs_qs`, `revert_tab_from_debt`, `settle_tab`,
+  `tick_entry`). **Root cause, found in `settle_tab()`** (`core/keg_views.py`, shared by
+  all three counters — Bar Board, Kitchen Board, Quick Sell all POST to the same
+  `/bar/tabs/<id>/settle/`): once a tab auto-converts to debt, `tab.status` flips from
+  `OPEN` to `SETTLED` (correct — that's what puts it in the debt tracker). But the
+  endpoint's own guard, `if tab.status != 'OPEN': return {ok:True, already_settled:True}`,
+  fired unconditionally the moment ANY non-OPEN tab was settled again — including a
+  debt-converted tab that still has a full unpaid balance. A staffer tapping "Lipa Yote"
+  on such a tab (a stale client render, or simply not realizing conversion already
+  happened — very plausible after a whole day) got a success-shaped response with ZERO
+  record of the real cash/mpesa the customer just handed over: no `CustomerDebtPayment`,
+  no receipt, nothing. The frontend's own `loadTabs()` refresh then removed the tab from
+  the drawer (since it's not OPEN either way) — looking exactly like a normal successful
+  settle from the staffer's side, while the debt tracker's figure never moved. **Fix**:
+  `settle_tab()` now detects this specific state (SETTLED + has a linked customer + still
+  has unpaid entries — the same "effective DEBT status" fingerprint `_debt_converted_
+  tabs_qs`/`_findable_tabs_qs` already use elsewhere) and redirects the payment into a
+  REAL debt payment via the same canonical `_do_settle_debt_payment()` the Debt Tracker
+  page and the M-Pesa debt-payment callback already use — honoring an optional partial
+  `amount` POST param the same way the normal OPEN-tab path does, station-scoped via the
+  existing `_allowed_tab_sources(up)` check. A genuinely fully-paid or VOID tab (nothing
+  left unpaid) keeps the exact original idempotent no-op behavior — never fabricates a
+  debt payment for a tab that never carried real debt. All three tabs-drawer JS handlers
+  (`bar_board.html`'s `settleTab`, `quick_sell.html`'s `qsSettleTab`,
+  `kitchen_board.html`'s `settleKitchenTab`) updated to show the redirect's own message
+  instead of the misleading "✓ Tab imelipwa!" toast. **Found and fixed the identical bug,
+  one level worse, in the STK Push path**: `_settle_tab_from_payment()` (`core/
+  mpesa_views.py`, the staff-initiated "📲 STK Push" callback handler) had the same
+  `if not tab or tab.status != 'OPEN': return` guard — but here `payment.status` is
+  already `'completed'` by the time this runs, meaning a REAL, Safaricom-confirmed M-Pesa
+  charge (a customer's STK approval landing just after their tab auto-converted to debt)
+  was being silently dropped with zero record anywhere beyond the raw `Payment` row —
+  no `CustomerDebtPayment`, no receipt, no SMS, the debt tracker never reflecting money
+  that had genuinely already moved. Fixed with the same redirect mechanism. Confirmed
+  `tick_entry()` (the per-entry "tick" settle, distinct from "Lipa Yote") does NOT have
+  this bug — it operates directly on the `BarTabEntry`/`Transaction` with no `tab.status`
+  gate at all, and `_get_customer_debt_data()`'s `credit_qs` filters live on
+  `Transaction.payment_method == 'credit'`, so flipping that field (which `tick_entry`
+  already does) correctly self-heals the debt aggregate without needing this fix — no
+  change needed there. 10 new tests (`SettleTabRedirectsToDebtPaymentTest` ×7,
+  `SettleTabFromPaymentDebtRedirectTest` ×3) — real debt payment recorded (full and
+  partial), the underlying `BarTabEntry` correctly flips to paid via `_do_settle_debt_
+  payment`'s own FIFO reconciliation, genuinely-fully-paid and VOID tabs stay pure
+  no-ops (regression lock — never fabricate a debt payment), station-scoping blocks a
+  kitchen-only staffer from redirecting a bar customer's payment, invalid amounts
+  rejected, and the STK-confirmed-money-never-dropped regression lock mirroring the
+  existing `SettleTabFromPaymentPartialAmountTest` pattern. No migrations. 1664 tests
+  pass (core + accounts).
