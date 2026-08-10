@@ -5435,3 +5435,28 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   unmodified against the new code path. New `HomeDashboardBatchMetricsTest` proves the
   reorder/low-stock counts match calling the real per-item methods directly, plus a
   query-count ceiling test. No migrations. 1646 tests pass (core + accounts).
+- Waitress debt-tracker view/payment access + fix cross-access debt scope bug (2026-08-10).
+  Roy: give the waitress the ability to view debts and record payments on them, but never
+  let her give out (issue) new debt — only counter staff should do that. Investigation
+  found "never issue debt" was already fully solved — every checkout surface (Quick Sell,
+  Bar Board, Kitchen Board, `convert_tab_to_debt`, `bulk_convert_tabs_to_debt`) already has
+  an explicit `role=='waitress'` block, built 2026-08-06. The actual gap was narrower:
+  `debt_dashboard`/`customer_debt_profile`/`record_debt_payment` are gated by
+  `@login_required` only, no role restriction — she simply had no navbar link to reach
+  them. Added "💳 Debt Tracker" to her navbar (mobile + desktop), matching the existing
+  icon/label convention. While verifying this, found a real pre-existing bug in
+  `_debt_scope()`: it re-derived show_bar/show_kitchen from `can_access_bar`/
+  `can_access_kitchen` directly instead of going through the app's single source of truth,
+  `_station_scope()`. `can_access_bar` is only ever meaningfully set for kitchen-role staff
+  ("Kitchen staff may access the Bar Board") — never for an ordinary bar/general/waitress
+  staffer, whose own bar access is implicit via role. Any such staffer granted
+  `can_access_kitchen=True` (cross-station access) therefore fell into the 'kitchen'-only
+  branch, incorrectly hiding their own bar debts — not waitress-specific, affects any
+  cross-access non-kitchen-role staffer. Rebuilt `_debt_scope()` on top of `_station_scope()`
+  directly, fixing this for every role at once (including the mirror case: kitchen staff
+  correctly granted `can_access_bar` now correctly get 'all' instead of staying kitchen-
+  only). 14 new tests (`DebtScopeHelperTest` +5, `WaitressDebtTrackerAccessTest` — full
+  end-to-end: view dashboard, view profile, record a payment, plus regression locks that
+  she's still blocked from Quick Sell credit and `convert_tab_to_debt`). All 129 pre-
+  existing debt-tracker tests confirmed passing unmodified. No migrations. 1657 tests pass
+  (core + accounts).
