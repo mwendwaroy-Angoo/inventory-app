@@ -488,6 +488,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'waitress_screen' %}">📋 {% trans 'Order Desk' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                         {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                     </ul>
 
@@ -695,6 +696,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'waitress_screen' %}">📋 {% trans 'Order Desk' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                         {% if business.haki_enabled %}<li class="nav-item"><a class="nav-link" href="{% url 'my_work_and_pay' %}">🙌 {% trans 'Kazi Yangu' %}</a></li>{% endif %}
                     </ul>
 

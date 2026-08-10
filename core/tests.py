@@ -1282,6 +1282,152 @@ class DebtScopeHelperTest(TestCase):
         profile = UserProfile.objects.create(user=staff_user, business=biz, role='staff')
         self.assertEqual(_debt_scope(profile, biz), 'all')
 
+    def test_waitress_default_gets_bar_scope(self):
+        """2026-08-10 (Roy — waitress debt-tracker access): a plain waitress
+        (bar-only by role default, no cross-access flag) sees the bar
+        sub-ledger, matching _station_scope()'s own default for her role."""
+        from core.debt_views import _debt_scope
+        biz = self._make_biz(has_kitchen=True)
+        user = User.objects.create_user(username='k1_waitress_bar', password='x')
+        profile = UserProfile.objects.create(user=user, business=biz, role='waitress')
+        self.assertEqual(_debt_scope(profile, biz), 'bar')
+
+    def test_waitress_with_kitchen_access_gets_all_scope(self):
+        """The bug this refactor fixes: the OLD formula gave a waitress
+        granted can_access_kitchen=True (she serves both stations, e.g.
+        Sarah Mueni's "BAR & KITCHEN" shifts) a 'kitchen'-only scope,
+        incorrectly hiding her own bar debts — can_access_bar is never set
+        for a waitress (her bar access is implicit via role, exactly like
+        _station_scope() already treats it), so the old can_access_bar-AND-
+        can_access_kitchen 'all' check could never fire for her."""
+        from core.debt_views import _debt_scope
+        biz = self._make_biz(has_kitchen=True)
+        user = User.objects.create_user(username='k1_waitress_both', password='x')
+        profile = UserProfile.objects.create(
+            user=user, business=biz, role='waitress', can_access_kitchen=True,
+        )
+        self.assertEqual(_debt_scope(profile, biz), 'all')
+
+    def test_bar_staff_with_kitchen_access_gets_all_scope(self):
+        """The same bug, not waitress-specific: ordinary bar/general staff
+        (role='staff') granted cross-station kitchen access used to also
+        fall into 'kitchen'-only scope for the identical reason."""
+        from core.debt_views import _debt_scope
+        biz = self._make_biz(has_kitchen=True)
+        user = User.objects.create_user(username='k1_barstaff_both', password='x')
+        profile = UserProfile.objects.create(
+            user=user, business=biz, role='staff', can_access_kitchen=True,
+        )
+        self.assertEqual(_debt_scope(profile, biz), 'all')
+
+    def test_kitchen_staff_with_bar_access_gets_all_scope(self):
+        """The mirror direction: a kitchen-role staffer correctly granted
+        can_access_bar=True (per that field's own documented purpose —
+        "Grant if they also serve bar customers") used to still get
+        'kitchen'-only scope, since the old formula also required
+        can_access_kitchen=True, never set for kitchen-role staff whose
+        own kitchen access is implicit via role."""
+        from core.debt_views import _debt_scope
+        biz = self._make_biz(has_kitchen=True)
+        user = User.objects.create_user(username='k1_kitchstaff_bar', password='x')
+        profile = UserProfile.objects.create(
+            user=user, business=biz, role='kitchen', can_access_bar=True,
+        )
+        self.assertEqual(_debt_scope(profile, biz), 'all')
+
+    def test_manager_gets_all_scope(self):
+        from core.debt_views import _debt_scope
+        biz = self._make_biz(has_kitchen=True)
+        user = User.objects.create_user(username='k1_manager', password='x')
+        profile = UserProfile.objects.create(user=user, business=biz, role='manager')
+        self.assertEqual(_debt_scope(profile, biz), 'all')
+
+
+class WaitressDebtTrackerAccessTest(TestCase):
+    """2026-08-10 live request (Roy): the waitress should be able to VIEW
+    debts and RECORD PAYMENTS on them, but never GIVE OUT (issue) new
+    debt — that stays counter-staff/manager/owner only.
+
+    Investigation found the backend already permitted this: debt_dashboard/
+    customer_debt_profile/record_debt_payment are gated by @login_required
+    only, no role restriction, and "give out debt" was ALREADY comprehensively
+    blocked for waitress across every checkout surface (quick_sell, bar/
+    kitchen checkout credit + partial-debt, convert_tab_to_debt,
+    bulk_convert_tabs_to_debt — all found with an explicit `role ==
+    'waitress'` guard, 2026-08-06). The only real gap was a missing navbar
+    link. This locks in the actual end-to-end flow works, and that the
+    give-out-debt guards remain intact."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Waitress Debt Access Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='wda_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='wda_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+        self.customer = Customer.objects.create(business=self.biz, name='Wanjiru')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Beer',
+            material_no='WDA-01', unit='Bottle', selling_price=Decimal('200'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            payment_method='credit', recipient='Wanjiru', sale_amount=Decimal('200'),
+            recorded_by=self.owner,
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.waitress,
+            status='OPEN', station='bar', opening_float=Decimal('0'),
+        )
+        self.client.force_login(self.waitress)
+
+    def test_waitress_navbar_shows_debt_tracker_link(self):
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, '/debt/')
+
+    def test_waitress_can_view_debt_dashboard(self):
+        resp = self.client.get('/debt/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Wanjiru')
+
+    def test_waitress_can_view_customer_profile(self):
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Record Payment')
+
+    def test_waitress_can_record_a_payment(self):
+        import uuid
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '200', 'payment_method': 'cash',
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            CustomerDebtPayment.objects.filter(customer=self.customer, amount_paid=Decimal('200')).exists()
+        )
+
+    def test_waitress_still_cannot_issue_new_credit_via_quick_sell(self):
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1}]),
+            'payment_method': 'credit', 'credit_recipient': 'New Debtor',
+        })
+        self.assertEqual(resp.status_code, 302)
+        # Blocked outright — never creates a new credit sale for her.
+        self.assertFalse(
+            Transaction.objects.filter(
+                business=self.biz, recipient='New Debtor', payment_method='credit',
+            ).exists()
+        )
+
+    def test_waitress_still_cannot_convert_tab_to_debt(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Tab Debtor', status='OPEN',
+            source='bar', tab_pin='1234', tab_receipt_token='wda-tab-token',
+        )
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/')
+        self.assertEqual(resp.status_code, 403)
+
 
 class RecordDebtPaymentDebtSourceRequiredTest(TestCase):
     """2026-08-06 live report (Monsoon Inn) — the ledger-selector radio used

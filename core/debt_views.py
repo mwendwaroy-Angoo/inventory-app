@@ -30,17 +30,38 @@ logger = logging.getLogger(__name__)
 def _debt_scope(profile, business):
     """Return 'bar', 'kitchen', or 'all' for the current user.
 
-    'all' = owner or cross-authorised staff (sees both sub-ledgers as two sections).
-    'kitchen' = kitchen-only staff (can_access_kitchen and NOT can_access_bar).
-    'bar' = everyone else (bar/general staff, no kitchen access).
+    'all' = owner/manager or anyone with genuine cross-station access.
+    'kitchen' = this viewer only sees the kitchen counter.
+    'bar' = this viewer only sees the bar counter (also every non-kitchen
+    business, and the default for any role — waitress included — whose
+    own station access comes from role alone, not an explicit flag).
+
+    2026-08-10 (Roy — adding waitress debt-tracker access): rebuilt on top
+    of `_station_scope()` (core/views.py), the app's single source of truth
+    for show_bar/show_kitchen everywhere else, instead of a separate
+    can_access_bar/can_access_kitchen re-derivation. The old formula
+    assumed `can_access_bar` meaningfully represents "this staffer's OWN
+    bar access" — true only for a kitchen-role staffer (see that field's
+    own docstring: "Kitchen staff may access the Bar Board") — it is never
+    set for an ordinary bar/general/waitress staffer, whose own default bar
+    access comes from role alone, same as `_station_scope()` already
+    treats it. Any such staffer granted `can_access_kitchen=True` (a
+    waitress serving both stations, or ordinary bar staff given kitchen
+    cross-access) therefore fell into the 'kitchen'-only branch here,
+    incorrectly hiding their own station's debts — not a waitress-specific
+    bug, found while wiring up her access but affecting any cross-access
+    non-kitchen-role staffer. Symmetrically, a kitchen-role staffer
+    correctly granted `can_access_bar=True` used to still get 'kitchen'-only
+    scope, since the old formula also required `can_access_kitchen=True`
+    (never set for kitchen-role staff, whose kitchen access is implicit via
+    role) — now correctly resolves to 'all', matching `_station_scope()`.
     """
     if not getattr(business, 'has_kitchen', False):
         return 'all'
-    if profile.is_owner_or_manager:
+    show_bar, show_kitchen = _station_scope(profile)
+    if show_bar and show_kitchen:
         return 'all'
-    if profile.can_access_bar and profile.can_access_kitchen:
-        return 'all'
-    if profile.is_kitchen_staff or (profile.can_access_kitchen and not profile.can_access_bar):
+    if show_kitchen:
         return 'kitchen'
     return 'bar'
 
