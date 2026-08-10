@@ -3433,7 +3433,11 @@
             .then(function (d) {
                 document.querySelectorAll('.qs-tab-btn, .qs-partial-btn').forEach(function (b) { b.disabled = false; });
                 if (d.ok) {
-                    if (!d.already_settled) qsShowToast('✓ Tab imelipwa! KES ' + qsFmt(d.total));
+                    if (d.redirected_to_debt) {
+                        qsShowToast(d.message || '✓ Malipo ya deni yamerekodiwa.');
+                    } else if (!d.already_settled) {
+                        qsShowToast('✓ Tab imelipwa! KES ' + qsFmt(d.total));
+                    }
                     if (d.receipt_url) {
                         var banner = document.getElementById('qsTabReceiptBanner');
                         var link   = document.getElementById('qsTabReceiptLink');

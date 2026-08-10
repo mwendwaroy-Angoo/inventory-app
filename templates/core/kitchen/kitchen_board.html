@@ -3640,7 +3640,9 @@
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (d.ok) {
-          if (d.tab_settled) {
+          if (d.redirected_to_debt) {
+            showToast(d.message || '✓ Malipo ya deni yamerekodiwa.');
+          } else if (d.tab_settled) {
             showToast('✓ Tab imelipwa kabisa.');
             if (d.other_open_tabs && d.other_open_tabs.length) {
               var otKLabels = d.other_open_tabs.map(function(t){ return t.label; }).join(', ');
@@ -3655,7 +3657,7 @@
           }
           loadFoodTabs();
           _settleTabId = null;
-          if (!d.receipt_url || !d.tab_settled) {
+          if (!d.receipt_url || (!d.tab_settled && !d.redirected_to_debt)) {
             setTimeout(function(){
               var m = bootstrap.Modal.getInstance(document.getElementById('kbSettleModal'));
               if (m) m.hide();

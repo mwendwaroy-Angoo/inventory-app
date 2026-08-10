@@ -3567,7 +3567,9 @@
       .then(function (d) {
         document.querySelectorAll('.tab-action-btn, .tab-partial-btn').forEach(function (b) { b.disabled = false; });
         if (d.ok) {
-          if (!d.already_settled) {
+          if (d.redirected_to_debt) {
+            showToast(d.message || '✓ Malipo ya deni yamerekodiwa.');
+          } else if (!d.already_settled) {
             if (d.partial) showToast('✓ KES ' + fmt(d.settled_amount) + ' imelipwa. Tab bado iko wazi.');
             else showToast('✓ Tab imelipwa kabisa! KES ' + fmt(d.total));
           }

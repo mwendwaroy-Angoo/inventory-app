@@ -150,7 +150,41 @@ def _settle_tab_from_payment(payment):
     """
     try:
         tab = payment.bar_tab
-        if not tab or tab.status != 'OPEN':
+        if not tab:
+            return
+        if tab.status != 'OPEN':
+            # Same class of bug as settle_tab()'s own already_settled no-op
+            # (2026-08-10 live report, Roy) — but worse here: this money is
+            # a REAL, Safaricom-confirmed M-Pesa charge (payment.status is
+            # already 'completed' by the time this runs), not just a staff
+            # tap. A tab converted to debt (Geuza Deni / shift-close auto-
+            # convert) between the STK push being sent and the callback
+            # landing used to make this function silently `return` — the
+            # Payment row stays 'completed' (so the charge itself isn't lost
+            # from the M-Pesa audit trail), but nothing ever links it to the
+            # customer's debt, no receipt, no SMS, and the debt tracker's
+            # figure never moves despite the customer having genuinely paid.
+            # Redirect into a real debt payment instead, via the same
+            # canonical _do_settle_debt_payment() the debt tracker page uses.
+            if tab.customer_id and tab.status == 'SETTLED' and tab.entries.filter(is_paid=False).exists():
+                try:
+                    from core.debt_views import _do_settle_debt_payment
+                    source = tab.source if tab.source in ('bar', 'kitchen') else 'bar'
+                    rcpt, _post = _do_settle_debt_payment(
+                        tab.customer, payment.business, payment.amount, 'mpesa', source,
+                        notes=f'STK Push kwenye tab #{tab.id} (ilishageuzwa deni)',
+                        recorded_by=None,
+                    )
+                    _sms_receipt_to_payer(payment, rcpt)
+                    logger.info(
+                        "Tab #%s (debt-converted) settled via STK receipt=%s -> debt payment",
+                        tab.id, payment.mpesa_receipt,
+                    )
+                except Exception:
+                    logger.exception(
+                        "_settle_tab_from_payment: debt-redirect failed tab=%s payment=%s",
+                        tab.id, payment.id,
+                    )
             return
 
         now = timezone.now()

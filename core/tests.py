@@ -2783,6 +2783,105 @@ class SettleTabFromPaymentPartialAmountTest(TestCase):
         self.assertEqual(total, Decimal('80'), 'Every shilling of the original 80 must still be accounted for')
 
 
+class SettleTabFromPaymentDebtRedirectTest(TestCase):
+    """2026-08-10 live report (Roy) — companion fix to
+    SettleTabRedirectsToDebtPaymentTest for the STK Push path.
+    _settle_tab_from_payment() had the identical `if tab.status != 'OPEN':
+    return` no-op — but worse, since payment.status is already 'completed'
+    (a real, Safaricom-confirmed charge) by the time this runs. A tab
+    converted to debt between the STK push being sent and the callback
+    landing used to silently swallow the confirmed money with zero record
+    anywhere. Fixed to redirect into a real CustomerDebtPayment, same as
+    the staff-facing settle_tab() endpoint."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='STK Debt Redirect Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='stkdebt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='STK Debt Item', unit='Pcs',
+            material_no='STKD-ITEM-01', selling_price=Decimal('480'),
+        )
+
+    def _make_debt_converted_tab(self, amount=Decimal('480')):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='STK Debt Patron', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='STK Debt Item', amount=amount, is_paid=False,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'STK Debt Patron'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+        return tab, entry
+
+    def test_stk_confirmed_payment_on_debt_converted_tab_is_never_dropped(self):
+        from core.mpesa_views import _settle_tab_from_payment
+        from core.debt_views import _get_customer_debt_data
+        tab, entry = self._make_debt_converted_tab(Decimal('480'))
+        customer = Customer.objects.get(business=self.biz, name='STK Debt Patron')
+        self.assertEqual(_get_customer_debt_data(customer, self.biz)['outstanding'], 480.0)
+
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('480'), method='mpesa', status='completed',
+            bar_tab=tab, tab_entry_ids=None,
+        )
+        _settle_tab_from_payment(payment)
+
+        self.assertEqual(CustomerDebtPayment.objects.filter(customer=customer).count(), 1)
+        cdp = CustomerDebtPayment.objects.get(customer=customer)
+        self.assertEqual(cdp.amount_paid, Decimal('480'))
+        self.assertEqual(cdp.payment_method, 'mpesa')
+        self.assertEqual(_get_customer_debt_data(customer, self.biz)['outstanding'], 0.0)
+
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+
+    def test_stk_confirmed_partial_payment_on_debt_converted_tab_recorded(self):
+        from core.mpesa_views import _settle_tab_from_payment
+        from core.debt_views import _get_customer_debt_data
+        tab, _entry = self._make_debt_converted_tab(Decimal('480'))
+        customer = Customer.objects.get(business=self.biz, name='STK Debt Patron')
+
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('200'), method='mpesa', status='completed',
+            bar_tab=tab, tab_entry_ids=None,
+        )
+        _settle_tab_from_payment(payment)
+
+        cdp = CustomerDebtPayment.objects.get(customer=customer)
+        self.assertEqual(cdp.amount_paid, Decimal('200'))
+        self.assertEqual(_get_customer_debt_data(customer, self.biz)['outstanding'], 280.0)
+
+    def test_genuinely_fully_paid_tab_stays_a_pure_noop(self):
+        """No customer / nothing unpaid left -> the original silent-return
+        behaviour, exactly as before. Must never fabricate a debt payment
+        for a tab that never carried real debt."""
+        from core.mpesa_views import _settle_tab_from_payment
+        tab = BarTab.objects.create(business=self.biz, customer_name='Already Paid', status='SETTLED')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('480'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='STK Debt Item', amount=Decimal('480'),
+            is_paid=True, payment_method='cash',
+        )
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('480'), method='mpesa', status='completed',
+            bar_tab=tab, tab_entry_ids=None,
+        )
+        _settle_tab_from_payment(payment)
+        self.assertEqual(CustomerDebtPayment.objects.count(), 0)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Sprint K6.C — Business-level cup pool
 # ══════════════════════════════════════════════════════════════════════════════
@@ -9752,6 +9851,174 @@ class RevertTabFromDebtTest(TestCase):
         self.client.force_login(self.owner)
         self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': 'Roy'})
         self.client.post(f'/bar/tabs/{tab.id}/revert-debt/')
+        entry.refresh_from_db()
+        self.assertEqual(entry.transaction.qty, original_qty)
+
+
+class SettleTabRedirectsToDebtPaymentTest(TestCase):
+    """2026-08-10 live report (Roy): "when a tab is still in the tabs
+    drawer... and the customer had a debt when the auto conversion is
+    happening... when the tab is paid and cleared from the tabs drawer, the
+    debt tracker still shows it as debt and unpaid one as a matter of
+    fact." Root cause: settle_tab()'s `if tab.status != 'OPEN':` branch
+    unconditionally returned {ok:True, already_settled:True} the moment a
+    tab was no longer OPEN — including a tab that was SETTLED via debt
+    conversion (Geuza Deni / shift-close auto-convert) and still had a full
+    unpaid balance. A staffer tapping "Lipa Yote" on such a tab (e.g. a
+    stale client render, or simply not realizing conversion already
+    happened) got a success-shaped response with ZERO record of the real
+    cash/mpesa the customer just handed over — the tab vanished from the
+    drawer via the caller's own loadTabs() refresh, looking exactly like a
+    normal successful settle, while the debt tracker's own figure never
+    moved. Fixed by redirecting such a payment into a REAL debt payment via
+    the same canonical _do_settle_debt_payment() the debt tracker page and
+    the M-Pesa debt-payment callback both already use."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Settle Redirect Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='sr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kitchen_staff = User.objects.create_user(username='sr_kstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Settle Redirect Item',
+            material_no='SR-01', selling_price=Decimal('480'), cost_price=Decimal('200'),
+        )
+
+    def _make_tab(self, name, amount, source='bar'):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source=source, store=self.bar_store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=self.item.description, amount=amount, is_paid=False,
+        )
+        return tab, entry
+
+    def _convert(self, tab, name='Roy'):
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': name})
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+
+    def test_settle_on_debt_converted_tab_records_real_debt_payment(self):
+        from core.debt_views import _get_customer_debt_data
+        tab, entry = self._make_tab('Roy', Decimal('480'))
+        self._convert(tab)
+        customer = Customer.objects.get(business=self.biz, name='Roy')
+        self.assertEqual(_get_customer_debt_data(customer, self.biz)['outstanding'], 480.0)
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data.get('redirected_to_debt'))
+        self.assertIn('receipt_url', data)
+
+        self.assertEqual(CustomerDebtPayment.objects.filter(customer=customer).count(), 1)
+        payment = CustomerDebtPayment.objects.get(customer=customer)
+        self.assertEqual(payment.amount_paid, Decimal('480'))
+        self.assertEqual(payment.payment_method, 'cash')
+        self.assertEqual(_get_customer_debt_data(customer, self.biz)['outstanding'], 0.0)
+
+        # _do_settle_debt_payment's own FIFO reconciliation should flip the
+        # underlying BarTabEntry to paid once fully covered — same mechanism
+        # a normal debt-tracker-page payment already relies on.
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+
+    def test_settle_on_debt_converted_tab_honors_partial_amount(self):
+        from core.debt_views import _get_customer_debt_data
+        tab, _entry = self._make_tab('Roy', Decimal('480'))
+        self._convert(tab)
+        customer = Customer.objects.get(business=self.biz, name='Roy')
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'mpesa', 'amount': '200'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data.get('redirected_to_debt'))
+
+        payment = CustomerDebtPayment.objects.get(customer=customer)
+        self.assertEqual(payment.amount_paid, Decimal('200'))
+        self.assertEqual(payment.payment_method, 'mpesa')
+        self.assertEqual(_get_customer_debt_data(customer, self.biz)['outstanding'], 280.0)
+
+    def test_settle_on_genuinely_fully_paid_tab_stays_idempotent_noop(self):
+        """Regression lock: the original no-op branch must keep working for
+        a tab that's SETTLED with NOTHING unpaid left (no customer, or a
+        genuine fully-paid-off tab) — no debt payment should ever be
+        fabricated for a tab that never carried real debt."""
+        tab, entry = self._make_tab('Roy', Decimal('480'))
+        entry.is_paid = True
+        entry.payment_method = 'cash'
+        entry.save()
+        tab.status = 'SETTLED'
+        tab.settled_at = timezone.now()
+        tab.save()
+        self.client.force_login(self.owner)
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data.get('already_settled'))
+        self.assertFalse(data.get('redirected_to_debt'))
+        self.assertEqual(CustomerDebtPayment.objects.count(), 0)
+
+    def test_settle_on_void_tab_stays_idempotent_noop(self):
+        tab, entry = self._make_tab('Roy', Decimal('480'))
+        entry.is_paid = True
+        entry.payment_method = 'void'
+        entry.transaction.payment_method = 'void'
+        entry.transaction.save()
+        entry.save()
+        tab.status = 'VOID'
+        tab.settled_at = timezone.now()
+        tab.save()
+        self.client.force_login(self.owner)
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data.get('already_settled'))
+        self.assertEqual(CustomerDebtPayment.objects.count(), 0)
+
+    def test_settle_redirect_respects_station_scoping(self):
+        """A kitchen-only staffer must not be able to redirect a payment
+        into a BAR customer's debt via this endpoint, mirroring the
+        pre-existing station gate on every other tab-write endpoint."""
+        tab, _entry = self._make_tab('Roy', Decimal('480'), source='bar')
+        self._convert(tab)
+        self.client.force_login(self.kitchen_staff)
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(CustomerDebtPayment.objects.count(), 0)
+
+    def test_settle_redirect_rejects_invalid_amount(self):
+        tab, _entry = self._make_tab('Roy', Decimal('480'))
+        self._convert(tab)
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash', 'amount': '0'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(CustomerDebtPayment.objects.count(), 0)
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash', 'amount': 'abc'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(CustomerDebtPayment.objects.count(), 0)
+
+    def test_settle_redirect_does_not_touch_stock_or_qty(self):
+        """Money-position-only correction, same guarantee as
+        revert_tab_from_debt — the item already left the shelf when it was
+        first sold on the tab, completely independent of debt conversion
+        or how that debt later gets paid off."""
+        tab, entry = self._make_tab('Roy', Decimal('480'))
+        original_qty = entry.transaction.qty
+        self._convert(tab)
+        self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
         entry.refresh_from_db()
         self.assertEqual(entry.transaction.qty, original_qty)
 

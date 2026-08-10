@@ -3060,13 +3060,72 @@ def settle_tab(request, tab_id):
     tab = BarTab.objects.filter(id=tab_id, business=up.business).first()
     if not tab:
         return JsonResponse({'ok': False, 'error': 'Tab not found'}, status=404)
-    if tab.status != 'OPEN':
-        # Idempotent — already settled; return ok so the JS doesn't show an error on retry
-        return JsonResponse({'ok': True, 'already_settled': True, 'total': float(tab.total())})
 
     pay = (request.POST.get('payment_method') or 'cash').strip()
     if pay not in ('cash', 'mpesa'):
         pay = 'cash'
+
+    if tab.status != 'OPEN':
+        # A tab that's SETTLED but STILL has unpaid entries is a debt-converted
+        # tab (Geuza Deni, or the shift-close/auto-close sweep) — not a
+        # genuinely fully-paid tab. Before this fix, tapping "Lipa Yote" here
+        # silently no-op'd (ok:True, already_settled:True): the tab vanished
+        # from the drawer via the caller's own loadTabs() refresh — looking
+        # exactly like a normal successful settle — while ZERO record was ever
+        # made of the real cash/mpesa the customer just handed over, and the
+        # debt that money was meant to pay stayed completely untouched in the
+        # debt tracker forever. (2026-08-10 live report — Roy: "when the tab
+        # is paid and cleared from the tabs drawer, the debt tracker still
+        # shows it as debt and unpaid one as a matter of fact.")
+        #
+        # Fix: redirect the payment into a REAL debt payment via the same
+        # canonical _do_settle_debt_payment() used by record_debt_payment and
+        # the M-Pesa debt-payment callback — never silently discard it.
+        if tab.status == 'SETTLED' and tab.customer_id and tab.entries.filter(is_paid=False).exists():
+            if tab.source not in _allowed_tab_sources(up):
+                return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kulipa deni hili.'}, status=403)
+
+            unpaid_total = tab.unpaid_total()
+            amount_raw = (request.POST.get('amount') or '').strip()
+            if amount_raw:
+                try:
+                    pay_amount = Decimal(amount_raw)
+                except InvalidOperation:
+                    return JsonResponse({'ok': False, 'error': 'Kiasi batili.'}, status=400)
+                if pay_amount <= 0:
+                    return JsonResponse({'ok': False, 'error': 'Kiasi lazima kiwe zaidi ya 0.'}, status=400)
+            else:
+                pay_amount = unpaid_total
+
+            source = tab.source if tab.source in ('bar', 'kitchen') else 'bar'
+            try:
+                from core.debt_views import _do_settle_debt_payment
+                rcpt, _post_data = _do_settle_debt_payment(
+                    tab.customer, up.business, pay_amount, pay, source,
+                    notes=f'Malipo kwenye tab #{tab.id} (ilishageuzwa deni)',
+                    recorded_by=request.user,
+                )
+            except Exception:
+                logger.exception('settle_tab: debt-redirect payment failed tab=%s', tab.id)
+                return JsonResponse({
+                    'ok': False,
+                    'error': 'Imeshindikana kurekodi malipo — jaribu tena au tumia ukurasa wa Deni.',
+                }, status=500)
+
+            return JsonResponse({
+                'ok': True,
+                'redirected_to_debt': True,
+                'message': (
+                    f'ℹ️ Tab hii ilishageuzwa deni — KES {pay_amount:,.0f} '
+                    f'imerekodiwa kama malipo ya deni ya {tab.customer.name}.'
+                ),
+                'receipt_url': f'/r/{rcpt.token}/',
+                'total': float(tab.total()),
+            })
+
+        # Genuinely already fully settled (or VOID) — idempotent no-op, same
+        # as before, so a double-submit / retry doesn't show a spurious error.
+        return JsonResponse({'ok': True, 'already_settled': True, 'total': float(tab.total())})
 
     # Partial settle: optional entry_ids[] selects which entries to settle now
     raw_ids = request.POST.getlist('entry_ids')
