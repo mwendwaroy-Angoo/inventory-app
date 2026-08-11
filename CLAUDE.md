@@ -5973,4 +5973,11 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   page's own documented intent). Pure frontend fix, no backend/API change, no migration.
   9 new tests (`PettyCashAccountabilityTest`, `LowStockReorderNotificationTest`,
   `FreshStockCountChecklistTest`). One migration (0159, additive). 1724 tests pass (core
-  + accounts).
+  + accounts). **Confirmed live (same day)**: Roy verified item (4) directly on Monsoon
+  Inn (the app's pilot business) — genuine staff accounts can now sell past a keg's
+  target once the toggle is off, no owner intervention needed. Worth noting for future
+  sessions: Roy operates this pilot business himself using multiple real accounts
+  (including Bosco's, an owner-role account) rather than a single dedicated test login —
+  a screenshot from "Bosco's account" during testing is still an owner-tier view for
+  gating purposes (`QS_IS_OWNER` is role-based), not necessarily what a true staff
+  account sees.
