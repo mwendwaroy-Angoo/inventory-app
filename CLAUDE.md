@@ -6050,3 +6050,49 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   by design — it never touches the real stock-adding Transaction, so a real physical
   recount is the correct closing step here, same as every other "balance is wrong for
   reasons that can't be cleanly reconstructed" scenario in this app).
+- Delegated keg management (tap/close) + accountability trail + action-row overflow fix
+  (2026-08-11, live report with screenshots). Roy: a barrel physically ran out mid-shift
+  with no owner present — staff had no way to tap the next sealed barrel or mark the
+  finished one Imekwisha, both `tap_barrel()`/`deplete_barrel()` being strictly owner/
+  manager-only; asked whether this could become a permission. Separately flagged that the
+  action-button row was cramming 5 buttons ("Pima Har... + B... Im... Tupa") into an
+  unreadably squeezed single row on his phone, and asked for the barrel's "opened by/closed
+  by" to be shown directly on the tile. **Permission delegation**: new `UserProfile.
+  can_manage_kegs` (accounts migration 0061, default False — a brand-new gate, opt-in like
+  every other staff-permission toggle except `can_receive_stock`'s backward-compat
+  exception) lets a trusted staffer tap a sealed barrel and deplete a finished one; both
+  endpoints now check `is_owner_or_manager OR can_manage_kegs`, still requiring an open
+  shift for the delegated staffer (same pattern as `record_breakage`/`add_cups`) — matches
+  Roy's own framing that this needs to work mid-shift without the owner physically present.
+  Deliberately does NOT extend to `discard_barrel` (Tupa, a real write-off/loss decision) or
+  `receive_barrel` (Pokea, a supplier-delivery decision) — both stay owner/manager-only,
+  same tier as every other financial-figure correction in this app. New toggle in
+  `staff_permissions.html`, gated on `biz_profile.modules.keg`. **Accountability trail**:
+  `KegBarrel.tapped_by`/`closed_by` (core migration 0160, both nullable FK to `auth.User`)
+  — `tap()` already accepted a `user` param but silently discarded it; now stamps
+  `tapped_by`. `close()` gained a `closed_by` kwarg, threaded through both callers
+  (`discard_barrel`, `deplete_barrel`). `bar_board_api()` now `select_related`s these via a
+  `Prefetch` on `keg_barrels` (avoiding N+1) and surfaces `tapped_by_name` (current tapped
+  barrel) plus `last_closed_by_name` (the item's most-recently-closed barrel, found by
+  `max(closed_at)` across `DEPLETED`/`RETURNED` barrels — so the trail survives the gap
+  between one barrel closing and the next being tapped) — shown on the tile, visible only to
+  whoever can also act on kegs (owner/manager/`can_manage_kegs` staff), matching "who's
+  accountable" to "who can be held accountable." **Action-row overflow fix**: root-caused
+  from the CSS, not guessed — `.keg-owner-btn` had `flex:1; min-width:0`, which lets a flex
+  item shrink to literally nothing before `flex-wrap` ever triggers (wrapping only fires
+  once total CONTENT width exceeds the row, and an item allowed to shrink to 0 never forces
+  that), so 5 buttons all fighting for one row squeezed into unreadable truncated slivers
+  instead of ever wrapping onto a second line. Two-part fix: (1) gave `.keg-owner-btn` a
+  real `min-width:46px` floor (`flex:1 1 46px`) so a row that can't fit every button at a
+  readable size now genuinely wraps; (2) more fundamentally, collapsed the two RARE,
+  owner-only actions (✏️ Hariri cost-edit, 🗑 Tupa write-off) behind a single "⋯" button
+  (`window.openKegMoreMenu`, a small self-positioning popover, same "click-outside-closes"
+  pattern already used elsewhere in this file) — the two EVERYDAY actions (+ Barrel,
+  Imekwisha — now also reachable by `can_manage_kegs` staff) stay directly visible on the
+  main row, cutting the worst case from 5 buttons to 4 (owner: Pima/+Barrel/Imekwisha/⋯) or
+  3 (delegated staff: Pima/+Barrel/Imekwisha — they never see Hariri/Tupa at all, so no ⋯
+  needed for them). 12 new tests (`CanManageKegsPermissionTest`) — tap/deplete permission
+  matrix (owner always, delegated staff with/without shift, plain staff blocked),
+  cross-business isolation, discard/receive regression locks (still owner/manager-only
+  regardless of the new toggle), and the board API's `tapped_by_name`/`last_closed_by_name`
+  fields. Two migrations (accounts 0061, core 0160), both additive.

@@ -4305,6 +4305,20 @@ class KegBarrel(models.Model):
     )
     tapped_at  = models.DateTimeField(null=True, blank=True)
     closed_at  = models.DateTimeField(null=True, blank=True)
+    tapped_by  = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='kegs_tapped',
+        help_text='Who tapped (opened) this barrel — 2026-08-11 live request '
+                   '(Roy): visible on the tile alongside received_by, same '
+                   'accountability trail this app already keeps for every '
+                   'other stock action.',
+    )
+    closed_by = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='kegs_closed',
+        help_text='Who closed this barrel — deplete_barrel() (Imekwisha) or '
+                   'discard() (Tupa), whichever happened.',
+    )
     note       = models.CharField(max_length=120, blank=True)
 
     class Meta:
@@ -4361,13 +4375,15 @@ class KegBarrel(models.Model):
         if self.status == 'SEALED':
             self.status = 'TAPPED'
             self.tapped_at = timezone.now()
-            self.save(update_fields=['status', 'tapped_at'])
+            self.tapped_by = user
+            self.save(update_fields=['status', 'tapped_at', 'tapped_by'])
 
-    def close(self, reason=''):
+    def close(self, reason='', closed_by=None):
         if self.status in ('SEALED', 'TAPPED'):
             self.status = 'RETURNED' if reason else 'DEPLETED'
             self.closed_at = timezone.now()
-            update_fields = ['status', 'closed_at']
+            self.closed_by = closed_by
+            update_fields = ['status', 'closed_at', 'closed_by']
             if reason:
                 self.note = (self.note + ' | ' if self.note else '') + reason
                 update_fields.append('note')

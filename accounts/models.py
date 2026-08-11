@@ -475,6 +475,20 @@ class UserProfile(models.Model):
         help_text='Staff may approve tab orders for customers who already have outstanding debt. Owner-only by default.'
     )
 
+    can_manage_kegs = models.BooleanField(
+        default=False,
+        help_text=(
+            '2026-08-11 live request (Roy — a barrel physically ran out mid-shift with no '
+            'owner present): staff may tap (open) a sealed barrel and mark a TAPPED barrel '
+            'as done (Imekwisha/deplete) on the Bar Board. Owner/manager-only by default — '
+            'grant explicitly for a specific staffer trusted to run the keg counter without '
+            'the owner physically there. Does NOT extend to editing a barrel\'s cost/target '
+            '(Hariri) or writing one off as spoiled/wrong delivery (Tupa) — those stay '
+            'owner/manager-only real financial-loss decisions. Still requires the staffer to '
+            'have an open shift, same as every other staff stock action.'
+        ),
+    )
+
     # ── Manager-only delegated oversight (2026-07-30) ──────────────────
     can_review_petty_cash = models.BooleanField(
         default=False,

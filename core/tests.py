@@ -30496,3 +30496,182 @@ class KitchenRevenueBreakdownTest(TestCase):
         import json as _json
         lines = _json.loads(resp.context['kitchen_revenue_lines'])
         self.assertEqual(lines, [])
+
+
+class CanManageKegsPermissionTest(TestCase):
+    """2026-08-11 live request (Roy — a barrel physically ran out mid-shift
+    with no owner present, staff had no way to tap the next sealed barrel
+    or close the finished one): UserProfile.can_manage_kegs lets a trusted
+    staffer tap/deplete a barrel without full owner/manager status, still
+    gated on an open shift like every other staff stock action. Deliberately
+    does NOT extend to discard_barrel (Tupa) or receive_barrel (Pokea) —
+    those stay owner/manager-only real financial-loss/receiving decisions."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='CMK Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='cmk_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='cmk_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff, business=self.biz, role='staff', can_manage_kegs=False,
+        )
+        # Two separate items — tap_barrel() enforces one TAPPED barrel per
+        # item, so a sealed-to-tap fixture and an already-tapped fixture
+        # can't share one item.
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='CMK-01', unit='Ml', is_keg=True,
+            selling_price=Decimal('80'), cost_price=Decimal('12000'),
+        )
+        self.sealed = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+            status='SEALED',
+        )
+        self.item2 = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Dark',
+            material_no='CMK-02', unit='Ml', is_keg=True,
+            selling_price=Decimal('80'), cost_price=Decimal('12000'),
+        )
+        self.tapped = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.item2,
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+            status='TAPPED',
+        )
+
+    def _open_shift(self, user):
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=user,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+
+    # ── tap_barrel ───────────────────────────────────────────────────────
+
+    def test_owner_can_always_tap(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/bar/tap/{self.sealed.id}/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.sealed.refresh_from_db()
+        self.assertEqual(self.sealed.status, 'TAPPED')
+        self.assertEqual(self.sealed.tapped_by_id, self.owner.id)
+
+    def test_plain_staff_blocked_from_tap(self):
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/bar/tap/{self.sealed.id}/')
+        self.assertEqual(resp.status_code, 403)
+        self.sealed.refresh_from_db()
+        self.assertEqual(self.sealed.status, 'SEALED')
+
+    def test_can_manage_kegs_staff_with_shift_may_tap(self):
+        self.staff_profile.can_manage_kegs = True
+        self.staff_profile.save(update_fields=['can_manage_kegs'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/bar/tap/{self.sealed.id}/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.sealed.refresh_from_db()
+        self.assertEqual(self.sealed.status, 'TAPPED')
+        self.assertEqual(self.sealed.tapped_by_id, self.staff.id)
+
+    def test_can_manage_kegs_staff_without_shift_blocked(self):
+        self.staff_profile.can_manage_kegs = True
+        self.staff_profile.save(update_fields=['can_manage_kegs'])
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/stock/bar/tap/{self.sealed.id}/')
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json().get('shift_required'))
+        self.sealed.refresh_from_db()
+        self.assertEqual(self.sealed.status, 'SEALED')
+
+    # ── deplete_barrel ───────────────────────────────────────────────────
+
+    def test_owner_can_always_deplete(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/bar/deplete/{self.tapped.id}/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.tapped.refresh_from_db()
+        self.assertEqual(self.tapped.status, 'DEPLETED')
+        self.assertEqual(self.tapped.closed_by_id, self.owner.id)
+
+    def test_plain_staff_blocked_from_deplete(self):
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/bar/deplete/{self.tapped.id}/')
+        self.assertEqual(resp.status_code, 403)
+        self.tapped.refresh_from_db()
+        self.assertEqual(self.tapped.status, 'TAPPED')
+
+    def test_can_manage_kegs_staff_with_shift_may_deplete(self):
+        self.staff_profile.can_manage_kegs = True
+        self.staff_profile.save(update_fields=['can_manage_kegs'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/bar/deplete/{self.tapped.id}/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.tapped.refresh_from_db()
+        self.assertEqual(self.tapped.status, 'DEPLETED')
+        self.assertEqual(self.tapped.closed_by_id, self.staff.id)
+
+    def test_can_manage_kegs_staff_without_shift_blocked_from_deplete(self):
+        self.staff_profile.can_manage_kegs = True
+        self.staff_profile.save(update_fields=['can_manage_kegs'])
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/stock/bar/deplete/{self.tapped.id}/')
+        self.assertEqual(resp.status_code, 403)
+        self.tapped.refresh_from_db()
+        self.assertEqual(self.tapped.status, 'TAPPED')
+
+    # ── discard_barrel / receive_barrel stay owner/manager-only ──────────
+
+    def test_can_manage_kegs_staff_still_blocked_from_discard(self):
+        self.staff_profile.can_manage_kegs = True
+        self.staff_profile.save(update_fields=['can_manage_kegs'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/bar/discard/{self.tapped.id}/', {'reason': 'test'})
+        self.assertEqual(resp.status_code, 403)
+        self.tapped.refresh_from_db()
+        self.assertEqual(self.tapped.status, 'TAPPED')
+
+    def test_can_manage_kegs_staff_still_blocked_from_receive(self):
+        self.staff_profile.can_manage_kegs = True
+        self.staff_profile.save(update_fields=['can_manage_kegs'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post('/stock/bar/receive/', {
+            'item_id': self.item.id, 'qty': '2', 'cost_price': '12000',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    # ── cross-business isolation ──────────────────────────────────────────
+
+    def test_cross_business_barrel_rejected(self):
+        other_biz = Business.objects.create(name='Other CMK Biz')
+        other_owner = User.objects.create_user(username='cmk_other', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        self.client.force_login(other_owner)
+        resp = self.client.post(f'/stock/bar/tap/{self.sealed.id}/')
+        self.assertEqual(resp.status_code, 404)
+
+    # ── accountability trail surfaced on the board API ────────────────────
+
+    def test_board_api_shows_tapped_by_and_last_closed_by(self):
+        self.tapped.tapped_by = self.owner
+        self.tapped.save(update_fields=['tapped_by'])
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/bar/board/')
+        data = resp.json()
+        row = next(k for k in data['kegs'] if k['item_id'] == self.item2.id)
+        self.assertEqual(row['tapped_by_name'], 'cmk_owner')
+
+        # Close it, then confirm the item's no-tap tile shows last_closed_by_name
+        self.tapped.status = 'DEPLETED'
+        self.tapped.closed_at = timezone.now()
+        self.tapped.closed_by = self.staff
+        self.tapped.save(update_fields=['status', 'closed_at', 'closed_by'])
+        resp2 = self.client.get('/stock/bar/board/')
+        data2 = resp2.json()
+        row2 = next(k for k in data2['kegs'] if k['item_id'] == self.item2.id)
+        self.assertEqual(row2['last_closed_by_name'], 'cmk_staff')

@@ -241,7 +241,13 @@ def bar_board_api(request):
     keg_items = (
         Item.objects
         .filter(store__business=business, is_keg=True)
-        .prefetch_related('portion_presets', 'keg_barrels')
+        .prefetch_related(
+            'portion_presets',
+            Prefetch(
+                'keg_barrels',
+                queryset=KegBarrel.objects.select_related('tapped_by', 'closed_by'),
+            ),
+        )
         .order_by('description')
     )
 
@@ -254,6 +260,19 @@ def bar_board_api(request):
         primary = tapped[0] if tapped else None
         # ordering on KegBarrel is -received_on, -id so last element is oldest
         next_sealed = sealed[-1] if sealed else None
+
+        # 2026-08-11 live request (Roy — "beside the barrel we should see
+        # opened by who and closed by who"): tapped_by on the currently
+        # active barrel; last_closed_by on the most recently closed one for
+        # this item, so the accountability trail survives even between kegs.
+        closed_ones = [
+            b for b in all_barrels
+            if b.status in ('DEPLETED', 'RETURNED') and b.closed_at
+        ]
+        last_closed = max(closed_ones, key=lambda b: b.closed_at) if closed_ones else None
+
+        def _who(user):
+            return (user.get_full_name() or user.username) if user else ''
 
         presets = [
             {
@@ -294,6 +313,9 @@ def bar_board_api(request):
             'next_sealed_tare':     float(next_sealed.tare_weight_kg) if next_sealed else 0.0,
             # K5.A — envelope + depletion control flags
             'envelope_reached':    (float(primary.remaining_envelope()) <= 0) if primary else False,
+            # 2026-08-11 — accountability trail
+            'tapped_by_name':      _who(primary.tapped_by) if primary else '',
+            'last_closed_by_name': _who(last_closed.closed_by) if last_closed else '',
         })
 
     open_tabs_qs = BarTab.objects.filter(business=business, status='OPEN')
@@ -814,6 +836,7 @@ def bar_board(request):
     return render(request, 'core/bar/bar_board.html', {
         'is_owner': is_owner,
         'is_waitress': up.role == 'waitress',
+        'can_manage_kegs': is_owner or getattr(up, 'can_manage_kegs', False),
         'business': business,
         'success_data': success_data,
         'current_user_id': request.user.id,
@@ -933,10 +956,28 @@ def receive_barrel(request):
 @login_required
 @require_POST
 def tap_barrel(request, barrel_id):
-    """Owner/manager opens (taps) a sealed barrel. Enforces one TAPPED barrel per item."""
+    """Opens (taps) a sealed barrel. Enforces one TAPPED barrel per item.
+
+    2026-08-11 live request (Roy — a barrel ran out mid-shift with no owner
+    present, staff had no way to tap the next sealed one): owner/manager
+    always allowed; a staffer with UserProfile.can_manage_kegs=True may also
+    tap, but still needs an open shift, same as every other staff stock
+    action (record_breakage, add_cups) — matches the existing pattern
+    rather than inventing a shift-exempt staff path.
+    """
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner_or_manager', False):
-        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not is_owner:
+        if not getattr(up, 'can_manage_kegs', False):
+            return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
 
     barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
 
@@ -1264,7 +1305,7 @@ def discard_barrel(request, barrel_id):
     # 'Imerudishwa' (returned) is the correct verb here, kept fully in Swahili for
     # consistency with the rest of the app's default reasons.
     reason = (request.POST.get('reason') or 'Imerudishwa — sababu haikuelezwa').strip()
-    barrel.close(reason=reason)
+    barrel.close(reason=reason, closed_by=request.user)
     return JsonResponse({'ok': True, 'status': barrel.status})
 
 
@@ -1273,12 +1314,27 @@ def discard_barrel(request, barrel_id):
 def deplete_barrel(request, barrel_id):
     """K5.A — Mark a TAPPED barrel as DEPLETED (no wastage) for non-weighing bars.
 
-    Called from the 'Funga Pipa' prompt when the revenue envelope is reached.
+    Called from the 'Funga Pipa' prompt when the revenue envelope is reached,
+    or directly via the tile's own 'Imekwisha' button.
     Only applies when the barrel is still TAPPED — if already DEPLETED/DISCARDED, no-op.
+
+    2026-08-11 live request (Roy): same can_manage_kegs delegation as
+    tap_barrel() — a trusted staffer may close a physically-finished barrel
+    without the owner present, still gated on having an open shift.
     """
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner_or_manager', False):
-        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not is_owner:
+        if not getattr(up, 'can_manage_kegs', False):
+            return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
 
     barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
 
@@ -1287,7 +1343,8 @@ def deplete_barrel(request, barrel_id):
 
     barrel.status    = 'DEPLETED'
     barrel.closed_at = timezone.now()
-    barrel.save(update_fields=['status', 'closed_at'])
+    barrel.closed_by = request.user
+    barrel.save(update_fields=['status', 'closed_at', 'closed_by'])
     from .models import _refresh_keg_baseline
     _refresh_keg_baseline(barrel)
     return JsonResponse({'ok': True, 'status': 'DEPLETED'})

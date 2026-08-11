@@ -217,6 +217,27 @@
         </div>
         {% endif %}
 
+        <!-- Keg management delegation (2026-08-11) -->
+        {% if biz_profile.modules.keg %}
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-3" style="margin-top:1rem;padding-top:1rem;border-top:1px solid #2a2a2a;">
+            <div>
+                <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                    🛢 {% trans 'Manage Kegs (Tap / Close a Barrel)' %}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                    {% trans "Allow this staff member to tap (open) a sealed barrel and mark a finished one Imekwisha on the Bar Board, without the owner present. Does not extend to editing a barrel's cost/target or writing one off as spoiled — those stay owner/manager-only. Off by default." %}
+                </div>
+            </div>
+            <div class="form-check form-switch" style="padding-top:.25rem;">
+                <input type="checkbox" name="can_manage_kegs"
+                       id="can_manage_kegs"
+                       class="form-check-input" role="switch"
+                       style="width:3rem; height:1.5rem; cursor:pointer;"
+                       {% if staff_profile.can_manage_kegs %}checked{% endif %}>
+            </div>
+        </div>
+        {% endif %}
+
         {% if not biz_profile.modules.kitchen and not biz_profile.modules.keg %}
         <!-- Fallback row when neither module is active (no cross-module toggles needed) -->
         {% endif %}

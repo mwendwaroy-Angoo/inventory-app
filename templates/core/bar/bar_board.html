@@ -86,9 +86,16 @@
   flex-wrap: wrap;
 }
 .keg-owner-btn {
-  flex: 1;
-  min-width: 0;
-  padding: 3px 0;
+  /* 2026-08-11 (Roy, real screenshot — "Har... + B... Im... Tupa" squeezed
+     into one unreadable row): min-width:0 let flex-shrink squash every
+     button to near-nothing before flex-wrap ever kicked in, since wrapping
+     only triggers once the row's CONTENT width exceeds the container — a
+     button that's allowed to shrink to 0 never forces that. A real
+     min-width floor means a row that can't fit every button at a readable
+     size wraps onto a second line instead of illegibly compressing. */
+  flex: 1 1 46px;
+  min-width: 46px;
+  padding: 3px 4px;
   border: 1px solid #3a3a3a;
   background: transparent;
   color: #b0b0b0;
@@ -97,12 +104,6 @@
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s;
   white-space: nowrap;
-  /* Untapped-keg tile row ("Hariri" + "Fungua Barrel (N sealed)") measured
-     with zero horizontal slack at narrow widths — nowrap text with no
-     overflow guard visually spills past a flex-shrunk button's own edge
-     and overlaps its neighbour instead of wrapping. Ellipsis-truncate as a
-     safety net; buttons never had visible overflow before this, so no
-     legitimate label is ever actually hidden in normal use. */
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1863,6 +1864,12 @@
   /* ── Constants from template context ───────────────────── */
   var KegRevMult  = {{ business.keg_revenue_multiplier }};
   var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
+  // 2026-08-11 live request (Roy — a barrel ran out mid-shift with no owner
+  // present): a staffer with UserProfile.can_manage_kegs=True may tap a new
+  // barrel and mark a finished one Imekwisha, WITHOUT the broader owner/
+  // manager gate (Hariri cost-edit and Tupa write-off stay owner-only —
+  // see the QS_IS_OWNER checks kept alongside QS_CAN_MANAGE_KEGS below).
+  var QS_CAN_MANAGE_KEGS = {% if can_manage_kegs %}true{% else %}false{% endif %};
   var CAN_AUTH_TAB = {% if is_owner or user.userprofile.can_authorize_tab_accumulation %}true{% else %}false{% endif %};
   // 2026-08-06 live request (Monsoon Inn) — a waitress may settle tabs on
   // either counter but must never place a debt; hide "Geuza Deni" for her
@@ -2111,36 +2118,46 @@
 
       // Action buttons:
       // • Pima — visible to ALL staff (staff do shift weigh-ins too)
-      // • Hariri, + Barrel, Tupa — owner only
+      // • + Barrel (tap), Imekwisha (deplete) — owner/manager, OR a staffer
+      //   with can_manage_kegs=True and an open shift (2026-08-11)
+      // • Hariri (cost/target edit), Tupa (write-off) — owner/manager only,
+      //   always — real financial-figure decisions, not delegated
+      // 2026-08-11 live report (Roy — screenshot showed 5 buttons ("Pima
+      // Har... + B... Im... Tupa") squeezed into one row, truncated
+      // unreadable on his phone): the row was too full-featured for a
+      // half-width mobile tile. Rather than just wrap it onto more rows,
+      // the two RARE, owner-only actions (Hariri cost-edit, Tupa write-off)
+      // now collapse behind a single "⋯" button (window.openKegMoreMenu) —
+      // the two everyday actions (+Barrel / Imekwisha, now also reachable
+      // by a can_manage_kegs staffer) stay directly visible, one tap away.
+      var canManageBarrel = QS_IS_OWNER || QS_CAN_MANAGE_KEGS;
       var actionHtml = '';
       if (hasTap) {
         actionHtml = '<div class="keg-owner-actions">';
         // Pima: everyone
         actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openWeighModal(' + kg.item_id + ')">Pima</button>';
-        if (QS_IS_OWNER) {
-          actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openEditModal(' +
-            kg.tapped_barrel_id + ',\'TAPPED\',' + kg.tapped_barrel_cost + ',' + kg.tapped_barrel_target +
-            ',0,0,\'' + (kg.keg_type || '') + '\')">Hariri</button>';
-          if (kg.next_sealed_barrel_id) {
-            actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openTapModal(' +
-              kg.item_id + ',' + kg.next_sealed_barrel_id + ')">+ Barrel</button>';
-          }
+        if (canManageBarrel && kg.next_sealed_barrel_id) {
+          actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openTapModal(' +
+            kg.item_id + ',' + kg.next_sealed_barrel_id + ')">+ Barrel</button>';
+        }
+        if (canManageBarrel) {
           actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.markBarrelDepleted(' +
             kg.item_id + ',' + kg.tapped_barrel_id + ')">Imekwisha</button>';
-          actionHtml += '<button class="keg-owner-btn btn-rs" onclick="event.stopPropagation();window.openDiscardModal(' +
-            kg.item_id + ',' + kg.tapped_barrel_id + ',this)">Tupa</button>';
+        }
+        if (QS_IS_OWNER) {
+          actionHtml += '<button class="keg-owner-btn" style="flex:0 0 auto;padding:3px 8px;" ' +
+            'onclick="window.openKegMoreMenu(' + kg.item_id + ', event)">⋯</button>';
         }
         actionHtml += '</div>';
-      } else if (kg.next_sealed_barrel_id && QS_IS_OWNER) {
+      } else if (kg.next_sealed_barrel_id && canManageBarrel) {
         actionHtml = '<div class="keg-owner-actions">' +
-          '<button class="keg-owner-btn" onclick="event.stopPropagation();window.openEditModal(' +
-            kg.next_sealed_barrel_id + ',\'SEALED\',' +
-            kg.next_sealed_cost + ',' + kg.next_sealed_target + ',' +
-            kg.next_sealed_gross + ',' + kg.next_sealed_tare +
-            ',\'' + (kg.keg_type || '') + '\')">Hariri</button>' +
           '<button class="keg-owner-btn" style="flex:unset;padding:3px 10px;" ' +
           'onclick="event.stopPropagation();window.openTapModal(' + kg.item_id + ',' + kg.next_sealed_barrel_id + ')">' +
           'Fungua Barrel (' + kg.sealed_barrels + ' sealed)</button>' +
+          (QS_IS_OWNER
+            ? '<button class="keg-owner-btn" style="flex:0 0 auto;padding:3px 8px;" ' +
+              'onclick="window.openKegMoreMenu(' + kg.item_id + ', event)">⋯</button>'
+            : '') +
           '</div>';
       }
 
@@ -2194,6 +2211,9 @@
               '<div class="keg-name">' + kg.name + typeBadge + '</div>' +
               '<div class="keg-remaining">KES ' + fmt(kg.remaining) + '</div>' +
               '<div class="keg-meta">' + kg.net_liters + ' L' + (_isOwner ? ' · Target ' + fmt(kg.target_open) : '') + badge + '</div>' +
+              (canManageBarrel && kg.tapped_by_name
+                ? '<div class="keg-meta" style="font-size:.65rem;">Alifungua: ' + kg.tapped_by_name + '</div>'
+                : '') +
               bottomWarn +
               '<div class="mt-2">' + presetChips + '</div>' +
             '</div>' +
@@ -2215,6 +2235,9 @@
             ? kg.sealed_barrels + ' barrel(s) sealed — bonyeza Fungua'
             : 'Hakuna barrel') +
           '</div>' +
+          (canManageBarrel && kg.last_closed_by_name
+            ? '<div style="color:#888; font-size:.65rem;">Ilifungwa (Imekwisha) na: ' + kg.last_closed_by_name + '</div>'
+            : '') +
           '<div class="mt-2">' + presetChips + '</div>' +
           actionHtml + noTapRestockBtn +
           '</div></div>';
@@ -2721,6 +2744,74 @@
           alert(d.error || 'Hitilafu ya kufunga barrel.');
         }
       });
+  };
+
+  /* ════════════════════════════════════════════════════════
+     "⋯" MORE MENU — Hariri (cost/target edit) + Tupa (write-off),
+     collapsed off the main action row (2026-08-11, see the comment
+     above canManageBarrel in renderKegs()). Owner-only, matching the
+     buttons it replaces — no separate permission check needed here
+     since the "⋯" button itself only ever renders for QS_IS_OWNER.
+  ════════════════════════════════════════════════════════ */
+  window.openKegMoreMenu = function (itemId, ev) {
+    ev.stopPropagation();
+    var existing = document.getElementById('keg-more-menu');
+    if (existing) existing.remove();
+    var kg = _boardData[itemId];
+    if (!kg) return;
+
+    var menu = document.createElement('div');
+    menu.id = 'keg-more-menu';
+    menu.style.cssText = 'position:fixed;z-index:2000;background:#1a1a1a;' +
+      'border:1px solid #444;border-radius:8px;padding:.35rem;' +
+      'box-shadow:0 4px 14px rgba(0,0,0,.5);min-width:130px;' +
+      'display:flex;flex-direction:column;gap:.3rem;';
+
+    var editBtn = document.createElement('button');
+    editBtn.className = 'keg-owner-btn';
+    editBtn.style.width = '100%';
+    editBtn.textContent = '✏️ Hariri';
+    editBtn.onclick = function (e) {
+      e.stopPropagation();
+      menu.remove();
+      if (kg.tapped_barrel_id) {
+        window.openEditModal(kg.tapped_barrel_id, 'TAPPED', kg.tapped_barrel_cost,
+          kg.tapped_barrel_target, 0, 0, kg.keg_type || '');
+      } else if (kg.next_sealed_barrel_id) {
+        window.openEditModal(kg.next_sealed_barrel_id, 'SEALED', kg.next_sealed_cost,
+          kg.next_sealed_target, kg.next_sealed_gross, kg.next_sealed_tare, kg.keg_type || '');
+      }
+    };
+    menu.appendChild(editBtn);
+
+    if (kg.tapped_barrel_id) {
+      var discardBtn = document.createElement('button');
+      discardBtn.className = 'keg-owner-btn btn-rs';
+      discardBtn.style.width = '100%';
+      discardBtn.textContent = '🗑 Tupa';
+      discardBtn.onclick = function (e) {
+        e.stopPropagation();
+        menu.remove();
+        window.openDiscardModal(kg.item_id, kg.tapped_barrel_id, discardBtn);
+      };
+      menu.appendChild(discardBtn);
+    }
+
+    var rect = ev.currentTarget.getBoundingClientRect();
+    document.body.appendChild(menu);
+    // Position after append so we can read the menu's own rendered width.
+    var left = rect.left - (menu.offsetWidth - rect.width);
+    menu.style.top  = (rect.bottom + 4) + 'px';
+    menu.style.left = Math.max(4, Math.min(left, window.innerWidth - menu.offsetWidth - 4)) + 'px';
+
+    setTimeout(function () {
+      document.addEventListener('click', function closeMenu(e) {
+        if (!menu.contains(e.target)) {
+          menu.remove();
+          document.removeEventListener('click', closeMenu);
+        }
+      });
+    }, 0);
   };
 
   /* ════════════════════════════════════════════════════════
