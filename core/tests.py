@@ -28306,6 +28306,77 @@ class PresetStockTrackingTetherTest(TestCase):
         self.assertNotIn('_received', full_leg2)
         self.assertNotIn('_sold', full_leg2)
 
+    def test_hidden_presets_excludes_currently_visible_ones(self):
+        """2026-08-11 — a preset that IS still sellable (Full/Half Chicken
+        Leg here) must never also appear in hidden_presets — only Wing
+        (never received at all, correctly hidden from day one) does."""
+        self._receive_full_legs(qty=12, cost=200)
+        resp = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        hidden_labels = [p['label'] for p in kuku['hidden_presets']]
+        self.assertNotIn('Full Chicken Leg', hidden_labels)
+        self.assertNotIn('Half Chicken Leg', hidden_labels)
+        self.assertIn('Wing', hidden_labels)
+
+    def test_hidden_presets_shows_real_numbers_for_owner_when_all_presets_vanish(self):
+        """2026-08-11 live report (Roy): "why are the presets not showing up
+        when i press the Kuku tile" — this is the exact scenario
+        test_selling_enough_half_legs_hides_both_presets already covers for
+        `presets` (both go empty); hidden_presets must surface the real
+        received/sold/remaining figures behind that wipe-out instead of
+        leaving the owner with nothing to look at."""
+        self._receive_full_legs(qty=1, cost=200)
+        import json as _json
+        for _i in range(2):
+            cart = _json.dumps([{
+                'item_id': self.kuku.id, 'preset_id': self.half_leg.id,
+                'qty': 0.5, 'amount': 150, 'description': 'Kuku — Half Chicken Leg',
+            }])
+            resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+            self.assertTrue(resp.json().get('ok'), resp.json())
+
+        resp2 = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp2.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        # The sell-tile list is still correctly empty (unchanged behavior).
+        self.assertEqual(kuku['presets'], [])
+        hidden_labels = [p['label'] for p in kuku['hidden_presets']]
+        self.assertIn('Full Chicken Leg', hidden_labels)
+        self.assertIn('Half Chicken Leg', hidden_labels)
+        full_leg = next(p for p in kuku['hidden_presets'] if p['label'] == 'Full Chicken Leg')
+        self.assertEqual(full_leg['_received'], 1.0)
+        self.assertEqual(full_leg['_sold'], 1.0)
+        self.assertEqual(full_leg['_remaining'], 0.0)
+        half_leg = next(p for p in kuku['hidden_presets'] if p['label'] == 'Half Chicken Leg')
+        self.assertEqual(half_leg['tethered_to'], 'Full Chicken Leg')
+
+    def test_hidden_presets_only_lists_backdated_context_via_real_sold_total(self):
+        """Roy's own added context on the live report: the presets vanished
+        for the same receipt he'd made BACKDATED sales against for a
+        previous date. Backdated sales must count toward `_sold` exactly
+        like an ordinary sale (they're real depletion, whenever recorded) —
+        locked in here so a future session doesn't "fix" this to exclude
+        backdated transactions from the tally, which would be wrong."""
+        self._receive_full_legs(qty=2, cost=200)
+        import json as _json
+        from django.utils import timezone
+        cart = _json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': self.full_leg.id,
+            'qty': 1, 'amount': 250, 'description': 'Kuku — Full Chicken Leg',
+        }])
+        yesterday = (timezone.localdate() - timezone.timedelta(days=1)).isoformat()
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash',
+            'backdated_at': yesterday + 'T12:00',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        resp2 = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp2.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        full_leg = next(p for p in kuku['presets'] if p['label'] == 'Full Chicken Leg')
+        self.assertEqual(full_leg['_sold'], 1.0)
+
 
 class KitchenBackdatedCheckoutTest(TestCase):
     """2026-08-09 live urgent request (Roy) — Kitchen Board's own checkout

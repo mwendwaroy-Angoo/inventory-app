@@ -334,14 +334,44 @@ def kitchen_board(request):
                     d['_sold'] = float(_sold_by_preset.get(anchor) or 0)
                 return d
 
-            presets = [
-                _preset_dict(p)
-                for p in _all_item_presets
-                if item.id not in items_with_preset_receipts or (
+            # 2026-08-11 live report (Roy): "why are the presets not showing
+            # up when i press the Kuku tile" — traced to every configured
+            # preset's own received-minus-sold anchor tally going to zero at
+            # once (Roy's own added context: he'd recorded BACKDATED sales
+            # against this same receipt for a previous date — those count
+            # toward `_sold_by_preset` exactly like any other sale, so a
+            # large backdated volume can legitimately exhaust the tracked
+            # anchor even while the item's real physical balance still shows
+            # stock). The 2026-08-09 diagnostic (`_received`/`_sold` on each
+            # preset) only ever rendered for presets that were STILL VISIBLE
+            # — the one moment it's needed most, when every preset hides at
+            # once, there was nothing on screen to look at. `hidden_presets`
+            # is the owner-only fix: every preset the gate filtered OUT,
+            # with its own received/sold/remaining numbers, so a full wipe-
+            # out can be read from real figures instead of guessed at.
+            # Deliberately does not change what staff can sell — `presets`
+            # (below) keeps the exact same gate as before.
+            def _is_visible(p):
+                return item.id not in items_with_preset_receipts or (
                     float(_received_by_preset.get(p.stock_tracking_anchor_id()) or 0)
                     - float(_sold_by_preset.get(p.stock_tracking_anchor_id()) or 0) > 0
                 )
-            ]
+
+            presets = [_preset_dict(p) for p in _all_item_presets if _is_visible(p)]
+            hidden_presets = []
+            if is_owner and item.id in items_with_preset_receipts:
+                for p in _all_item_presets:
+                    if _is_visible(p):
+                        continue
+                    anchor = p.stock_tracking_anchor_id()
+                    received = float(_received_by_preset.get(anchor) or 0)
+                    sold = float(_sold_by_preset.get(anchor) or 0)
+                    hidden_presets.append({
+                        'id': p.id, 'label': p.label,
+                        'tethered_to': p.tracks_stock_of.label if p.tracks_stock_of_id else None,
+                        '_received': received, '_sold': sold,
+                        '_remaining': round(received - sold, 3),
+                    })
             if item.is_kitchen_batch:
                 # Kitchen batch item (chips, stew, ugali) — KitchenBatch P&L
                 open_batches = list(
@@ -404,6 +434,13 @@ def kitchen_board(request):
                     'selling_price': float(item.selling_price or 0),
                     'balance': balance,
                     'presets': presets,
+                    # 2026-08-11 — owner-only diagnostic: every preset the
+                    # cut-visibility gate filtered OUT of `presets` above,
+                    # with its own received/sold/remaining numbers. Empty
+                    # unless this item has ever had a preset-attributed
+                    # receipt AND at least one of its presets is currently
+                    # hidden. See the comment above `_is_visible()`.
+                    'hidden_presets': hidden_presets,
                     # 2026-08-09 — the RECEIVE modal's "which cut did you get
                     # today?" picker must offer EVERY configured preset (e.g.
                     # Wing, currently out of stock and so filtered out of the

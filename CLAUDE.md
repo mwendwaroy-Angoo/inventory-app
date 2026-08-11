@@ -5797,3 +5797,39 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   incomplete and the investigation needs to resume from the continuous disk-write-activity
   angle (session-table writes, per `SESSION_SAVE_EVERY_REQUEST=True`) or something not yet
   identified — if they stop, this closes the incident.
+- Hidden-presets diagnostic (2026-08-11), live report: "why are the presets not showing up
+  when i press the Kuku tile" — tapping it added a bare "Kuku — KES 0" line straight to
+  cart with no picker at all. Traced (not guessed): the tile's own displayed price was a
+  flat "KES 0" rather than a range, which only happens when `item.presets.length === 0` —
+  `tileClick()`'s three-way branch (0/1/many presets) falls to the "plain item at
+  `selling_price`" case, and Kuku's own base `selling_price` has always been KES 0 since
+  all real pricing lives on its presets. Root cause: the 2026-08-05/09 cut-visibility gate
+  (`kitchen_board()`) had hidden EVERY configured preset on Kuku at once — each one's own
+  received-minus-sold anchor tally (tracked separately from the item's overall balance,
+  see the 2026-08-09 CLAUDE.md entries) had gone to zero or below. Roy's own added context
+  — he'd recorded BACKDATED sales against this same receipt for a previous date — is a
+  legitimate, non-buggy mechanism for this: a backdated sale counts toward `_sold_by_
+  preset` exactly like a same-day one (real depletion is real depletion regardless of when
+  it's entered), so a good volume of catch-up postings can genuinely exhaust the tracked
+  anchor. Roy explicitly asked to see the real numbers first, one step at a time, before
+  any fix — the 2026-08-09 diagnostic (`_received`/`_sold` on each preset) only ever
+  rendered for presets that were STILL VISIBLE, so the one moment it mattered most (every
+  preset hidden at once) left nothing on screen to look at. New `hidden_presets` list
+  (owner/manager only, `core/kitchen_views.py::kitchen_board()`) — every preset the gate
+  filtered OUT, with its own `_received`/`_sold`/`_remaining` numbers and `tethered_to`
+  (which anchor a tethered preset like Half Chicken Leg tracks). Deliberately additive —
+  the staff-facing `presets` list (what's actually sellable) is completely unchanged, only
+  computed via an extracted `_is_visible(p)` helper so the two lists can never drift apart.
+  Kitchen Board: a small "🔍 N zimefichwa" badge (owner/manager only) appears on any tile
+  with hidden presets, opening a plain `alert()` (matching this file's existing convention
+  for simple owner-only read-only displays) listing each hidden preset's label, tether
+  target, and the three numbers, plus a one-line explanation of why it's hidden. 6 new
+  tests added to `PresetStockTrackingTetherTest` — empty when nothing's hidden, correct
+  numbers surfaced for the exact both-presets-vanish scenario Roy hit, and a regression
+  lock that backdated sales correctly count toward `_sold` (so a future session doesn't
+  "fix" this to exclude them, which would be wrong). No migrations. 1700 tests pass (core +
+  accounts). Next: once Roy taps the diagnostic and reports back the real numbers, decide
+  together whether this is expected depletion (nothing to fix) or a genuine data issue
+  needing a correction — and separately, the tile still lets a sale through as a bare
+  zero-price, preset-less line when nothing is visible, which is its own real bug flagged
+  but deliberately not fixed yet, per Roy's "one step at a time."

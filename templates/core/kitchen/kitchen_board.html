@@ -1953,6 +1953,18 @@
         '<button class="btn btn-sm" style="width:100%;margin-top:.3rem;font-size:.68rem;padding:.15rem .3rem;' +
         'background:rgba(255,255,255,.04);border:1px solid #555;border-radius:5px;color:#b0b0b0;cursor:pointer;" ' +
         'onclick="event.stopPropagation(); kbDepletePortionItem(' + item.id + ',\'' + (item.name || '').replace(/'/g, "\\'") + '\')">✓ Imekwisha</button>';
+      // 2026-08-11 live request (Roy): "why are the presets not showing up
+      // when i press the Kuku tile" — when the cut-visibility gate has
+      // hidden every configured preset at once, the tile used to give zero
+      // indication anything was even configured. This owner-only badge
+      // surfaces the real received/sold numbers behind the hidden presets
+      // (see kitchen_board()'s hidden_presets) so a wipe-out can be READ,
+      // not guessed at.
+      var hiddenDiagBtn = (IS_OWNER && item.hidden_presets && item.hidden_presets.length)
+        ? '<button class="btn btn-sm" style="width:100%;margin-top:.3rem;font-size:.68rem;padding:.15rem .3rem;' +
+          'background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.35);border-radius:5px;color:#5da8f0;cursor:pointer;" ' +
+          'onclick="event.stopPropagation(); showHiddenPresetsDiag(' + item.id + ')">🔍 ' + item.hidden_presets.length + ' zimefichwa</button>'
+        : '';
       html += '<div class="kb-tile' + (oos?' out-of-stock':'') + '" onclick="tileClick(' + item.id + ')"' +
               ' data-item-id="' + item.id + '" style="position:relative;">' +
               customPriceBtn +
@@ -1961,6 +1973,7 @@
               '<div class="kb-tile-stock ' + stockCls + '">' + stockLbl + '</div>' +
               restockBtn +
               depleteBtn +
+              hiddenDiagBtn +
               '</div>';
     });
     grid.innerHTML = html;
@@ -2386,6 +2399,29 @@
     } else {
       addToCart({item_id: item.id, description: item.name, amount: item.selling_price, qty: 1});
     }
+  };
+
+  // 2026-08-11 live request (Roy) — read-only diagnostic for when the
+  // cut-visibility gate has hidden every preset on an item at once. Plain
+  // alert() to match this file's existing convention for simple owner-only
+  // read-only displays (e.g. the raw-material cost editor's prompt()) —
+  // this is a number-checking tool, not a data-entry flow, so nothing more
+  // than that is needed.
+  window.showHiddenPresetsDiag = function(itemId) {
+    var item = _portionItems.find(function(i){ return i.id === itemId; });
+    if (!item || !item.hidden_presets || !item.hidden_presets.length) return;
+    var lines = ['Presets zilizofichwa kwa ' + item.name + ':', ''];
+    item.hidden_presets.forEach(function(p){
+      var tether = p.tethered_to ? (' (inafuata ' + p.tethered_to + ')') : '';
+      lines.push(
+        p.label + tether + ':\n' +
+        '  Imepokewa: ' + p._received + '\n' +
+        '  Imeuzwa: ' + p._sold + '\n' +
+        '  Iliyobaki: ' + p._remaining
+      );
+    });
+    lines.push('', 'Mfuko unafichwa kwa sababu "Iliyobaki" iko chini/sawa na 0.');
+    alert(lines.join('\n'));
   };
 
   window.batchTileClick = function(itemId) {
