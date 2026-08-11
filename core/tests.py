@@ -18523,6 +18523,37 @@ class RecentSettledTabsStationScopingTest(TestCase):
         self.assertIn('Kitchen Cust', names)
 
 
+class OfflinePageTest(TestCase):
+    """2026-08-11 live report — Roy: the app showed "You're Offline / lost
+    your internet connection" while YouTube streamed fine on the same
+    phone — proving the message was actively wrong, since a `fetch()` to
+    THIS server can fail (DNS/TLS hiccup, timeout reaching Render) for
+    reasons that have nothing to do with the phone's general internet
+    being down. The offline page no longer confidently blames "no
+    internet"; it also now polls /health/ in the background and
+    auto-reloads once a real connection succeeds instead of requiring a
+    manual tap."""
+
+    def test_offline_page_renders_and_no_longer_blames_internet(self):
+        resp = self.client.get('/offline/')
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        self.assertNotIn("lost your internet connection", body)
+        self.assertIn("Couldn", body)  # "Couldn't Reach Duka Mwecheche"
+
+    def test_offline_page_polls_health_endpoint_for_auto_retry(self):
+        resp = self.client.get('/offline/')
+        body = resp.content.decode()
+        self.assertIn('/health/', body)
+        self.assertIn('setInterval', body)
+
+    def test_health_endpoint_is_unauthenticated_and_lightweight(self):
+        """The offline page's background poll must never require login —
+        that's exactly the state a user hitting this page is often in."""
+        resp = self.client.get('/health/')
+        self.assertEqual(resp.status_code, 200)
+
+
 class CsrfFailureViewTest(TestCase):
     """2026-07-28 live report — Roy: ~80% of client logins hit Django's raw,
     unrecoverable default CSRF-failure page, with "clear phone cache" as the

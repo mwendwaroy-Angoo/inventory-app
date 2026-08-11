@@ -1,4 +1,4 @@
-const CACHE_NAME = 'duka-v11';
+const CACHE_NAME = 'duka-v12';
 const OFFLINE_URL = '/offline/';
 
 const PRECACHE_URLS = [
