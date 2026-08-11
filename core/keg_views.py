@@ -991,8 +991,17 @@ def tap_barrel(request, barrel_id):
         business=up.business, item=barrel.item, status='TAPPED'
     ).exists()
     if already_tapped:
+        # 2026-08-11 live report (Roy — staff confused by this exact message):
+        # made it explicitly actionable, naming the button to press, instead
+        # of a vague "close it first" with no pointer to how.
         return JsonResponse(
-            {'ok': False, 'error': 'Kuna barrel inayouza tayari. Imarishe kwanza kabla ya kufungua nyingine.'},
+            {
+                'ok': False,
+                'error': (
+                    'Kuna barrel inayouza tayari kwa bidhaa hii. Bonyeza "✓ Imekwisha" '
+                    'kwenye barrel hiyo KWANZA, kisha ndipo ufungue hii mpya.'
+                ),
+            },
             status=400,
         )
 

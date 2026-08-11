@@ -30556,6 +30556,22 @@ class CanManageKegsPermissionTest(TestCase):
         self.assertEqual(self.sealed.status, 'TAPPED')
         self.assertEqual(self.sealed.tapped_by_id, self.owner.id)
 
+    def test_tap_blocked_while_another_barrel_already_selling_names_the_button(self):
+        """2026-08-11 same-day follow-up (Roy — staff confused by the
+        original vague 'close it first' message): error now explicitly
+        names the ✓ Imekwisha button to press first."""
+        second_sealed = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.item2,
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+            status='SEALED',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/bar/tap/{second_sealed.id}/')
+        self.assertFalse(resp.json()['ok'])
+        self.assertIn('Imekwisha', resp.json()['error'])
+        second_sealed.refresh_from_db()
+        self.assertEqual(second_sealed.status, 'SEALED')
+
     def test_plain_staff_blocked_from_tap(self):
         self.client.force_login(self.staff)
         self._open_shift(self.staff)

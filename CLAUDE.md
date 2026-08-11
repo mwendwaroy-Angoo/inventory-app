@@ -6096,3 +6096,10 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   cross-business isolation, discard/receive regression locks (still owner/manager-only
   regardless of the new toggle), and the board API's `tapped_by_name`/`last_closed_by_name`
   fields. Two migrations (accounts 0061, core 0160), both additive.
+- Fix: "Kuna barrel inayouza tayari" tap error made actionable (2026-08-11, same-day
+  follow-up, live screenshot). Not a bug — `tap_barrel()`'s existing "one TAPPED barrel per
+  item" rule correctly refused a second barrel while the current one was still marked
+  selling — but the error only said "close it first," with no pointer to HOW, and Roy's
+  staff got stuck. Reworded to explicitly name the "✓ Imekwisha" button to press first.
+  1 new test (`test_tap_blocked_while_another_barrel_already_selling_names_the_button`,
+  added to `CanManageKegsPermissionTest`). No migrations.
