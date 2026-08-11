@@ -1746,6 +1746,14 @@ def kitchen_stock_receipt_delete(request, receipt_id):
     (2026-08-09 live report: Roy — "you have made the previous receipt
     which was a mistake show up, I do not need it").
 
+    2026-08-11 same-day correction: this view never required CLOSED status,
+    but the frontend button only rendered on a closed receipt card — a real
+    duplicate delivery (Roy entered the same 23 legs via BOTH "+Pata Stok"
+    and "🧾 Stock Receipt", not realizing the first one had already worked)
+    is discovered and needs deleting immediately, while it's still OPEN, not
+    after an unrelated "close" step. `kitchen_board.html` now shows 🗑 Futa
+    on an OPEN receipt card too, owner/manager only, same as the closed one.
+
     Deliberately safe: this deletes only the KitchenStockReceipt header and
     its KitchenStockReceiptLine rows — the bookkeeping wrapper around a
     delivery. The underlying Transaction each line created (the real

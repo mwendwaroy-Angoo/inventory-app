@@ -30169,6 +30169,17 @@ class KitchenStockReceiptDeleteTest(TestCase):
         self.assertTrue(resp.json()['ok'], resp.json())
         self.assertFalse(KitchenStockReceipt.objects.filter(id=self.receipt.id).exists())
 
+    def test_owner_can_delete_a_still_open_receipt(self):
+        """2026-08-11 same-day correction (Roy, real duplicate-delivery
+        report): the endpoint never required CLOSED status — only the
+        frontend button used to hide until a receipt was closed, which
+        blocked deleting a genuine duplicate discovered while it's still
+        OPEN. Locks in that the backend has always allowed this."""
+        self.assertEqual(self.receipt.status, 'OPEN')
+        resp = self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/delete/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertFalse(KitchenStockReceipt.objects.filter(id=self.receipt.id).exists())
+
     def test_delete_never_touches_underlying_transaction_or_stock(self):
         """The whole point: the real stock-adding Transaction must survive,
         so the item's stock balance is completely unaffected."""

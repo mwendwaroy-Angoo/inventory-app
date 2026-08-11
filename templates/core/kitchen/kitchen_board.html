@@ -4403,7 +4403,10 @@
           return '<div style="background:var(--onyx-card);border:1px solid rgba(76,175,80,.25);border-radius:10px;padding:.6rem .75rem;margin-bottom:.4rem;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;">' +
               '<div style="font-size:.85rem;color:#f0ece4;font-weight:600;">🧾 ' + (r.supplier || 'Stock Receipt') + (r.invoice_no ? ' #' + r.invoice_no : '') + '</div>' +
-              '<button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.35);color:#4caf50;font-size:.74rem;" onclick="window.openStockReceiptCloseModal(' + r.id + ')">✓ Fungwa</button>' +
+              '<span style="display:flex;gap:.35rem;">' +
+                '<button class="btn btn-sm" style="background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.35);color:#4caf50;font-size:.74rem;" onclick="window.openStockReceiptCloseModal(' + r.id + ')">✓ Fungwa</button>' +
+                (IS_OWNER ? '<button class="btn btn-sm" style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.3);color:#c0395a;font-size:.74rem;" onclick="window.ksrDelete(' + r.id + ')">🗑 Futa</button>' : '') +
+              '</span>' +
             '</div>' +
             '<div style="font-size:.74rem;margin:.35rem 0;">' + _ksrLineHtml(r) + '</div>' +
             '<div style="font-size:.78rem;color:#b0b0b0;">Gharama: KES ' + Math.round(r.total_cost) + ' · Mapato: KES ' + Math.round(r.total_revenue) + ' · Faida: <strong style="color:' + pftColor + ';">KES ' + Math.round(pft) + '</strong>' + (r.profit_pct !== null ? ' (' + r.profit_pct + '%)' : '') + '</div>' +

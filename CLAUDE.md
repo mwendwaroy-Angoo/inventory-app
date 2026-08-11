@@ -6020,3 +6020,33 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   for good — the receiving side (`+Pata Stok`'s preset dropdown, already wired to feed the
   same `KitchenStockReceiptLine` ledger since 2026-08-09) is unaffected by this fix and
   should work correctly for the next fresh receipt.
+- Fix: no way to delete a genuine duplicate Stock Receipt while it's still OPEN
+  (2026-08-11, same-day follow-up, live screenshots). Roy's own real sequence, tired and
+  under time pressure at the end of the earlier reset work: used "+Pata Stok" first for 23
+  chicken legs with a preset selected (this DID correctly create a `KitchenStockReceiptLine`
+  — the 2026-08-09 fix — but the confirmation wasn't obvious to him in the moment), didn't
+  see it reflected where he expected, assumed the tool was broken, and separately re-entered
+  the SAME 23 legs via the dedicated "🧾 Stock Receipt" tool. Both entries are real,
+  legitimately-created `KitchenStockReceipt` rows — not a bug in either receiving path
+  itself — but together they double-counted the delivery: `_received_by_preset` (the
+  per-cut visibility tracker) summed 23+23=46, and the item's real `current_balance()` was
+  inflated by the same phantom 23 units, from the "Kamau" receipt's own real stock-adding
+  Transaction. Roy needed to delete the wrong one immediately, but `kitchen_stock_receipt_
+  delete()` (2026-08-09) — which has NEVER required CLOSED status server-side — only ever
+  had its "🗑 Futa" button rendered on a CLOSED receipt card in `kitchen_board.html`; a
+  freshly-discovered duplicate that's still OPEN had no delete affordance at all, forcing
+  an unrelated "close first" detour that would have frozen `total_revenue()`'s window on a
+  receipt about to be deleted anyway. Fixed by adding the same owner/manager-only 🗑 Futa
+  button to the OPEN receipt card too, next to the existing "✓ Fungwa" (close) button — no
+  backend change needed, since the view already allowed this; only the UI gap is closed.
+  1 new test (`test_owner_can_delete_a_still_open_receipt`) locks in the backend contract
+  the new button now relies on. No migrations. Guidance given to Roy for the CURRENT stuck
+  Kuku state (not code — a real-data correction only he can make, since only he knows the
+  true total cost paid): (1) delete whichever of the two receipt cards has the wrong total
+  cost using the new button (both `KES 160.87/leg` and `KES 10.87/leg` look like mistaken
+  entries, not the real price), (2) then use ⚖️ Rekebisha on Kuku from Stock List to set
+  the balance to the TRUE physical count right now — this corrects the lingering phantom
+  stock from the deleted receipt's still-standing Transaction (delete is bookkeeping-only,
+  by design — it never touches the real stock-adding Transaction, so a real physical
+  recount is the correct closing step here, same as every other "balance is wrong for
+  reasons that can't be cleanly reconstructed" scenario in this app).
