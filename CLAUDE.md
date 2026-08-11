@@ -5788,4 +5788,12 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   annotated with a prominent warning not to trust its `plan:` lines for a live incident;
   left the value as `free` rather than guess at Render's current plan-slug naming for the
   newer Basic-256mb-style tiers, since this file isn't being used to sync the live
-  services anyway.
+  services anyway. **Resolved (same day)**: Roy upgraded the database from Basic-256mb
+  (256MB RAM / 0.1 CPU) to Basic-1gb (1GB RAM / 0.5 CPU — 5× the CPU allowance), storage
+  bumped 1GB → 5GB with autoscaling enabled. `render.yaml`'s `plan:`/storage fields were
+  left untouched per the file's own new warning comment — the dashboard is the source of
+  truth, not this file. No app-side change needed (same `DATABASE_URL`). Watch point for
+  a future session: if 502s recur after this upgrade, the CPU-ceiling hypothesis was
+  incomplete and the investigation needs to resume from the continuous disk-write-activity
+  angle (session-table writes, per `SESSION_SAVE_EVERY_REQUEST=True`) or something not yet
+  identified — if they stop, this closes the incident.
