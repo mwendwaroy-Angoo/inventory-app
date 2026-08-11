@@ -5,6 +5,19 @@
 # Preboot: when a new deploy starts, Render keeps the old instance alive
 # until the new one passes its health check.  This eliminates the "cold
 # start" splash for free-tier apps.
+#
+# WARNING (confirmed wrong 2026-08-11, live dashboard screenshots): the
+# `plan:` values below do NOT reflect what is actually running in
+# production. The database is on "Basic-256mb" (256MB RAM / 0.1 CPU,
+# $6.30/mo) and the web service is on Starter (per CLAUDE.md's own Project
+# Overview) — both configured directly via the Render dashboard, not by
+# syncing this file. This is the SAME config-drift pattern already
+# documented in CLAUDE.md's Known Issues for the web service Start Command
+# (2026-08-09/10). Never trust this file's `plan:` lines for a live
+# incident — always check the Render dashboard's Info tab for each service
+# directly. Left as `free` here rather than guessing at Render's current
+# plan-slug naming for the newer "Basic-256mb"-style tiers, since this file
+# is not being used to sync/manage the live services anyway.
 
 databases:
   - name: duka-db

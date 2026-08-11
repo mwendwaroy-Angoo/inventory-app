@@ -5776,3 +5776,16 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   Roy can take, not something fixable in code. 4 new tests (`FixStaffProfilesCommandTest`
   — orphaned user gets a profile, existing profile left untouched, superuser skipped, and
   a no-orphans no-op). No migrations. 1697 tests pass (core + accounts).
+  **Correction (same day, live dashboard screenshots from Roy)**: the "Free plan" claim
+  above was wrong — trusted `render.yaml`'s `plan: free` line instead of checking the
+  actual live Render dashboard, the exact config-drift trap this file's own Known Issues
+  section already warns about for the web service Start Command (2026-08-09/10 entry).
+  The database is really on **Basic-256mb**, a paid tier at $6.30/month — but Roy's own
+  screenshot confirms it genuinely is capped at 256MB RAM / 0.1 CPU, the same number
+  originally cited, so the resource-ceiling analysis and the "upgrade for headroom"
+  recommendation both still hold; only the free-vs-paid label was wrong. Render's next
+  tier up, Basic-1gb ($19/mo), gives 0.5 CPU — 5× the current allowance. `render.yaml`
+  annotated with a prominent warning not to trust its `plan:` lines for a live incident;
+  left the value as `free` rather than guess at Render's current plan-slug naming for the
+  newer Basic-256mb-style tiers, since this file isn't being used to sync the live
+  services anyway.
