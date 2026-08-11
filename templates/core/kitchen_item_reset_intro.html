@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}Reset {{ item.description }} — Duka Mwecheche{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:650px;">
+
+    <div style="background:linear-gradient(135deg, rgba(201,168,76,0.08), rgba(192,57,90,0.06)); border:1px solid rgba(201,168,76,0.25); border-radius:12px; padding:1.8rem; margin-bottom:1.5rem; text-align:center;">
+        <p style="font-size:1.6rem; margin-bottom:0.5rem;">🧹</p>
+        <h4 style="color:var(--gold-light); font-family:'Playfair Display',serif; margin-bottom:0.4rem;">Anza Upya — {{ item.description }}</h4>
+        <p style="color:var(--muted); font-size:0.9rem; margin-bottom:0;">Futa mauzo na risiti za stock tangu tarehe fulani, ili uweze kuanza kurekodi upya kutoka kitabu cha mauzo halisi.</p>
+    </div>
+
+    <div style="background:rgba(231,76,60,0.1); border:1px solid var(--danger); border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
+        <p style="color:var(--pearl); margin-bottom:0.5rem; font-weight:500;">⚠️ Hatua hii ni <strong style="color:var(--danger);">ya kudumu na haiwezi kutenguliwa</strong>.</p>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:0;">Pakua nakala ya chelezo (backup) kabla ya kuthibitisha — ndiyo nakala pekee ya taarifa hizi baada ya kufutwa.</p>
+    </div>
+
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
+        <form method="get" style="margin-bottom:1rem;">
+            <label class="form-label" style="color:var(--pearl);">Tangu Tarehe (pamoja na siku hii)</label>
+            <div class="d-flex gap-2">
+                <input type="date" name="cutoff" value="{{ cutoff_date|date:'Y-m-d' }}" class="form-control"
+                       style="background:var(--onyx); color:var(--pearl); border-color:#444;">
+                <button type="submit" class="btn btn-outline-secondary">Angalia</button>
+            </div>
+        </form>
+        <h6 style="color:var(--gold-light); margin-bottom:0.8rem;">Kitakachofutwa:</h6>
+        <ul style="color:var(--pearl); font-size:0.9rem; padding-left:1.2rem; margin:0;">
+            <li>{{ scope.txn_count }} miamala (mauzo/mapokezi/upotevu)</li>
+            <li>KES {{ scope.total_revenue|floatformat:2 }} mapato yatakayoondolewa</li>
+            {% if scope.receipt_count %}<li>{{ scope.receipt_count }} Stock Receipt(s)</li>{% endif %}
+            {% if scope.batch_count %}<li>{{ scope.batch_count }} batch (bucket preparations)</li>{% endif %}
+        </ul>
+        {% if scope.tab_linked_count %}
+        <p style="color:#e2c36e; font-size:0.82rem; margin-top:0.8rem; margin-bottom:0;">
+            🔶 {{ scope.tab_linked_count }} mauzo yaliyo kwenye tab hai hayatafutwa (huhitaji kufungwa kwenye tab kwanza).
+        </p>
+        {% endif %}
+        <p style="color:var(--muted); font-size:0.82rem; margin-top:0.8rem; margin-bottom:0;">
+            💡 Salio la sasa la bidhaa hii: <strong style="color:var(--pearl);">{{ current_balance }} {{ item.unit }}</strong>.
+            Baada ya kufuta, tumia ⚖️ Rekebisha kuweka salio sahihi kulingana na hesabu halisi ya kimwili.
+        </p>
+    </div>
+
+    <!-- Step 1: Backup -->
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
+        <h6 style="color:var(--gold-light); margin-bottom:0.5rem;">Hatua ya 1 — Pakua Nakala ya Chelezo</h6>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:1rem;">Inahitajika kabla ya kuthibitisha.</p>
+        <a href="{% url 'kitchen_item_reset_backup' item.id %}?cutoff={{ cutoff_date|date:'Y-m-d' }}" class="btn btn-gold">⬇️ Pakua Chelezo (Excel)</a>
+        {% if backup_ready %}
+            <p style="color:var(--success); font-size:0.82rem; margin-top:0.6rem; margin-bottom:0;">✓ Chelezo imepakuliwa — unaweza kuendelea na Hatua ya 2.</p>
+        {% endif %}
+    </div>
+
+    <!-- Step 2: Confirm -->
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem;">
+        <h6 style="color:var(--gold-light); margin-bottom:0.5rem;">Hatua ya 2 — Thibitisha</h6>
+        <form method="post" action="{% url 'kitchen_item_reset_confirm' item.id %}">
+            {% csrf_token %}
+            <input type="hidden" name="cutoff" value="{{ cutoff_date|date:'Y-m-d' }}">
+
+            <label class="form-label" style="color:var(--pearl);">Maelezo (hiari)</label>
+            <textarea name="reason" class="form-control mb-3" rows="2"
+                      style="background:var(--onyx); color:var(--pearl); border-color:#444;"></textarea>
+
+            <label class="form-label" style="color:var(--pearl);">
+                Ili kuthibitisha, andika jina la bidhaa kama lilivyo: <strong style="color:var(--danger);">{{ item.description }}</strong>
+            </label>
+            <input type="text" name="confirm_text" class="form-control mb-3"
+                   placeholder="{{ item.description }}" autocomplete="off" required
+                   style="border-color:var(--danger);">
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn" style="background:var(--danger); color:white; font-weight:600;">
+                    🧹 Futa {{ item.description }} Tangu {{ cutoff_date|date:'d M Y' }}
+                </button>
+                <a href="{% url 'kitchen_board' %}" class="btn btn-outline-secondary">Ghairi</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

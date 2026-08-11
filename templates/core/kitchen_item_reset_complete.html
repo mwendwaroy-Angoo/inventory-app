@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Imekamilika — {{ item.description }} — Duka Mwecheche{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width:600px;">
+    <div style="background:rgba(76,175,80,0.08); border:1px solid rgba(76,175,80,0.3); border-radius:12px; padding:2rem; text-align:center; margin-bottom:1.5rem;">
+        <p style="font-size:2rem; margin-bottom:0.5rem;">✓</p>
+        <h4 style="color:var(--gold-light); font-family:'Playfair Display',serif; margin-bottom:0.6rem;">{{ item.description }} Imeanza Upya</h4>
+        <p style="color:var(--pearl); font-size:0.9rem; margin-bottom:0;">Salio la sasa: <strong>{{ current_balance }} {{ item.unit }}</strong></p>
+    </div>
+
+    {% if reset_log %}
+    <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
+        <h6 style="color:var(--gold-light); margin-bottom:0.8rem;">Muhtasari</h6>
+        <ul style="color:var(--pearl); font-size:0.88rem; padding-left:1.2rem; margin:0;">
+            <li>Tangu: {{ reset_log.counts_snapshot.cutoff }}</li>
+            <li>Miamala iliyofutwa: {{ reset_log.counts_snapshot.transactions_deleted }}</li>
+            <li>Mapato yaliyoondolewa: KES {{ reset_log.counts_snapshot.revenue_removed|floatformat:2 }}</li>
+            {% if reset_log.counts_snapshot.receipts_deleted %}<li>Stock Receipts zilizofutwa: {{ reset_log.counts_snapshot.receipts_deleted }}</li>{% endif %}
+            {% if reset_log.counts_snapshot.batches_deleted %}<li>Batches zilizofutwa: {{ reset_log.counts_snapshot.batches_deleted }}</li>{% endif %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <div style="background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25); border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
+        <h6 style="color:var(--gold-light); margin-bottom:0.6rem;">Hatua zinazofuata</h6>
+        <ol style="color:var(--pearl); font-size:0.88rem; padding-left:1.2rem; margin:0;">
+            <li>Tumia ⚖️ Rekebisha kuweka salio la {{ item.description }} sahihi kulingana na hesabu halisi ya kimwili.</li>
+            <li>Pokea stock upya kupitia Stock Receipt / +Pata Stok — sasa unaweza kuweka "Ilipokewa Tarehe" kwa siku halisi.</li>
+            <li>Rekodi mauzo upya kutoka kitabu cha mauzo, ukitumia "backdated" kwa kila siku.</li>
+        </ol>
+    </div>
+
+    <a href="{% url 'kitchen_board' %}" class="btn btn-gold">← Rudi Kitchen Board</a>
+</div>
+{% endblock %}

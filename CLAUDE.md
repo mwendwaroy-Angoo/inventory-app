@@ -5875,3 +5875,42 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `test_sale_genuinely_before_received_on_does_not_count`) on
   `KitchenStockReceiptRevenuePrecisionTest`. No migrations. 1702 tests pass (core +
   accounts).
+- Kitchen Item Reset — erase-and-re-enter tool + receipt received_on now settable
+  (2026-08-11, same-day follow-up). Roy confirmed the deleted "Kamau duplicate" WAS a
+  genuine duplicate and Chipo's cutoff (since the sack arrived Wednesday) was fine, then:
+  "just do this help me erase receipts and sales for both chipo and chicken for the most
+  recent receipt for both and then i start again," plus "is it possible in the receipt i
+  tell the app that this receipt is for a certain day then i just backdate from there till
+  today." New `core/kitchen_reset_views.py` — mirrors `reset_views.py`'s proven "Reset
+  Sales & Analytics" pattern (backup workbook first, typed item-name confirmation, one
+  atomic transaction) but scoped to ONE item instead of the whole business, reusing
+  `SalesResetLog` directly for the audit trail (no new migration — `reason`/
+  `counts_snapshot` already generic enough) rather than inventing a parallel log model.
+  `_scope_for_item(business, item, cutoff_date)` branches on `item.is_kitchen_batch`: for a
+  portion item (Kuku), scope is every `Transaction` for the item since cutoff PLUS any
+  `KitchenStockReceipt`/`Line` for it since cutoff; for a batch item (Chipo), scope is
+  every `KitchenBatch` for the item with `received_on >= cutoff` plus every `Transaction`
+  tied to those specific batches via `kitchen_batch_id` — a batch from before the cutoff is
+  correctly left untouched even if it's still open. Deliberately does NOT attempt to
+  algorithmically identify/delete the specific phantom duplicate Transaction or the exact
+  raw-material Draw transaction that funded a since-deleted Chipo batch — no reliable FK
+  ties either back to "the one at fault" (`KitchenBatch` has no FK to its own opening Draw
+  transaction, only a `source_qty_drawn` snapshot), and fuzzy qty/date matching risks
+  deleting the wrong row; the tool's own "next steps" page instead points the owner at one
+  real physical recount via the existing ⚖️ Rekebisha tool afterward, which absorbs
+  whatever drift is left regardless of its exact historical cause. Safety net found while
+  building this: `BarTabEntry.transaction` is `on_delete=CASCADE` — a sale linked to a live
+  Food Tab is therefore excluded from deletion entirely (never silently cascade-killing a
+  tab entry), surfaced as its own `tab_linked_count` in the preview rather than deleted or
+  hidden. Reachable via a new "🔄 Anza Upya" link on both the Kuku (portion) and Chipo
+  (batch) tiles, owner/manager only. Separately, `kitchen_stock_receipt_create()` gained an
+  optional `received_on` POST field (defaults to today exactly as before when blank/
+  invalid) — the Stock Receipt modal now has an "Ilipokewa Tarehe" date input, so a
+  delivery can be dated for the day it actually arrived, which is exactly the field the
+  same-day `total_revenue()` window-floor fix now anchors on — answering Roy's question
+  directly: yes, he can now date a receipt for a specific day and backdate sales against it
+  from there forward. 15 new tests (`KitchenItemResetTest` — portion-item and batch-item
+  scope preview, backup-required gate, exact-name-match gate, cutoff correctly preserves
+  older history, audit log content, tab-linked exclusion, a batch predating the cutoff
+  stays untouched, staff/cross-business access control; 3 more on `KitchenStockReceiptTest`
+  for `received_on`). No migrations. 1717 tests pass (core + accounts).

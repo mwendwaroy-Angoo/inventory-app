@@ -17049,6 +17049,29 @@ class KitchenStockReceiptTest(TestCase):
         receipt = KitchenStockReceipt.objects.get(id=resp.json()['receipt']['id'])
         self.assertEqual(receipt.total_cost, Decimal('5300'))  # 1960 + 2000 + 1340
 
+    def test_received_on_settable_at_create_time(self):
+        """2026-08-11 live request (Roy): 'in the receipt i tell the app
+        that this receipt is for a certain day then i just backdate from
+        there till today' — received_on already existed on the model but
+        this view never accepted it, always defaulting to today."""
+        resp = self._create_receipt(received_on='2026-08-06')
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        receipt = KitchenStockReceipt.objects.get(id=data['receipt']['id'])
+        self.assertEqual(receipt.received_on.isoformat(), '2026-08-06')
+
+    def test_received_on_defaults_to_today_when_blank(self):
+        resp = self._create_receipt(received_on='')
+        data = resp.json()
+        receipt = KitchenStockReceipt.objects.get(id=data['receipt']['id'])
+        self.assertEqual(receipt.received_on, timezone.localdate())
+
+    def test_received_on_defaults_to_today_when_invalid(self):
+        resp = self._create_receipt(received_on='not-a-date')
+        data = resp.json()
+        receipt = KitchenStockReceipt.objects.get(id=data['receipt']['id'])
+        self.assertEqual(receipt.received_on, timezone.localdate())
+
     def test_no_yield_wastage_side_effect(self):
         """The bug Roy reported (idadi 10 -> balance 9.375) was caused by
         Item.is_yield_item auto-wastage in add_transaction's Receipt flow.
@@ -30018,6 +30041,201 @@ class KitchenStockReceiptDeleteTest(TestCase):
         resp = self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/delete/')
         self.assertEqual(resp.status_code, 404)
         self.assertTrue(KitchenStockReceipt.objects.filter(id=self.receipt.id).exists())
+
+
+class KitchenItemResetTest(TestCase):
+    """2026-08-11 live request (Roy, Monsoon Inn): a ledger drift on Kuku
+    (preset-tracked portion item) and Chipo (KitchenBatch item) that no
+    normal correction could untangle — wipe sales/receiving history for
+    ONE item since a chosen cutoff, so the owner can re-enter from the
+    staff's paper sales book with proper backdating. Mirrors the "Reset
+    Sales & Analytics" pattern: backup-first, typed confirmation, atomic,
+    logged via SalesResetLog."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Reset Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kir_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='kir_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+
+        # Portion item (Kuku) with a preset-attributed receipt + sales.
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='KIR-KUKU', unit='Pcs', selling_price=Decimal('0'),
+        )
+        self.full_leg = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Full Chicken Leg', price=Decimal('250'), quantity_consumed=Decimal('1'),
+        )
+        self.receipt = KitchenStockReceipt.objects.create(
+            business=self.biz, store=self.store, supplier='Kamau',
+            received_on=timezone.localdate() - timedelta(days=5),
+        )
+        KitchenStockReceiptLine.objects.create(
+            receipt=self.receipt, item=self.kuku, preset=self.full_leg,
+            qty_received=Decimal('23'), line_cost=Decimal('3700'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('23'),
+            payment_method='cash', created_at=timezone.now() - timedelta(days=5),
+        )
+        for _i in range(3):
+            Transaction.objects.create(
+                business=self.biz, item=self.kuku, preset=self.full_leg, type='Issue',
+                qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='cash',
+                created_at=timezone.now() - timedelta(days=2),
+            )
+        # A sale from BEFORE the cutoff — must survive the reset.
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, preset=self.full_leg, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='cash',
+            created_at=timezone.now() - timedelta(days=10),
+        )
+
+        # KitchenBatch item (Chipo).
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='KIR-CHIPO', unit='Batch', selling_price=Decimal('100'),
+            is_kitchen_batch=True,
+        )
+        self.chipo_preset = ItemPortionPreset.objects.create(
+            item=self.chipo, label='Ya 100', price=Decimal('100'), quantity_consumed=Decimal('1'),
+        )
+        self.batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            cost_total=Decimal('1000'), status='OPEN',
+            received_on=timezone.localdate() - timedelta(days=3), recorded_by=self.owner,
+        )
+        self.batch.record_sale(Decimal('100'), payment_method='cash', preset=self.chipo_preset)
+
+        self.client.force_login(self.owner)
+
+    def _cutoff(self, days_ago):
+        return (timezone.localdate() - timedelta(days=days_ago)).isoformat()
+
+    # ── Portion item (Kuku) ──────────────────────────────────────────────
+
+    def test_intro_preview_shows_correct_scope_for_portion_item(self):
+        resp = self.client.get(f'/kitchen/item-reset/{self.kuku.id}/?cutoff={self._cutoff(6)}')
+        self.assertEqual(resp.status_code, 200)
+        scope = resp.context['scope']
+        # Receipt txn (day-5) + 3 sales at day-2 count; the day-10 sale is out of scope.
+        self.assertEqual(scope['txn_count'], 4)
+        self.assertEqual(scope['receipt_count'], 1)
+        self.assertEqual(scope['total_revenue'], 750.0)
+
+    def test_confirm_requires_backup_first(self):
+        resp = self.client.post(f'/kitchen/item-reset/{self.kuku.id}/confirm/', {
+            'cutoff': self._cutoff(6), 'confirm_text': self.kuku.description,
+        })
+        self.assertRedirects(resp, f'/kitchen/item-reset/{self.kuku.id}/?cutoff={self._cutoff(6)}')
+        self.assertEqual(Transaction.objects.filter(item=self.kuku).count(), 5)
+
+    def test_confirm_requires_exact_name_match(self):
+        self.client.get(f'/kitchen/item-reset/{self.kuku.id}/backup/?cutoff={self._cutoff(6)}')
+        resp = self.client.post(f'/kitchen/item-reset/{self.kuku.id}/confirm/', {
+            'cutoff': self._cutoff(6), 'confirm_text': 'Wrong Name',
+        })
+        self.assertRedirects(resp, f'/kitchen/item-reset/{self.kuku.id}/?cutoff={self._cutoff(6)}')
+        self.assertEqual(Transaction.objects.filter(item=self.kuku).count(), 5)
+
+    def test_confirm_deletes_since_cutoff_keeps_earlier_history(self):
+        self.client.get(f'/kitchen/item-reset/{self.kuku.id}/backup/?cutoff={self._cutoff(6)}')
+        resp = self.client.post(f'/kitchen/item-reset/{self.kuku.id}/confirm/', {
+            'cutoff': self._cutoff(6), 'confirm_text': self.kuku.description, 'reason': 'ledger drift',
+        })
+        self.assertRedirects(resp, f'/kitchen/item-reset/{self.kuku.id}/complete/')
+        # The 4 in-scope transactions (receipt txn + 3 sales) are gone; only
+        # the day-10 sale (older than the cutoff) survives.
+        remaining = Transaction.objects.filter(item=self.kuku)
+        self.assertEqual(remaining.count(), 1)
+        self.assertTrue(remaining.filter(created_at__lt=timezone.now() - timedelta(days=8)).exists())
+        self.assertFalse(KitchenStockReceipt.objects.filter(id=self.receipt.id).exists())
+
+    def test_confirm_creates_audit_log(self):
+        from core.models import SalesResetLog
+        self.client.get(f'/kitchen/item-reset/{self.kuku.id}/backup/?cutoff={self._cutoff(6)}')
+        self.client.post(f'/kitchen/item-reset/{self.kuku.id}/confirm/', {
+            'cutoff': self._cutoff(6), 'confirm_text': self.kuku.description, 'reason': 'ledger drift',
+        })
+        log = SalesResetLog.objects.filter(business=self.biz).order_by('-created_at').first()
+        self.assertIsNotNone(log)
+        self.assertIn('Kuku', log.reason)
+        self.assertEqual(log.counts_snapshot['transactions_deleted'], 4)
+        self.assertEqual(log.counts_snapshot['receipts_deleted'], 1)
+
+    def test_tab_linked_sale_excluded_from_deletion(self):
+        tab = BarTab.objects.create(business=self.biz, customer_name='Table 3', status='OPEN', source='kitchen')
+        tab_txn = Transaction.objects.create(
+            business=self.biz, item=self.kuku, preset=self.full_leg, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='credit',
+            created_at=timezone.now() - timedelta(days=2),
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=tab_txn, description='Kuku', amount=Decimal('250'))
+
+        resp = self.client.get(f'/kitchen/item-reset/{self.kuku.id}/?cutoff={self._cutoff(6)}')
+        self.assertEqual(resp.context['scope']['tab_linked_count'], 1)
+
+        self.client.get(f'/kitchen/item-reset/{self.kuku.id}/backup/?cutoff={self._cutoff(6)}')
+        self.client.post(f'/kitchen/item-reset/{self.kuku.id}/confirm/', {
+            'cutoff': self._cutoff(6), 'confirm_text': self.kuku.description,
+        })
+        self.assertTrue(Transaction.objects.filter(id=tab_txn.id).exists())
+        self.assertTrue(BarTabEntry.objects.filter(transaction_id=tab_txn.id).exists())
+
+    # ── KitchenBatch item (Chipo) ────────────────────────────────────────
+
+    def test_intro_preview_shows_correct_scope_for_batch_item(self):
+        resp = self.client.get(f'/kitchen/item-reset/{self.chipo.id}/?cutoff={self._cutoff(4)}')
+        scope = resp.context['scope']
+        self.assertEqual(scope['batch_count'], 1)
+        self.assertEqual(scope['txn_count'], 1)  # the one record_sale() Issue txn
+        self.assertEqual(scope['total_revenue'], 100.0)
+
+    def test_confirm_deletes_batch_and_its_sales(self):
+        self.client.get(f'/kitchen/item-reset/{self.chipo.id}/backup/?cutoff={self._cutoff(4)}')
+        self.client.post(f'/kitchen/item-reset/{self.chipo.id}/confirm/', {
+            'cutoff': self._cutoff(4), 'confirm_text': self.chipo.description,
+        })
+        self.assertFalse(KitchenBatch.objects.filter(id=self.batch.id).exists())
+        self.assertEqual(Transaction.objects.filter(kitchen_batch_id=self.batch.id).count(), 0)
+
+    def test_batch_before_cutoff_untouched(self):
+        old_batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            cost_total=Decimal('500'), status='DEPLETED',
+            received_on=timezone.localdate() - timedelta(days=20),
+        )
+        self.client.get(f'/kitchen/item-reset/{self.chipo.id}/backup/?cutoff={self._cutoff(4)}')
+        self.client.post(f'/kitchen/item-reset/{self.chipo.id}/confirm/', {
+            'cutoff': self._cutoff(4), 'confirm_text': self.chipo.description,
+        })
+        self.assertTrue(KitchenBatch.objects.filter(id=old_batch.id).exists())
+
+    # ── Access control ───────────────────────────────────────────────────
+
+    def test_plain_staff_blocked_from_intro(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get(f'/kitchen/item-reset/{self.kuku.id}/')
+        self.assertNotEqual(resp.status_code, 200)
+
+    def test_plain_staff_blocked_from_confirm(self):
+        self.client.force_login(self.staff)
+        self.client.get(f'/kitchen/item-reset/{self.kuku.id}/backup/?cutoff={self._cutoff(4)}')
+        resp = self.client.post(f'/kitchen/item-reset/{self.kuku.id}/confirm/', {
+            'cutoff': self._cutoff(4), 'confirm_text': self.kuku.description,
+        })
+        # Redirected away, never actually deleted.
+        self.assertEqual(Transaction.objects.filter(item=self.kuku).count(), 5)
+
+    def test_cross_business_item_rejected(self):
+        other_biz = Business.objects.create(name='Other Kitchen Reset Biz')
+        other_owner = User.objects.create_user(username='kir_other', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        self.client.force_login(other_owner)
+        resp = self.client.get(f'/kitchen/item-reset/{self.kuku.id}/')
+        self.assertEqual(resp.status_code, 404)
 
 
 class KitchenRevenueBreakdownTest(TestCase):

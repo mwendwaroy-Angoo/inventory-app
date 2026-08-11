@@ -1549,13 +1549,29 @@ def kitchen_stock_receipt_create(request):
     invoice_no = (request.POST.get('invoice_no') or '').strip()[:50]
     note       = (request.POST.get('note') or '').strip()[:200]
 
+    # 2026-08-11 live request (Roy): "in the receipt i tell the app that
+    # this receipt is for a certain day then i just backdate from there
+    # till today" — received_on already existed as an editable field on
+    # the model (and is exactly what total_revenue()'s window now anchors
+    # on, see that method's 2026-08-11 fix), but this view never accepted
+    # it from the request, always defaulting to today. Optional — a blank
+    # or invalid value keeps the original today-default behaviour.
+    received_on = timezone.localdate()
+    _received_on_raw = (request.POST.get('received_on') or '').strip()
+    if _received_on_raw:
+        try:
+            from datetime import datetime as _dt
+            received_on = _dt.strptime(_received_on_raw, '%Y-%m-%d').date()
+        except ValueError:
+            received_on = timezone.localdate()
+
     from django.db import transaction as _txn
     try:
         with _txn.atomic():
             receipt = KitchenStockReceipt.objects.create(
                 business=business, store=kitchen_store,
                 supplier=supplier, invoice_no=invoice_no, note=note,
-                recorded_by=request.user,
+                recorded_by=request.user, received_on=received_on,
             )
             created_lines = 0
             for row in raw_lines:

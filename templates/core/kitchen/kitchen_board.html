@@ -1078,6 +1078,17 @@
                    style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
           </div>
         </div>
+        <!-- 2026-08-11 live request (Roy): "in the receipt i tell the app
+             that this receipt is for a certain day then i just backdate
+             from there till today" — total_revenue()'s window now anchors
+             on received_on (same-day fix), so setting this to the REAL
+             delivery date is what makes backdated catch-up sales count
+             correctly. Defaults to today, same as before this existed. -->
+        <div style="margin-bottom:.55rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Ilipokewa Tarehe</label>
+          <input type="date" id="ksr-received-on"
+                 style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+        </div>
         <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.3rem;">Bidhaa Zilizopokelewa</label>
         <div id="ksr-lines" style="display:flex;flex-direction:column;gap:.4rem;margin-bottom:.5rem;"></div>
         <button type="button" class="btn btn-sm" style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);color:#c9a84c;font-size:.78rem;margin-bottom:.6rem;"
@@ -1965,6 +1976,17 @@
           'background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.35);border-radius:5px;color:#5da8f0;cursor:pointer;" ' +
           'onclick="event.stopPropagation(); showHiddenPresetsDiag(' + item.id + ')">🔍 ' + item.hidden_presets.length + ' zimefichwa</button>'
         : '';
+      // 2026-08-11 live request (Roy) — a rare, deliberate "erase and
+      // re-enter from the paper book" escape hatch when a ledger has
+      // drifted beyond what a normal correction can untangle. Owner/
+      // manager only, a real page (not an AJAX action) since it requires
+      // a typed confirmation, matching Reset Sales & Analytics.
+      var resetBtn = IS_OWNER
+        ? '<a href="/kitchen/item-reset/' + item.id + '/" onclick="event.stopPropagation();" ' +
+          'style="display:block;width:100%;margin-top:.3rem;font-size:.68rem;padding:.15rem .3rem;text-align:center;' +
+          'background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;text-decoration:none;">' +
+          '🔄 Anza Upya</a>'
+        : '';
       html += '<div class="kb-tile' + (oos?' out-of-stock':'') + '" onclick="tileClick(' + item.id + ')"' +
               ' data-item-id="' + item.id + '" style="position:relative;">' +
               customPriceBtn +
@@ -1974,6 +1996,7 @@
               restockBtn +
               depleteBtn +
               hiddenDiagBtn +
+              resetBtn +
               '</div>';
     });
     grid.innerHTML = html;
@@ -2101,6 +2124,15 @@
 
       if (item.open_batches && item.open_batches.length > 1) {
         html += '<div style="font-size:.68rem;color:#b0b0b0;margin-top:.2rem;">+' + (item.open_batches.length - 1) + ' batch zaidi</div>';
+      }
+
+      // 2026-08-11 live request (Roy) — same rare "erase and re-enter from
+      // the paper book" escape hatch as the portion-item tiles above.
+      if (IS_OWNER) {
+        html += '<a href="/kitchen/item-reset/' + item.id + '/" onclick="event.stopPropagation();" ' +
+          'style="display:block;width:100%;margin-top:.35rem;font-size:.68rem;padding:.15rem .3rem;text-align:center;' +
+          'background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;text-decoration:none;">' +
+          '🔄 Anza Upya</a>';
       }
 
       html += '</div>';
@@ -4290,6 +4322,7 @@
     document.getElementById('ksr-supplier').value = '';
     document.getElementById('ksr-invoice').value = '';
     document.getElementById('ksr-note').value = '';
+    document.getElementById('ksr-received-on').value = _todayIso();
     document.getElementById('ksr-error').style.display = 'none';
     window.ksrAddLine();
     window.ksrAddLine();
@@ -4323,6 +4356,7 @@
     body.append('supplier', document.getElementById('ksr-supplier').value || '');
     body.append('invoice_no', document.getElementById('ksr-invoice').value || '');
     body.append('note', document.getElementById('ksr-note').value || '');
+    body.append('received_on', document.getElementById('ksr-received-on').value || '');
     body.append('lines', JSON.stringify(lines));
     body.append('idempotency_token',
       (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
@@ -4502,6 +4536,12 @@
   var _isOwner         = {% if is_owner %}true{% else %}false{% endif %};
 
   /* ── Bootstrap modal helpers ───────────────────────────── */
+  function _todayIso() {
+    var d = new Date();
+    var m = ('0' + (d.getMonth() + 1)).slice(-2);
+    var day = ('0' + d.getDate()).slice(-2);
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
   function showModal(id) {
     var el = document.getElementById(id);
     if (!el) return;

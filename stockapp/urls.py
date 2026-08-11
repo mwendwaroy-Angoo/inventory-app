@@ -144,6 +144,12 @@ from core.kitchen_views import (
     tab_check_api,
     toggle_kitchen,
 )
+from core.kitchen_reset_views import (
+    kitchen_item_reset_intro,
+    kitchen_item_reset_backup,
+    kitchen_item_reset_confirm,
+    kitchen_item_reset_complete,
+)
 from core.petty_cash_views import (
     record_petty_cash,
     petty_cash_list,
@@ -525,6 +531,10 @@ urlpatterns = [
     path("kitchen/stock-receipt/<int:receipt_id>/close/", kitchen_stock_receipt_close, name="kitchen_stock_receipt_close"),
     path("kitchen/stock-receipt/<int:receipt_id>/reopen/", kitchen_stock_receipt_reopen, name="kitchen_stock_receipt_reopen"),
     path("kitchen/stock-receipt/<int:receipt_id>/delete/", kitchen_stock_receipt_delete, name="kitchen_stock_receipt_delete"),
+    path("kitchen/item-reset/<int:item_id>/",           kitchen_item_reset_intro,    name="kitchen_item_reset_intro"),
+    path("kitchen/item-reset/<int:item_id>/backup/",     kitchen_item_reset_backup,   name="kitchen_item_reset_backup"),
+    path("kitchen/item-reset/<int:item_id>/confirm/",    kitchen_item_reset_confirm,  name="kitchen_item_reset_confirm"),
+    path("kitchen/item-reset/<int:item_id>/complete/",   kitchen_item_reset_complete, name="kitchen_item_reset_complete"),
     # ── Kitchen Shift Handover Module ────────────────────────────────────────
     path("kitchen/shift/open/",                   open_shift,             name="kitchen_open_shift"),
     path("kitchen/shift/<int:shift_id>/close/",   close_shift,            name="kitchen_close_shift"),
