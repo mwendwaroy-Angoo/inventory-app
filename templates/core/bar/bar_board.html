@@ -2285,7 +2285,18 @@
         }
         return;
       }
-      // Soft prompt: Funga Pipa or continue (no hard block)
+      // Soft prompt: Funga Pipa or continue (no hard block).
+      // 2026-08-11 live report (Roy): "whether i disable or enable the
+      // sales past target toggle, the system is still denying staff
+      // access" — confirmed real bug, not a settings mistake. This
+      // branch (block_sales_past_target OFF) unconditionally hard-
+      // blocked staff regardless of the toggle — only the OWNER's path
+      // ever actually changed with it. Root cause: /stock/bar/deplete/
+      // (closing a barrel) is owner/manager-only on the server, so
+      // offering staff a "close it" choice here would just 403 — the fix
+      // is not to offer that choice to staff at all, just let them
+      // continue selling directly, which is the whole point of turning
+      // this toggle off.
       if (QS_IS_OWNER) {
         if (window.confirm(
           '⚠️ ' + kg.name + ' imefika lengo lake la mapato!\n\n' +
@@ -2302,8 +2313,8 @@
         }
         // else: owner chose to continue — fall through to sell modal
       } else {
-        showToast('⚠️ Barrel imefika lengo. Mwambie mwenye biashara aendelee au aifunge.');
-        return;
+        showToast('⚠️ ' + kg.name + ' imefika lengo — bado inauzwa (ikiwa bado ipo pipani).');
+        // fall through to sell modal — staff may continue selling
       }
     }
 

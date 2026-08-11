@@ -418,10 +418,8 @@ def home(request):
             # Sales & Analytics run.
             if user_profile.is_owner_or_manager:
                 try:
-                    from core.models import SalesResetLog
-                    _latest_reset = SalesResetLog.objects.filter(
-                        business=business
-                    ).order_by('-created_at').first()
+                    from core.reset_views import latest_business_wide_reset
+                    _latest_reset = latest_business_wide_reset(business)
                     if _latest_reset:
                         _counted_ids = Transaction.objects.filter(
                             business=business, date__gte=_latest_reset.created_at.date(),
@@ -1138,10 +1136,8 @@ def stock_list(request):
     # Analytics run, only shown to owner/manager.
     fresh_count_pending = 0
     if user_profile.is_owner_or_manager:
-        from .models import SalesResetLog
-        _latest_reset = SalesResetLog.objects.filter(
-            business=user_profile.business
-        ).order_by('-created_at').first()
+        from .reset_views import latest_business_wide_reset
+        _latest_reset = latest_business_wide_reset(user_profile.business)
         if _latest_reset:
             _counted_ids = Transaction.objects.filter(
                 business=user_profile.business, date__gte=_latest_reset.created_at.date(),

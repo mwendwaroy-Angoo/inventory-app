@@ -1767,6 +1767,20 @@ class PettyCash(models.Model):
         ('transport',   _('Transport / Delivery')),
         ('fuel',        _('Fuel / Gas')),
         ('food',        _('Staff Meal')),
+        # 2026-08-11 live request (Roy): every OTHER reason above already
+        # auto-mirrors into an Expense Intelligence BusinessExpense on
+        # approval (see review_petty_cash()'s linked_expense block, built
+        # 2026-07-26) — Roy didn't realize this, and was manually double-
+        # entering ingredient/utility purchases into both Counter Cash and
+        # Matumizi. The gap he actually surfaced runs the OTHER direction:
+        # cash handed to a PERSON (police, chama, a personal loan) is a
+        # real till outflow but NOT a business operating expense, and
+        # nothing distinguished it from an ordinary purchase — every
+        # approved entry got mirrored regardless. This reason is the one
+        # explicit exception review_petty_cash() checks for: it still
+        # correctly reduces till_expected_cash() (money really left the
+        # drawer) but is deliberately excluded from the auto-mirror.
+        ('cash_disbursement', _('Fedha kwa Mtu (polisi, chama, n.k.) — SI gharama ya biashara')),
         ('other',       _('Other')),
     ]
 

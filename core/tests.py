@@ -8402,6 +8402,58 @@ class FreshStockCountChecklistTest(TestCase):
         stock_list_resp = self.client.get('/stock/')
         self.assertEqual(stock_list_resp.context['fresh_count_pending'], expected)
 
+    def test_item_scoped_kitchen_reset_never_triggers_business_wide_banner(self):
+        """2026-08-11 live report (Roy): reset only Kuku and Chipo via the
+        item-scoped Kitchen Item Reset tool, and the dashboard immediately
+        demanded a fresh physical count of 49 items business-wide,
+        including plain bar stock never touched by that reset. Root cause:
+        Kitchen Item Reset reuses SalesResetLog for its own audit trail
+        (deliberately, rather than a parallel log model), but every
+        "fresh count pending" banner picked whichever log was simply the
+        MOST RECENT with no way to tell a full wipe apart from a 2-item
+        reset. A Kitchen Item Reset's own log has an 'item' key in
+        counts_snapshot; a real full-business reset's snapshot keys are
+        model names (never literally 'item') — this is the discriminator."""
+        # Wipe out the setUp's already-business-wide reset log so only the
+        # item-scoped one below is present — proving a business with NO
+        # real full-business reset never shows this banner at all.
+        self.SalesResetLog.objects.filter(business=self.biz).delete()
+        self.SalesResetLog.objects.create(
+            business=self.biz, business_name_cache=self.biz.name,
+            reason='Kitchen item reset: Kuku — ledger drift',
+            counts_snapshot={
+                'item': 'Kuku', 'cutoff': '2026-08-06',
+                'transactions_deleted': 4, 'revenue_removed': 750.0,
+                'receipts_deleted': 1, 'batches_deleted': 0, 'tab_linked_excluded': 0,
+            },
+        )
+        # No real full-business reset exists — the checklist correctly has
+        # nothing to show and redirects away, exactly as it does when no
+        # reset has ever happened at all.
+        checklist_resp = self.client.get('/stock/fresh-count/')
+        self.assertRedirects(checklist_resp, '/stock/')
+
+        home_resp = self.client.get('/')
+        self.assertEqual(home_resp.context['fresh_count_pending'], 0)
+
+        stock_list_resp = self.client.get('/stock/')
+        self.assertEqual(stock_list_resp.context['fresh_count_pending'], 0)
+
+    def test_business_wide_reset_still_triggers_banner_even_after_a_later_item_reset(self):
+        """A genuine full-business reset must still correctly drive the
+        banner even if a narrower item-scoped reset happened more
+        recently — the helper must skip PAST the item-scoped log to find
+        the real one, not just bail out entirely."""
+        self.SalesResetLog.objects.create(
+            business=self.biz, business_name_cache=self.biz.name,
+            reason='Kitchen item reset: Chipo — ledger drift',
+            counts_snapshot={'item': 'Chipo', 'cutoff': '2026-08-06'},
+        )
+        resp = self.client.get('/stock/fresh-count/')
+        item_ids = [i.id for i in resp.context['pending_items']]
+        self.assertIn(self.item_a.id, item_ids)
+        self.assertIn(self.item_b.id, item_ids)
+
 
 # ── Liquor Catalogue — core/catalog_classify.py (2026-07-21) ─────────────────
 
@@ -13489,6 +13541,22 @@ class PettyCashAccountabilityTest(TestCase):
         self.assertIsNotNone(entry.linked_expense_id)
         self.assertEqual(entry.linked_expense.amount, Decimal('250'))
         self.assertEqual(entry.linked_expense.category, 'petty_cash')
+
+    def test_cash_disbursement_approval_never_creates_linked_expense(self):
+        """2026-08-11 live request (Roy): cash handed to a PERSON (police,
+        chama, a personal loan) is a real till outflow but not a business
+        operating expense — unlike every other reason, approving this one
+        must never mirror into Expense Intelligence."""
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('300'), reason='cash_disbursement',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/petty-cash/{entry.id}/review/', {'action': 'approve'})
+        self.assertTrue(resp.json()['ok'])
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, 'approved')
+        self.assertIsNone(entry.linked_expense_id)
 
     def test_reversal_to_rejected_removes_linked_expense(self):
         from core.models import BusinessExpense
@@ -18813,6 +18881,93 @@ class NotificationStationScopingSweepTest(TestCase):
         _notify_tab_transfer_resolved(transfer)
         self.assertFalse(Notification.objects.filter(user=self.kitchen_staff).exists())
         self.assertTrue(Notification.objects.filter(user=self.owner).exists())
+
+
+class LowStockReorderNotificationTest(TestCase):
+    """2026-08-11 live report (Roy — Bosco, an owner-role account on this
+    business, never received a beer reorder alert despite the reorder
+    level being set correctly): notify_reorder_alert() (called from
+    notify_transaction() whenever item.needs_reorder() goes True) used to
+    resolve a SINGLE recipient via business.users.filter(role="owner")
+    .first() — silently dropping every OTHER owner-role user on the
+    account (a business can legitimately have more than one). Rewritten
+    to fan out to every owner-role profile — deliberately NOT widened to
+    managers, per Roy's own explicit correction: "only the owner should
+    get stock alerts no one else." """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Reorder Notif Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        # Two owner-role accounts on the same business — the literal live
+        # scenario: Roy (created first) and Bosco (added later), both
+        # role='owner'. .first() would only ever reach Roy.
+        self.roy = User.objects.create_user(username='rn_roy', password='x', email='roy@x.com')
+        UserProfile.objects.create(user=self.roy, business=self.biz, role='owner', phone='0711111111')
+        self.bosco = User.objects.create_user(username='rn_bosco', password='x', email='bosco@x.com')
+        UserProfile.objects.create(user=self.bosco, business=self.biz, role='owner', phone='0722222222')
+        self.manager = User.objects.create_user(username='rn_manager', password='x', email='mgr@x.com')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager', phone='0733333333')
+        self.staff = User.objects.create_user(username='rn_staff', password='x', email='staff@x.com')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff', phone='0744444444')
+
+        self.beer = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker Lager',
+            material_no='RN-BEER-01', unit='Pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('120'), reorder_level=Decimal('10'),
+            reorder_quantity=Decimal('48'), opening_bin_balance=Decimal('12'),
+        )
+
+    def _sell_below_reorder(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.beer, type='Issue',
+            qty=Decimal('-5'), sale_amount=Decimal('1000'), payment_method='cash',
+        )
+        from core.notifications import notify_transaction
+        notify_transaction(txn, self.biz)
+        return txn
+
+    def test_every_owner_role_account_notified_not_just_first(self):
+        """The literal live scenario: Bosco (a second owner-role account)
+        must be notified, not silently skipped in favour of Roy."""
+        self._sell_below_reorder()
+        self.assertTrue(self.beer.needs_reorder())
+        self.assertTrue(
+            Notification.objects.filter(user=self.roy, title__icontains='Low Stock').exists()
+        )
+        self.assertTrue(
+            Notification.objects.filter(user=self.bosco, title__icontains='Low Stock').exists()
+        )
+
+    def test_manager_not_notified(self):
+        """Roy's explicit correction: "only the owner should get stock
+        alerts no one else" — deliberately NOT widened to managers here,
+        unlike several other notification fixes in this app."""
+        self._sell_below_reorder()
+        self.assertFalse(
+            Notification.objects.filter(user=self.manager, title__icontains='Low Stock').exists()
+        )
+
+    def test_plain_staff_not_notified(self):
+        self._sell_below_reorder()
+        self.assertFalse(
+            Notification.objects.filter(user=self.staff, title__icontains='Low Stock').exists()
+        )
+
+    def test_no_alert_when_stock_still_above_reorder_level(self):
+        healthy = Item.objects.create(
+            business=self.biz, store=self.store, description='White Cap',
+            material_no='RN-BEER-02', unit='Pcs', selling_price=Decimal('200'),
+            reorder_level=Decimal('10'), opening_bin_balance=Decimal('100'),
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=healthy, type='Issue',
+            qty=Decimal('-2'), sale_amount=Decimal('400'), payment_method='cash',
+        )
+        from core.notifications import notify_transaction
+        notify_transaction(txn, self.biz)
+        self.assertFalse(
+            Notification.objects.filter(user=self.roy, title__icontains='Low Stock').exists()
+        )
 
 
 class RecentSettledTabsStationScopingTest(TestCase):

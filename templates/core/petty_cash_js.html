@@ -3,9 +3,25 @@ window.openPettyCashModal = function() {
   document.getElementById('pc-amount').value = '';
   document.getElementById('pc-description').value = '';
   document.getElementById('pc-error').style.display = 'none';
+  document.getElementById('pc-reason').value = 'electricity';
+  window._pcUpdateDisbursementHint();
   new bootstrap.Modal(document.getElementById('pettyCashModal')).show();
   setTimeout(function(){ document.getElementById('pc-amount').focus(); }, 300);
 };
+
+// 2026-08-11 — "Fedha kwa Mtu" is the one reason that deliberately does
+// NOT mirror into Expense Intelligence (see review_petty_cash()); this
+// hint makes that visible at record time instead of a silent surprise
+// later on the P&L.
+window._pcUpdateDisbursementHint = function() {
+  var hint = document.getElementById('pc-disbursement-hint');
+  var reason = document.getElementById('pc-reason').value;
+  if (hint) hint.style.display = (reason === 'cash_disbursement') ? 'block' : 'none';
+};
+document.addEventListener('DOMContentLoaded', function() {
+  var sel = document.getElementById('pc-reason');
+  if (sel) sel.addEventListener('change', window._pcUpdateDisbursementHint);
+});
 
 window._submitPettyCash = function() {
   var amount = (document.getElementById('pc-amount').value || '').trim();

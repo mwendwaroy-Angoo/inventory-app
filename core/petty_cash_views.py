@@ -295,7 +295,14 @@ def review_petty_cash(request, entry_id):
     # any expense mirror created by an earlier approval must be removed again on
     # a reversal (this is a DERIVED row — PettyCash.status stays authoritative,
     # never the other way round).
-    if entry.status == 'approved' and not entry.linked_expense_id:
+    #
+    # 2026-08-11 live request (Roy): 'cash_disbursement' (cash handed to a
+    # PERSON — police, chama, a personal loan) is a real till outflow but
+    # NOT a business operating expense — it must still reduce till_
+    # expected_cash() like any other approved entry (unaffected, that read
+    # is purely status='approved'), but must NEVER be mirrored into Expense
+    # Intelligence. Every other reason keeps mirroring exactly as before.
+    if entry.status == 'approved' and entry.reason != 'cash_disbursement' and not entry.linked_expense_id:
         expense = BusinessExpense.objects.create(
             business=entry.business,
             description=f"Petty Cash — {entry.get_reason_display()}" + (f": {entry.description}" if entry.description else ""),

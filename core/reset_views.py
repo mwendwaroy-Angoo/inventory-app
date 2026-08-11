@@ -215,12 +215,44 @@ def reset_sales_complete(request):
     return render(request, 'core/reset_sales_complete.html', {'reset_log': latest})
 
 
+def latest_business_wide_reset(business):
+    """The most recent SalesResetLog that represents a FULL business-wide
+    Reset Sales & Analytics run — not the narrower, item-scoped Kitchen
+    Item Reset (core/kitchen_reset_views.py), which deliberately reuses
+    this same model for its own audit trail (rather than a parallel log
+    model) but only ever touches one item's own sales/receiving history,
+    never the whole business.
+
+    2026-08-11 live report (Roy): reset only Kuku and Chipo via Kitchen
+    Item Reset, and the dashboard immediately demanded a fresh physical
+    count of 49 items business-wide — including plain bar stock never
+    touched by that reset. Root cause: every "fresh count pending" banner
+    (home(), stock_list(), this checklist) picked whichever SalesResetLog
+    was simply the MOST RECENT, with no way to tell a full wipe apart from
+    a 2-item reset — so Kuku/Chipo's own reset log was silently treated as
+    if the whole business had just been wiped.
+
+    Distinguished by checking for an 'item' key in counts_snapshot (only
+    ever present on a Kitchen Item Reset's snapshot — a full business
+    reset's snapshot keys are model names like 'Transaction'/'Receipt',
+    never literally 'item') in plain Python, not a queryset __has_key
+    filter — this app has already hit real cross-database trouble with
+    JSONField lookups on SQLite (see core.tab_receipts._safe_linked_query's
+    documented __contains NotSupportedError); resets are rare events, so
+    scanning a handful of the most recent rows in Python is cheap and
+    correct on every backend."""
+    for log in SalesResetLog.objects.filter(business=business).order_by('-created_at')[:20]:
+        if 'item' not in (log.counts_snapshot or {}):
+            return log
+    return None
+
+
 @owner_or_manager_required
 def fresh_stock_count_checklist(request):
     up = get_user_profile(request)
     business = up.business
 
-    latest_reset = SalesResetLog.objects.filter(business=business).order_by('-created_at').first()
+    latest_reset = latest_business_wide_reset(business)
     if not latest_reset:
         messages.info(request, _('No reset has been performed for this business yet.'))
         return redirect('stock_list')

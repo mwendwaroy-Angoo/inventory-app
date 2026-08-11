@@ -18,8 +18,18 @@
             <option value="transport">🚗 Usafiri / Delivery</option>
             <option value="fuel">⛽ Mafuta / Gesi</option>
             <option value="food">🍽 Chakula cha Wafanyakazi</option>
+            <option value="cash_disbursement">🤝 Fedha kwa Mtu (polisi, chama, n.k.)</option>
             <option value="other">📝 Nyingine</option>
           </select>
+        </div>
+        <!-- 2026-08-11 live request (Roy): every other reason above
+             already mirrors automatically into Expense Intelligence once
+             approved — no need to also fill in Matumizi separately.
+             "Fedha kwa Mtu" is the one exception: real cash left the
+             drawer, but it's not a business expense, so it's deliberately
+             excluded from that mirror. -->
+        <div id="pc-disbursement-hint" style="display:none;background:rgba(93,168,240,.08);border:1px solid rgba(93,168,240,.25);border-radius:6px;padding:.5rem .6rem;margin-bottom:.5rem;font-size:.75rem;color:#9fc5f0;line-height:1.4;">
+          Hii itapunguza pesa ya kaunta lakini HAITAONGEZWA kama gharama ya biashara kwenye Matumizi.
         </div>
         <div style="margin-bottom:.5rem;">
           <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Kiasi (KES)</label>

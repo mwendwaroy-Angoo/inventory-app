@@ -307,10 +307,27 @@ def notify_transaction(transaction, business, daily_count=0, user=None):
         )
 
     if item.needs_reorder():
-        notify_reorder_alert(item, business, owner, owner_email, owner_phone)
+        notify_reorder_alert(item, business)
 
 
-def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
+def notify_reorder_alert(item, business):
+    """2026-08-11 live report (Roy — Bosco, an owner-role account on this
+    business, never received a beer reorder alert): this used to take a
+    single owner/owner_email/owner_phone resolved by notify_transaction()
+    via business.users.filter(role="owner").first() — silently dropping
+    every OTHER owner-role user on the account (a business can legitimately
+    have more than one). .first() picks whichever row happens to sort
+    first, not necessarily "the person who should hear about this."
+    Rewritten to resolve its own recipients and fan out to EVERY owner-
+    role profile. Deliberately owner-only, NOT widened to include managers
+    the way several other notification fixes in this app have been —
+    Roy's own explicit correction: "only the owner should get stock
+    alerts no one else." LOW_STOCK stays email + in-app only, never SMS —
+    that's ROUTING_RULES' own deliberate design, unchanged;
+    route_notification() skips its SMS branch entirely when should_sms=
+    False, so calling it once per recipient here is safe and never
+    touches the SMS rate limiter."""
+    from accounts.models import UserProfile as _UP
     subject = f"⚠️ Low Stock Alert — {item.description}"
     text_message = (
         f"Low stock alert from Duka Mwecheche\n\n"
@@ -322,20 +339,24 @@ def notify_reorder_alert(item, business, owner, owner_email, owner_phone):
         f"Please restock this item soon.\n\n"
         f"— Duka Mwecheche"
     )
-    create_in_app_notification(
-        owner,
-        f"⚠️ Low Stock: {item.description}",
-        f"Balance: {item.current_balance()} {item.unit}. Reorder level: {item.reorder_level}",
-        notification_type="warning",
-        link_url=f'/item/{item.id}/',
-    )
-    route_notification(
-        NotifEvent.LOW_STOCK,
-        business, owner_phone, owner_email,
-        '',  # no SMS per routing table
-        subject, None,
-        text_message=text_message,
-    )
+    recipients = _UP.objects.filter(
+        business=business, role='owner',
+    ).select_related('user')
+    for profile in recipients:
+        create_in_app_notification(
+            profile.user,
+            f"⚠️ Low Stock: {item.description}",
+            f"Balance: {item.current_balance()} {item.unit}. Reorder level: {item.reorder_level}",
+            notification_type="warning",
+            link_url=f'/item/{item.id}/',
+        )
+        route_notification(
+            NotifEvent.LOW_STOCK,
+            business, profile.phone or business.phone, profile.user.email,
+            '',  # no SMS per routing table
+            subject, None,
+            text_message=text_message,
+        )
 
 
 def notify_staff_login(user, business, action="logged in"):

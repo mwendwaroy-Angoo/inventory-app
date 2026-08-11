@@ -5914,3 +5914,63 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   older history, audit log content, tab-linked exclusion, a batch predating the cutoff
   stays untouched, staff/cross-business access control; 3 more on `KitchenStockReceiptTest`
   for `received_on`). No migrations. 1717 tests pass (core + accounts).
+- Four live fixes in one session (2026-08-11, same-day follow-up): Counter Cash ↔
+  Matumizi double-entry, single-owner reorder alerts, item-scoped reset falsely
+  triggering a business-wide recount, and staff hard-blocked past keg target regardless
+  of the toggle. **(1) Counter Cash / Matumizi**: Roy assumed every ingredient/utility
+  purchase needed typing into BOTH Counter Cash (`PettyCash`, for till reconciliation)
+  AND Matumizi ya Leo (ad-hoc `BusinessExpense`) — turns out `review_petty_cash()`
+  (2026-07-26, item 1) already auto-mirrors any APPROVED entry into Expense Intelligence
+  via `linked_expense`, so this was never actually necessary; Roy simply didn't know.
+  The real gap ran the other direction: EVERY approved reason (including cash physically
+  handed to a person — police, chama, a personal loan) got mirrored as a business
+  expense, with no way to say "this left the till but isn't an operating cost." New
+  `PettyCash.REASON_CHOICES` entry `'cash_disbursement'`; `review_petty_cash()`'s
+  auto-link block now skips it specifically — `till_expected_cash()`/`_reconcile()` are
+  unaffected (pure `status='approved'` reads, no reason filter, so the till impact is
+  unchanged either way). Modal gets a matching option + an inline hint explaining the
+  distinction at record time. Migration 0159 (choices-only, no schema change). **(2)
+  Reorder alerts**: Roy — "Bosco is telling me the beer reorder did not come to him...
+  I've confirmed the reorder levels are set correctly." Traced `notify_reorder_alert()`
+  (called from `notify_transaction()` whenever `item.needs_reorder()` goes true):
+  resolved a SINGLE recipient via `business.users.filter(role="owner").first()` — Roy
+  confirmed Bosco IS an owner-role account, meaning this business has TWO owner-role
+  users and `.first()` was silently dropping whichever one didn't happen to sort first
+  (Roy, apparently, always won). Rewritten to fan out to EVERY owner-role profile.
+  Deliberately did NOT widen to `role__in=['owner','manager']` — the established
+  convention elsewhere in this app — per Roy's own explicit correction: "only the owner
+  should get stock alerts no one else." LOW_STOCK stays email + in-app only per
+  `ROUTING_RULES`, unchanged — never SMS, so no interaction with the SMS bundling rate
+  limiter from calling `route_notification()` once per recipient. **(3) Fresh-count
+  false trigger**: same-day live report — Roy ran the new item-scoped Kitchen Item Reset
+  on only Kuku and Chipo, and the dashboard immediately demanded a fresh physical count
+  of 49 items business-wide, bar stock included. Root cause: Kitchen Item Reset
+  deliberately reuses `SalesResetLog` for its own audit trail rather than a parallel
+  model — but every "fresh count pending" banner (`home()`, `stock_list()`,
+  `fresh_stock_count_checklist()`) picked whichever `SalesResetLog` was simply the MOST
+  RECENT, with no way to tell a full business wipe apart from a 2-item reset. New
+  `core.reset_views.latest_business_wide_reset(business)` distinguishes them by checking
+  for an `'item'` key in `counts_snapshot` (only ever present on a Kitchen Item Reset's
+  snapshot — a full reset's snapshot keys are model names, never literally `'item'`),
+  scanning the last 20 rows in **plain Python**, not a queryset `__has_key` filter — this
+  app has already hit real cross-database trouble with JSONField lookups on SQLite (see
+  the documented `_safe_linked_query()` `__contains` `NotSupportedError` fix) and resets
+  are rare enough that a Python scan is cheap and correct everywhere. All three call
+  sites now route through this helper. **(4) Keg "sell past target" toggle a no-op for
+  staff**: Roy — "whether i disable or enable the sales past target toggle, the system
+  is still denying staff access" — confirmed real, not a settings mistake. Traced
+  `openSellModal()`'s envelope gate (`bar_board.html`): when `block_sales_past_target`
+  is OFF ("soft" mode), the OWNER correctly got a choice (close the barrel, or override
+  and keep selling) — but STAFF hit an unconditional `showToast(...); return;` with zero
+  path forward, IDENTICAL to the hard-block branch, regardless of the toggle. Root
+  cause: `/stock/bar/deplete/<id>/` (closing a barrel) is owner/manager-only server-side,
+  so the original author never gave staff a "close it" choice — but instead of falling
+  through to let them keep selling (the toggle's own literal purpose when off), it just
+  blocked them outright, making the toggle meaningless for anyone who isn't the owner.
+  Fixed: staff in soft mode now get a brief "still on tap" warning toast and fall straight
+  through to the sell modal, same as the owner's "Cancel = continue" path; hard mode is
+  completely unchanged (staff still must involve the owner there, matching the settings
+  page's own documented intent). Pure frontend fix, no backend/API change, no migration.
+  9 new tests (`PettyCashAccountabilityTest`, `LowStockReorderNotificationTest`,
+  `FreshStockCountChecklistTest`). One migration (0159, additive). 1724 tests pass (core
+  + accounts).
