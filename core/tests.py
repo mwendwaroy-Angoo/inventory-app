@@ -4328,6 +4328,108 @@ class AnalyticsUnitsFloatRoundingTest(TestCase):
         self.assertEqual(units, 0.3)
 
 
+class AnalyticsTileBreakdownTest(TestCase):
+    """2026-08-11 live request (Roy): tap-to-expand breakdowns for Revenue,
+    Gross Profit, Net Profit, Total Expenses, Owner Drawings, and Hasara/
+    Losses tiles, so any figure can be checked against the real line items
+    behind it instead of taken on faith — the concrete tool for "how do we
+    figure out whether revenue is really exaggerated or not"."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Breakdown Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='breakdown_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Breakdown Item',
+            material_no='BD-01', selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_revenue_daily_breakdown_matches_real_sales(self):
+        today = timezone.localdate()
+        yesterday = today - timedelta(days=1)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash', date=today,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='cash', date=yesterday,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        breakdown = {str(d['date']): d['revenue'] for d in resp.context['revenue_daily_breakdown']}
+        self.assertEqual(breakdown[str(today)], 100.0)
+        self.assertEqual(breakdown[str(yesterday)], 50.0)
+
+    def test_prev_period_revenue_shown_for_comparison(self):
+        today = timezone.localdate()
+        long_ago = today - timedelta(days=35)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash', date=today,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('25'), payment_method='cash', date=long_ago,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        self.assertEqual(resp.context['cur_revenue'], 100.0)
+        self.assertEqual(resp.context['prev_revenue'], 25.0)
+
+    def test_owner_drawing_items_lists_real_line_items(self):
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='OwnerConsumption',
+            qty=Decimal('-2'), date=today,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        items = resp.context['owner_drawing_items']
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['name'], 'Breakdown Item')
+        self.assertEqual(items[0]['value'], 80.0)  # 2 * 40
+
+    def test_loss_items_lists_wastage_and_void_separately(self):
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Wastage',
+            qty=Decimal('-1'), date=today, recipient='Broken',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='void', date=today,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        items = resp.context['loss_items']
+        kinds = sorted(it['kind'] for it in items)
+        self.assertEqual(kinds, ['Void', 'Wastage'])
+        wastage_row = next(it for it in items if it['kind'] == 'Wastage')
+        self.assertEqual(wastage_row['reason'], 'Broken')
+        self.assertEqual(wastage_row['value'], 40.0)
+
+    def test_expense_items_lists_real_business_expenses(self):
+        today = timezone.localdate()
+        BusinessExpense.objects.create(
+            business=self.biz, category='rent', description='Shop rent',
+            amount=Decimal('5000'), date=today,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        items = resp.context['expense_items']
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['description'], 'Shop rent')
+        self.assertEqual(items[0]['amount'], Decimal('5000'))
+
+    def test_breakdown_panels_render_in_page(self):
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash', date=today,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        self.assertContains(resp, 'breakdown-panel')
+        self.assertContains(resp, 'Tap for daily breakdown')
+
+
 class TabLiveOutstandingTileTest(TestCase):
     """K8-Task4: the 'Bado kulipa' tile must be hidden once outstanding drops to 0."""
 

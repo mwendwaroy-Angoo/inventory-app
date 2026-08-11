@@ -12,7 +12,18 @@
     transition: all 0.2s;
     background: transparent;
   }
-  .period-btn:hover,
+  /* 2026-08-11 live report (Roy): "the period filter is misbehaving when
+     selecting a period" — hover and active used to share this exact rule,
+     so a touch/tap on a DIFFERENT period button looked visually identical
+     to that button being the actual selected one, while the real active
+     period (from the currently loaded page) kept its own highlight too —
+     two pills looked "selected" at once. Hover now gets a lighter accent
+     (no solid fill) so only the genuinely active period ever shows the
+     solid raspberry fill, unambiguously. */
+  .period-btn:hover {
+    border-color: var(--raspberry);
+    color: var(--raspberry);
+  }
   .period-btn.active {
     background: var(--raspberry);
     border-color: var(--raspberry);
@@ -53,6 +64,55 @@
   }
   .stat-change.down {
     color: var(--danger);
+  }
+  /* 2026-08-11 live request (Roy): tap-to-expand breakdown on the key
+     tiles, so any figure can be checked against the real line items behind
+     it — same transparency pattern as home.html's till-breakdown
+     disclosure. Native <details>/<summary>, no JS needed. */
+  details.stat-card summary {
+    cursor: pointer;
+    list-style: none;
+  }
+  details.stat-card summary::-webkit-details-marker,
+  details.stat-card summary::marker {
+    display: none;
+  }
+  details.stat-card .breakdown-hint {
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-top: 0.5rem;
+    opacity: 0.8;
+  }
+  details.stat-card[open] .breakdown-hint {
+    display: none;
+  }
+  .breakdown-panel {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #333;
+    max-height: 260px;
+    overflow-y: auto;
+  }
+  .breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.72rem;
+    color: #c0c0c0;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid #2a2a2a;
+  }
+  .breakdown-row .bd-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .breakdown-empty {
+    font-size: 0.72rem;
+    color: var(--muted);
+    padding: 0.4rem 0;
   }
   .chart-box {
     background: var(--onyx-card);
@@ -213,37 +273,79 @@
 <!-- ═══ KEY METRICS ═══ -->
 <div class="row g-3 mb-4" id="analytics-stats">
   <div class="col-6 col-md-3">
-    <div class="stat-card" style="border-top: 3px solid var(--gold)">
-      <div class="stat-label">{% trans 'Revenue' %}</div>
-      <div class="stat-value" style="color: var(--gold)">
-        {{ cur_revenue|floatformat:0 }}
+    <details class="stat-card" style="border-top: 3px solid var(--gold)">
+      <summary>
+        <div class="stat-label">{% trans 'Revenue' %}</div>
+        <div class="stat-value" style="color: var(--gold)">
+          {{ cur_revenue|floatformat:0 }}
+        </div>
+        <div
+          class="stat-change {% if revenue_change >= 0 %}up{% else %}down{% endif %}"
+        >
+          {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change_display }} {% trans 'vs prev' %}
+        </div>
+        <div class="breakdown-hint">👆 {% trans 'Tap for daily breakdown' %}</div>
+      </summary>
+      <div class="breakdown-panel">
+        <div class="breakdown-row" style="font-weight:600; color:var(--pearl);">
+          <span class="bd-name">{% trans 'This period' %} ({{ start_date }} → {{ end_date }})</span>
+          <span>KES {{ cur_revenue|floatformat:0 }}</span>
+        </div>
+        <div class="breakdown-row" style="font-weight:600;">
+          <span class="bd-name">{% trans 'Previous period' %} ({{ prev_start }} → {{ prev_end }})</span>
+          <span>KES {{ prev_revenue|floatformat:0 }}</span>
+        </div>
+        {% for d in revenue_daily_breakdown %}
+        <div class="breakdown-row">
+          <span class="bd-name">{{ d.date }}</span>
+          <span>KES {{ d.revenue|floatformat:0 }}</span>
+        </div>
+        {% empty %}
+        <div class="breakdown-empty">{% trans 'No sales recorded in this period.' %}</div>
+        {% endfor %}
       </div>
-      <div
-        class="stat-change {% if revenue_change >= 0 %}up{% else %}down{% endif %}"
-      >
-        {% if revenue_change >= 0 %}↑{% else %}↓{% endif %} {{ revenue_change_display }} {% trans 'vs prev' %}
-      </div>
-    </div>
+    </details>
   </div>
   <div class="col-6 col-md-3">
-    <div
+    <details
       class="stat-card"
       style="border-top: 3px solid {% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};"
     >
-      <div class="stat-label">{% trans 'Gross Profit' %}</div>
-      <div
-        class="stat-value"
-        style="color:{% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}"
-      >
-        {{ cur_profit|floatformat:0 }}
+      <summary>
+        <div class="stat-label">{% trans 'Gross Profit' %}</div>
+        <div
+          class="stat-value"
+          style="color:{% if cur_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}"
+        >
+          {{ cur_profit|floatformat:0 }}
+        </div>
+        <div
+          class="stat-change {% if profit_change >= 0 %}up{% else %}down{% endif %}"
+        >
+          {% if profit_change >= 0 %}↑{% else %}↓{% endif %} {{ profit_change_display }}
+          {% trans 'vs prev' %}
+        </div>
+        <div class="breakdown-hint">👆 {% trans 'Tap for daily breakdown' %}</div>
+      </summary>
+      <div class="breakdown-panel">
+        <div class="breakdown-row" style="font-weight:600; color:var(--pearl);">
+          <span class="bd-name">{% trans 'Revenue' %} − {% trans 'Cost of Goods' %}</span>
+          <span>{{ cur_revenue|floatformat:0 }} − {{ cur_cost|floatformat:0 }}</span>
+        </div>
+        <div class="breakdown-row" style="font-weight:600;">
+          <span class="bd-name">{% trans 'Previous period gross profit' %}</span>
+          <span>KES {{ prev_profit|floatformat:0 }}</span>
+        </div>
+        {% for d in revenue_daily_breakdown %}
+        <div class="breakdown-row">
+          <span class="bd-name">{{ d.date }}</span>
+          <span>KES {{ d.profit|floatformat:0 }}</span>
+        </div>
+        {% empty %}
+        <div class="breakdown-empty">{% trans 'No sales recorded in this period.' %}</div>
+        {% endfor %}
       </div>
-      <div
-        class="stat-change {% if profit_change >= 0 %}up{% else %}down{% endif %}"
-      >
-        {% if profit_change >= 0 %}↑{% else %}↓{% endif %} {{ profit_change_display }}
-        {% trans 'vs prev' %}
-      </div>
-    </div>
+    </details>
   </div>
   <div class="col-6 col-md-3">
     <div class="stat-card" style="border-top: 3px solid var(--pearl)">
@@ -270,27 +372,52 @@
 <!-- ═══ NET PROFIT & EXPENSES ROW ═══ -->
 <div class="row g-3 mb-4">
   <div class="col-md-3 col-6">
-    <div
+    <details
       class="stat-card"
       style="border-top: 3px solid {% if net_profit >= 0 %}var(--success){% else %}var(--danger){% endif %};"
     >
-      <div class="stat-label">{% trans 'Net Profit' %}</div>
-      <div
-        class="stat-value"
-        style="color:{% if net_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}"
-      >
-        {{ net_profit|floatformat:0 }}
+      <summary>
+        <div class="stat-label">{% trans 'Net Profit' %}</div>
+        <div
+          class="stat-value"
+          style="color:{% if net_profit >= 0 %}var(--success){% else %}var(--danger){% endif %}"
+        >
+          {{ net_profit|floatformat:0 }}
+        </div>
+        <div class="stat-change" style="color: var(--muted)">
+          {% trans 'Gross:' %} {{ cur_profit|floatformat:0 }}{% if owner_drawings_cost > 0 %} · Drawings: -{{ owner_drawings_cost|floatformat:0 }}{% endif %}{% if total_losses > 0 %} · Hasara: -{{ total_losses|floatformat:0 }}{% endif %}
+        </div>
+        <div class="breakdown-hint">👆 {% trans 'Tap for the full formula' %}</div>
+      </summary>
+      <div class="breakdown-panel">
+        <div class="breakdown-row"><span class="bd-name">{% trans 'Gross Profit' %}</span><span>{{ cur_profit|floatformat:0 }}</span></div>
+        <div class="breakdown-row"><span class="bd-name">− {% trans 'Total Expenses' %}</span><span>{{ total_expenses|floatformat:0 }}</span></div>
+        <div class="breakdown-row"><span class="bd-name">− {% trans 'Owner Drawings' %}</span><span>{{ owner_drawings_cost|floatformat:0 }}</span></div>
+        <div class="breakdown-row"><span class="bd-name">− {% trans 'Hasara / Losses' %}</span><span>{{ total_losses|floatformat:0 }}</span></div>
+        <div class="breakdown-row" style="font-weight:600; color:var(--pearl); border-bottom:none;">
+          <span class="bd-name">= {% trans 'Net Profit' %}</span><span>{{ net_profit|floatformat:0 }}</span>
+        </div>
       </div>
-      <div class="stat-change" style="color: var(--muted)">
-        {% trans 'Gross:' %} {{ cur_profit|floatformat:0 }}{% if owner_drawings_cost > 0 %} · Drawings: -{{ owner_drawings_cost|floatformat:0 }}{% endif %}{% if total_losses > 0 %} · Hasara: -{{ total_losses|floatformat:0 }}{% endif %}
-      </div>
-    </div>
+    </details>
   </div>
   <div class="col-md-3 col-6">
-    <div class="stat-card" style="border-top: 3px solid var(--raspberry)">
-      <div class="stat-label">{% trans 'Total Expenses' %}</div>
-      <div class="stat-value" style="color: var(--raspberry)">
-        {{ total_expenses|floatformat:0 }}
+    <details class="stat-card" style="border-top: 3px solid var(--raspberry)">
+      <summary>
+        <div class="stat-label">{% trans 'Total Expenses' %}</div>
+        <div class="stat-value" style="color: var(--raspberry)">
+          {{ total_expenses|floatformat:0 }}
+        </div>
+        <div class="breakdown-hint">👆 {% trans 'Tap for line items' %}</div>
+      </summary>
+      <div class="breakdown-panel">
+        {% for e in expense_items %}
+        <div class="breakdown-row">
+          <span class="bd-name">{{ e.date }} — {{ e.description|default:e.category }}</span>
+          <span>KES {{ e.amount|floatformat:0 }}</span>
+        </div>
+        {% empty %}
+        <div class="breakdown-empty">{% trans 'No expenses recorded in this period.' %}</div>
+        {% endfor %}
       </div>
       <div class="stat-change">
         <a href="{% url 'expense_list' %}" style="color: var(--gold); font-size: 0.8rem">{% trans 'Manage Expenses →' %}</a>
@@ -298,32 +425,58 @@
       <div class="stat-change">
         <a href="{% url 'capital_investment_list' %}" style="color: var(--gold); font-size: 0.8rem">{% trans 'Manage Investments →' %}</a>
       </div>
-    </div>
+    </details>
   </div>
   {% if owner_drawings_cost > 0 %}
   <div class="col-md-3 col-6">
-    <div class="stat-card" style="border-top: 3px solid #ff9800;">
-      <div class="stat-label">Owner Drawings</div>
-      <div class="stat-value" style="color: #ff9800;">
-        {{ owner_drawings_cost|floatformat:0 }}
+    <details class="stat-card" style="border-top: 3px solid #ff9800;">
+      <summary>
+        <div class="stat-label">Owner Drawings</div>
+        <div class="stat-value" style="color: #ff9800;">
+          {{ owner_drawings_cost|floatformat:0 }}
+        </div>
+        <div class="stat-change" style="color: var(--muted);">
+          KES — stock taken at cost
+        </div>
+        <div class="breakdown-hint">👆 {% trans 'Tap for line items' %}</div>
+      </summary>
+      <div class="breakdown-panel">
+        {% for it in owner_drawing_items %}
+        <div class="breakdown-row">
+          <span class="bd-name">{{ it.date }} — {{ it.name }} ({{ it.qty }})</span>
+          <span>KES {{ it.value|floatformat:0 }}</span>
+        </div>
+        {% empty %}
+        <div class="breakdown-empty">{% trans 'None recorded in this period.' %}</div>
+        {% endfor %}
       </div>
-      <div class="stat-change" style="color: var(--muted);">
-        KES — stock taken at cost
-      </div>
-    </div>
+    </details>
   </div>
   {% endif %}
   {% if total_losses > 0 %}
   <div class="col-md-3 col-6">
-    <div class="stat-card" style="border-top: 3px solid #fbbf24;">
-      <div class="stat-label">🗑️ Hasara / Losses</div>
-      <div class="stat-value" style="color: #fbbf24;">
-        {{ total_losses|floatformat:0 }}
+    <details class="stat-card" style="border-top: 3px solid #fbbf24;">
+      <summary>
+        <div class="stat-label">🗑️ Hasara / Losses</div>
+        <div class="stat-value" style="color: #fbbf24;">
+          {{ total_losses|floatformat:0 }}
+        </div>
+        <div class="stat-change" style="color: var(--muted);">
+          {% if wastage_loss > 0 %}Wastage: {{ wastage_loss|floatformat:0 }}{% endif %}{% if wastage_loss > 0 and void_loss > 0 %} · {% endif %}{% if void_loss > 0 %}Voids: {{ void_loss|floatformat:0 }}{% endif %}
+        </div>
+        <div class="breakdown-hint">👆 {% trans 'Tap for line items' %}</div>
+      </summary>
+      <div class="breakdown-panel">
+        {% for it in loss_items %}
+        <div class="breakdown-row">
+          <span class="bd-name">{{ it.date }} — [{{ it.kind }}] {{ it.name }} ({{ it.qty }}){% if it.reason %} — {{ it.reason }}{% endif %}</span>
+          <span>KES {{ it.value|floatformat:0 }}</span>
+        </div>
+        {% empty %}
+        <div class="breakdown-empty">{% trans 'None recorded in this period.' %}</div>
+        {% endfor %}
       </div>
-      <div class="stat-change" style="color: var(--muted);">
-        {% if wastage_loss > 0 %}Wastage: {{ wastage_loss|floatformat:0 }}{% endif %}{% if wastage_loss > 0 and void_loss > 0 %} · {% endif %}{% if void_loss > 0 %}Voids: {{ void_loss|floatformat:0 }}{% endif %}
-      </div>
-    </div>
+    </details>
   </div>
   {% endif %}
   <div class="col-md-3 col-6">

@@ -417,15 +417,26 @@ def analytics_dashboard(request):
         date__lte=today,
     ).aggregate(total=Sum('amount'))['total'] or 0
 
-    owner_drawing_txns = Transaction.objects.filter(
+    owner_drawing_txns = list(Transaction.objects.filter(
         business=business,
         type='OwnerConsumption',
         date__gte=start_date,
         date__lte=today,
-    ).select_related('item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset')
+    ).select_related('item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset'))
     owner_drawings_cost = round(sum(
         t.loss_value() for t in owner_drawing_txns
     ), 2)
+    # 2026-08-11 live request (Roy): tap-to-expand breakdown for the Owner
+    # Drawings tile — same "show the real line items" transparency pattern
+    # as home.html's till-breakdown disclosure, so a figure can be checked
+    # against reality instead of taken on faith.
+    owner_drawing_items = sorted(
+        [
+            {'date': t.date, 'name': t.item.description, 'qty': abs(t.qty or 0), 'value': round(t.loss_value(), 2)}
+            for t in owner_drawing_txns
+        ],
+        key=lambda r: r['date'], reverse=True,
+    )
 
     # Wastage loss: cost of stock discarded, broken, or adjusted out — no revenue received.
     # Uses Transaction.loss_value() per Wastage transaction — NOT a raw
@@ -446,14 +457,14 @@ def analytics_dashboard(request):
     # received; no real money was ever spent on them). A genuine shortage
     # correction (real breakage/theft discovered late, still plain '[ADJ]')
     # correctly still counts here.
-    wastage_txns = Transaction.objects.filter(
+    wastage_txns = list(Transaction.objects.filter(
         business=business,
         type='Wastage',
         date__gte=start_date,
         date__lte=today,
     ).exclude(invoice_no='[ADJ-NOLOSS]').select_related(
         'item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
-    )
+    ))
     wastage_loss = round(sum(t.loss_value() for t in wastage_txns), 2)
 
     # Void/write-off loss: stock was served but payment was cancelled/waived.
@@ -464,18 +475,55 @@ def analytics_dashboard(request):
     # wastage_loss above; a voided transaction is still type='Issue', so
     # cost() already has the correct keg/bunch/batch/preset-aware logic, the
     # bug was only ever that this call site never used it.
-    void_txns = Transaction.objects.filter(
+    void_txns = list(Transaction.objects.filter(
         business=business,
         type='Issue',
         payment_method='void',
         date__gte=start_date,
         date__lte=today,
-    ).select_related('item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset')
+    ).select_related('item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset'))
     void_loss = round(sum(t.cost() for t in void_txns), 2)
+
+    # 2026-08-11 live request (Roy): tap-to-expand breakdown for the Hasara/
+    # Losses tile — every wastage AND void line, so a suspicious total can be
+    # checked against the actual transactions behind it, same transparency
+    # pattern as owner_drawing_items above.
+    loss_items = sorted(
+        [
+            {'date': t.date, 'name': t.item.description, 'qty': abs(t.qty or 0),
+             'value': round(t.loss_value(), 2), 'kind': 'Wastage', 'reason': t.recipient or ''}
+            for t in wastage_txns
+        ] + [
+            {'date': t.date, 'name': t.item.description, 'qty': abs(t.qty or 0),
+             'value': round(t.cost(), 2), 'kind': 'Void', 'reason': t.recipient or ''}
+            for t in void_txns
+        ],
+        key=lambda r: r['date'], reverse=True,
+    )
 
     total_losses = round(wastage_loss + void_loss, 2)
 
     net_profit = cur_profit - float(total_expenses) - owner_drawings_cost - total_losses
+
+    # 2026-08-11 live request (Roy): tap-to-expand breakdown for the Total
+    # Expenses tile.
+    expense_items = list(
+        BusinessExpense.objects.filter(
+            business=business, date__gte=start_date, date__lte=today,
+        ).order_by('-date').values('date', 'category', 'description', 'amount')[:50]
+    )
+
+    # 2026-08-11 live request (Roy, relaying a doubt from Bosco: "whatever
+    # is being shown as revenue must be extremely exaggerated") — day-by-day
+    # revenue/profit breakdown for the Revenue and Gross Profit tiles, so the
+    # "X vs prev" figure can be verified against the real daily numbers
+    # instead of taken on faith. Reuses daily_data (already computed above
+    # for the chart) rather than re-querying.
+    revenue_daily_breakdown = [
+        {'date': d, 'revenue': round(daily_data[d]['revenue'], 2), 'profit': round(daily_data[d]['profit'], 2)}
+        for d in sorted(all_dates, reverse=True)
+        if daily_data[d]['revenue'] > 0 or daily_data[d]['profit'] != 0
+    ]
 
     # ── Break-Even Analysis (all-time, not period-filtered) ──────────────────────
     total_capital = float(
@@ -975,6 +1023,17 @@ def analytics_dashboard(request):
         'revenue_change': revenue_change,
         'profit_change': profit_change,
         'units_change': units_change,
+        'prev_revenue': round(prev_revenue, 2),
+        'prev_profit': round(prev_profit, 2),
+        'prev_start': prev_start,
+        'prev_end': prev_end,
+        # Tap-to-expand breakdowns (2026-08-11 live request) — the real line
+        # items behind each headline figure, so any number can be checked
+        # against reality instead of taken on faith.
+        'revenue_daily_breakdown': revenue_daily_breakdown,
+        'owner_drawing_items': owner_drawing_items,
+        'loss_items': loss_items,
+        'expense_items': expense_items,
         # Human-readable display versions
         'revenue_change_display': format_pct_change(revenue_change),
         'profit_change_display':  format_pct_change(profit_change),
