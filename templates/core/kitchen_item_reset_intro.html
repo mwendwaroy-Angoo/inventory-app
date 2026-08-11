@@ -16,9 +16,18 @@
         <p style="color:var(--muted); font-size:0.85rem; margin-bottom:0;">Pakua nakala ya chelezo (backup) kabla ya kuthibitisha — ndiyo nakala pekee ya taarifa hizi baada ya kufutwa.</p>
     </div>
 
+    <div style="background:rgba(201,168,76,0.1); border:1px solid var(--gold); border-radius:10px; padding:1.2rem; margin-bottom:1.5rem;">
+        <p style="color:var(--pearl); margin-bottom:0; font-size:0.88rem;">
+            ✅ Tarehe iliyowekwa chini kwa default ni <strong>siku ya kwanza kabisa</strong> bidhaa hii ilirekodiwa
+            mfumoni — yaani ukibonyeza "Futa" bila kubadilisha chochote, <strong>KILA KITU</strong> (mauzo yote,
+            risiti zote) kwa bidhaa hii kitafutwa, mwanzo hadi leo. Hii ndiyo njia salama ya "anza upya kabisa" —
+            hakuna data ya zamani itakayobaki ikichanganya hesabu mpya.
+        </p>
+    </div>
+
     <div style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:1.5rem; margin-bottom:1.5rem;">
         <form method="get" style="margin-bottom:1rem;">
-            <label class="form-label" style="color:var(--pearl);">Tangu Tarehe (pamoja na siku hii)</label>
+            <label class="form-label" style="color:var(--pearl);">Tangu Tarehe (pamoja na siku hii) — badilisha tu ikiwa hutaki kufuta kila kitu</label>
             <div class="d-flex gap-2">
                 <input type="date" name="cutoff" value="{{ cutoff_date|date:'Y-m-d' }}" class="form-control"
                        style="background:var(--onyx); color:var(--pearl); border-color:#444;">

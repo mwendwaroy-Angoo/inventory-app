@@ -5981,3 +5981,42 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   a screenshot from "Bosco's account" during testing is still an owner-tier view for
   gating purposes (`QS_IS_OWNER` is role-based), not necessarily what a true staff
   account sees.
+- Kitchen Item Reset: fix the recurring-drift ROOT CAUSE, not another symptom-level patch
+  (2026-08-11, same-day follow-up). Roy ran a Kitchen Item Reset for Kuku, received 23
+  fresh chicken legs, and the "🔍 zimefichwa" diagnostic immediately showed the SAME class
+  of drift again — `Imepokewa: 23, Imeuzwa: 27.5` — despite believing he'd started
+  completely fresh. His own words: "why is this data still showing up, i have just reset
+  everything aargh!" Traced (not guessed) by re-reading `_default_cutoff()`
+  (`core/kitchen_reset_views.py`) against Roy's own stated real workflow: the tool's
+  original default cutoff was the item's MOST RECENT receiving event — meant as "wipe
+  since the last delivery" — but Roy's actual re-entry pattern is to deliberately BACKDATE
+  catch-up sales (and sometimes the receipt itself) to a few days before the day he's
+  actually sitting at the till typing them in. A backdated sale's `created_at` is
+  therefore almost always EARLIER than "the most recent receipt," since the receipt is
+  entered into the system strictly AFTER the paper sale it represents — meaning those
+  exact backdated sales were structurally, permanently immune to ever being wiped by any
+  reset run using the tool's own default: they can never be "since the most recent
+  receipt" by construction. Compounding this: `_received_by_preset`/`_sold_by_preset`
+  (`kitchen_board()`) are LIFETIME aggregates with no time boundary at all (by design, per
+  the 2026-08-09 entry below) — so any backdated sale that survived a reset keeps counting
+  forever, indistinguishable from a brand-new sale in the next "fresh" cycle. Fixed
+  `_default_cutoff()` to return the item's EARLIEST-ever activity (first Transaction,
+  first KitchenStockReceiptLine, or — for a KitchenBatch item — first batch's
+  `received_on`) instead of the most recent one, so a reset run with the untouched default
+  now genuinely means "delete every date this item has ever had a transaction, receipt, or
+  batch" — matching what every real use of this tool has turned out to need. The date
+  field on `kitchen_item_reset_intro.html` stays editable (a future case may genuinely
+  want a partial wipe), but the page now states plainly, in Swahili, that the untouched
+  default wipes everything from day one. All 12 pre-existing `KitchenItemResetTest` tests
+  pass unmodified (each already passed an explicit `?cutoff=` param, never relying on the
+  old default). 3 new tests — `test_default_cutoff_is_earliest_activity_not_most_recent_
+  receipt` and `test_default_cutoff_for_batch_item_is_earliest_batch` lock in the new
+  default computation directly; `test_default_cutoff_full_flow_wipes_pre_receipt_
+  backdated_sale` is the literal end-to-end regression lock — a sale backdated to BEFORE
+  the receipt (exactly Roy's real pattern) is now correctly wiped by a default-cutoff
+  reset instead of surviving as invisible "earlier history." No migrations. Told to Roy
+  directly: re-running the Kitchen Item Reset for Kuku right now (no need to type a date)
+  will use this corrected default and should finally clear the lingering 27.5-sold figure
+  for good — the receiving side (`+Pata Stok`'s preset dropdown, already wired to feed the
+  same `KitchenStockReceiptLine` ledger since 2026-08-09) is unaffected by this fix and
+  should work correctly for the next fresh receipt.

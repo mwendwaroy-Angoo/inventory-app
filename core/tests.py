@@ -30320,6 +30320,49 @@ class KitchenItemResetTest(TestCase):
         self.assertEqual(log.counts_snapshot['transactions_deleted'], 4)
         self.assertEqual(log.counts_snapshot['receipts_deleted'], 1)
 
+    def test_default_cutoff_is_earliest_activity_not_most_recent_receipt(self):
+        """2026-08-11 same-day correction: a reset run with NO ?cutoff=
+        override must default to the item's EARLIEST-ever activity (the
+        day-10 backdated sale, which predates the receipt itself), not the
+        most recent receipt (day-5) — the original default anchor. Roy's
+        real workflow backdates catch-up sales to before the day he enters
+        the receipt, so a "most recent receipt" cutoff structurally always
+        leaves those exact sales behind, letting the same drift recur every
+        time the tool is used with its own default."""
+        resp = self.client.get(f'/kitchen/item-reset/{self.kuku.id}/')
+        self.assertEqual(resp.status_code, 200)
+        expected = (timezone.localdate() - timedelta(days=10)).isoformat()
+        self.assertEqual(resp.context['cutoff_date'].isoformat(), expected)
+
+    def test_default_cutoff_full_flow_wipes_pre_receipt_backdated_sale(self):
+        """End-to-end reproduction of the recurring-drift bug: with no
+        cutoff override at all, backup + confirm must wipe every kuku
+        transaction/receipt, including the day-10 sale that predates the
+        receipt — this is the exact leftover that kept surviving every
+        reset run before this fix."""
+        intro = self.client.get(f'/kitchen/item-reset/{self.kuku.id}/')
+        cutoff_str = intro.context['cutoff_date'].isoformat()
+        self.assertEqual(cutoff_str, (timezone.localdate() - timedelta(days=10)).isoformat())
+
+        self.client.get(f'/kitchen/item-reset/{self.kuku.id}/backup/')
+        resp = self.client.post(f'/kitchen/item-reset/{self.kuku.id}/confirm/', {
+            'cutoff': cutoff_str, 'confirm_text': self.kuku.description,
+        })
+        self.assertRedirects(resp, f'/kitchen/item-reset/{self.kuku.id}/complete/')
+        self.assertEqual(Transaction.objects.filter(item=self.kuku).count(), 0)
+        self.assertFalse(KitchenStockReceipt.objects.filter(id=self.receipt.id).exists())
+
+    def test_default_cutoff_for_batch_item_is_earliest_batch(self):
+        old_batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            cost_total=Decimal('500'), status='DEPLETED',
+            received_on=timezone.localdate() - timedelta(days=20),
+        )
+        resp = self.client.get(f'/kitchen/item-reset/{self.chipo.id}/')
+        expected = (timezone.localdate() - timedelta(days=20)).isoformat()
+        self.assertEqual(resp.context['cutoff_date'].isoformat(), expected)
+        self.assertTrue(KitchenBatch.objects.filter(id=old_batch.id).exists())
+
     def test_tab_linked_sale_excluded_from_deletion(self):
         tab = BarTab.objects.create(business=self.biz, customer_name='Table 3', status='OPEN', source='kitchen')
         tab_txn = Transaction.objects.create(

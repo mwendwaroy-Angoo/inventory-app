@@ -64,23 +64,56 @@ def _backup_session_key(item_id):
 
 
 def _default_cutoff(item):
-    """Best-guess starting cutoff: the item's own most recent receiving
-    event (a KitchenStockReceipt line, for a plain portion item, or a
-    KitchenBatch's own received_on, for a batch item). Falls back to
-    today if the item has no receiving history through either mechanism
-    yet — the owner can always type a different date."""
+    """Best-guess starting cutoff for a genuine fresh start.
+
+    2026-08-11 same-day correction (Roy, Monsoon Inn): the original version
+    defaulted to the item's own MOST RECENT receiving event — meant as "wipe
+    since the last delivery" — but that anchor is structurally wrong for how
+    Roy actually re-enters data: he deliberately BACKDATES catch-up sales
+    (and sometimes the receipt itself) to a few days before the date he's
+    actually sitting at the till entering them. A backdated sale's
+    `created_at` is therefore very often ALREADY earlier than "the most
+    recent receipt," which meant every past reset run silently left those
+    exact backdated sales untouched — they never can be later than a cutoff
+    anchored on "most recent receipt," since the receipt is always entered
+    into the system AFTER the paper sale it's backdated to represent. The
+    result: a "fresh start" reset would appear to work, but the very next
+    diagnostic check (re-receiving 23 units, then finding 27.5 already
+    "sold" against them) would show the SAME kind of drift again, because
+    the old backdated sales were never actually deleted — confirmed by
+    Roy's own live report and reasoned from this exact mechanism, not
+    guessed at.
+
+    Now defaults to the EARLIEST activity ever recorded for the item, so
+    "reset with the default cutoff" really does mean "delete every date
+    this item has ever had a transaction, receipt, or batch" — a genuine
+    fresh start every time, matching what every real use of this tool has
+    turned out to need. The owner can still type a LATER cutoff by hand for
+    a future case that genuinely only needs a partial wipe.
+    """
     if item.is_kitchen_batch:
-        latest = (
+        earliest = (
             KitchenBatch.objects.filter(item=item)
-            .order_by('-received_on').values_list('received_on', flat=True).first()
+            .order_by('received_on').values_list('received_on', flat=True).first()
         )
-    else:
-        latest = (
-            KitchenStockReceiptLine.objects.filter(item=item)
-            .order_by('-receipt__received_on')
-            .values_list('receipt__received_on', flat=True).first()
-        )
-    return latest or timezone.localdate()
+        return earliest or timezone.localdate()
+
+    earliest_txn_at = (
+        Transaction.objects.filter(item=item)
+        .order_by('created_at').values_list('created_at', flat=True).first()
+    )
+    earliest_rcpt = (
+        KitchenStockReceiptLine.objects.filter(item=item)
+        .order_by('receipt__received_on')
+        .values_list('receipt__received_on', flat=True).first()
+    )
+    candidates = [
+        d for d in [
+            timezone.localtime(earliest_txn_at).date() if earliest_txn_at else None,
+            earliest_rcpt,
+        ] if d is not None
+    ]
+    return min(candidates) if candidates else timezone.localdate()
 
 
 def _scope_for_item(business, item, cutoff_date):
