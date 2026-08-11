@@ -5594,3 +5594,33 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   fixed mid-morning-today timestamp, same fix pattern as those two. 7 new tests
   (`BackfillShiftStationTest`). No migrations (backfill command reads/writes existing
   fields only). 1674 tests pass (core + accounts).
+- Offline page told users the wrong thing, with no auto-retry (2026-08-11), live
+  report: Roy hit the PWA's "You're Offline / lost your internet connection" screen
+  while YouTube streamed smoothly on the same phone at the same moment — proof the
+  message was actively wrong. Investigated live via Render dashboard screenshots
+  first, not guessed: the Total Requests graph grouped by status code showed clean
+  200s with no visible 502 anywhere in the 12-hour window, and the Events log's most
+  recent "Instance failed"/"Service recovered" pair was from 2026-08-09 (the
+  already-fixed gunicorn thread-starvation incident) — nothing recent. So the
+  container itself never crashed. Root cause of the confusing "offline" message
+  itself: `sw.js`'s navigate handler (`fetch(request).catch(() => ... caches.match
+  (OFFLINE_URL))`) shows the offline fallback on ANY rejected `fetch()` promise —
+  which fires not just when the phone has no internet at all, but also for a DNS/TLS
+  hiccup or a slow/failed connection reaching THIS specific server, completely
+  independent of whether other sites/apps work. Render's own health-check/Events log
+  only measures Render's fast internal path to the container — it says nothing about
+  whether an external phone over real mobile data could complete the full round trip
+  to Render's public edge at that exact moment, so "Render says healthy" and "this
+  one phone briefly couldn't reach us" are not a contradiction. Fixed
+  `templates/offline.html`: reworded from a confident, often-wrong "you've lost your
+  internet connection" to an honest "could be your connection, or a brief hiccup
+  reaching our server"; added a background poll of the existing lightweight,
+  unauthenticated `/health/` endpoint (already built for Render's own preboot check)
+  every 5s with a 4s per-attempt timeout via `AbortController`, auto-reloading the
+  page the instant a real connection succeeds — most users should now never need to
+  tap "Try Again" themselves. Bumped `sw.js`'s `CACHE_NAME` 'duka-v11' → 'duka-v12' —
+  `/offline/` is in `PRECACHE_URLS`, so without a cache-name bump a device that
+  already installed the old service worker would keep serving the STALE cached copy
+  of this exact page indefinitely, silently defeating the fix for exactly the users
+  who need it. 3 new tests (`OfflinePageTest`). No migrations (template + static
+  asset only).
