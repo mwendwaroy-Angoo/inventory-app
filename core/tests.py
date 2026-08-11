@@ -29698,6 +29698,44 @@ class KitchenStockReceiptRevenuePrecisionTest(TestCase):
         self.receipt.reopen()
         self.assertEqual(self.receipt.status, 'OPEN')
 
+    def test_backdated_sale_before_created_at_but_after_received_on_now_counts(self):
+        """2026-08-11 live report (Roy), confirmed via the hidden-presets
+        diagnostic: a receipt he'd just typed in showed KES 0 Mapato despite
+        32.5 units of genuinely recorded backdated sales — because the old
+        window floor was created_at (the moment the RECEIPT ROW was typed
+        in, always "now"), and a catch-up posting's whole point is a
+        created_at pointing to BEFORE that. The literal reported scenario:
+        receipt typed in today, sale backdated to yesterday (still on/after
+        received_on, which also defaults to today here) — must now count."""
+        yesterday = timezone.now() - timedelta(days=1)
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, preset=self.full_leg, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'),
+            payment_method='cash', created_at=yesterday,
+        )
+        # received_on defaults to today; yesterday's backdated sale is BEFORE
+        # the receipt's own created_at (also "now") but must still count
+        # because it's on/after received_on's own start-of-day... except
+        # here received_on IS today, so tighten the receipt's received_on
+        # to genuinely predate the sale, matching the real live scenario
+        # (delivery arrived a few days ago, sales backdated to catch up).
+        self.receipt.received_on = (timezone.now() - timedelta(days=3)).date()
+        self.receipt.save(update_fields=['received_on'])
+        self.assertEqual(self.receipt.total_revenue(), Decimal('250'))
+
+    def test_sale_genuinely_before_received_on_does_not_count(self):
+        """A sale dated before the stock this receipt covers ever physically
+        arrived cannot be a sale of THIS delivery — correctly excluded."""
+        self.receipt.received_on = timezone.localdate()
+        self.receipt.save(update_fields=['received_on'])
+        before_delivery = timezone.now() - timedelta(days=5)
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, preset=self.full_leg, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'),
+            payment_method='cash', created_at=before_delivery,
+        )
+        self.assertEqual(self.receipt.total_revenue(), Decimal('0'))
+
     def test_reopen_view_owner_only(self):
         self.receipt.close(self.owner)
         resp = self.client.post(f'/kitchen/stock-receipt/{self.receipt.id}/reopen/')

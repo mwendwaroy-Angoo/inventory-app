@@ -5910,11 +5910,11 @@ class KitchenStockReceipt(models.Model):
 
     def total_revenue(self):
         """Sum of Issue-transaction revenue for this receipt's own items,
-        in the window since this receipt was created (or up to closed_at
+        in the window since this receipt was RECEIVED (or up to closed_at
         once closed). Excludes void sales, matches Transaction.revenue()'s
         own sale_amount-preferred convention.
 
-        2026-08-09, reverted back to this simple item-level form same-day —
+        2026-08-09, reverted back to plain item-level matching same-day —
         Roy: "if you can't fix the receipt issue based on the recordings of
         previous days when it comes to stock count and sales, just leave it
         be." A same-day attempt at per-preset attribution (only count sales
@@ -5923,18 +5923,45 @@ class KitchenStockReceipt(models.Model):
         fully resolved what Roy was seeing, and added complexity on top of
         complexity during an already long session. Reverted to the
         original, plain item-level match: any Issue-type sale of an item
-        this receipt received counts, regardless of preset. Known, accepted
-        limitation carried over unchanged from the original design: a
+        this receipt received counts, regardless of preset.
+
+        2026-08-11 live report (Roy), now confirmed with real evidence via
+        the hidden-presets diagnostic: a receipt he'd just typed in
+        ("Kamau") showed KES 0 Mapato / -100% Faida despite 32.5 units of
+        genuinely recorded, backdated chicken sales existing for its own
+        items. Root cause: the window floor was `self.created_at` — the
+        moment the RECEIPT ROW was typed into the system, always "now" at
+        creation time, never backdatable — while the sales against it can
+        (and, for a catch-up posting, routinely do) carry a BACKDATED
+        `created_at` pointing to before the receipt was ever entered. Every
+        one of those genuinely-happened sales was structurally invisible to
+        this window, no matter how the item-vs-preset matching logic reads.
+        Fixed by anchoring the window's start to `self.received_on`
+        (the DATE the delivery physically arrived — already user-editable,
+        already the field Roy fills in at receive time) instead of
+        `self.created_at` — a backdated sale correctly counts as long as
+        its own date is on or after the day the stock it's selling actually
+        arrived, matching how every other backdated-sale-aware figure in
+        this app already reasons about "did this happen after the goods
+        existed." `received_on` is a plain DateField — combined with
+        midnight and localized to the project timezone so the comparison
+        is against a real datetime, same convention already used
+        elsewhere in this app for a date-only field feeding a datetime
+        window. Known, accepted limitation carried over unchanged: a
         stock-count correction (Rekebisha) recorded against the item does
         NOT create revenue here, by design — Rekebisha has no concept of a
         selling price, only a physical count, so "sales reconciled via a
         count correction" will never show real Mapato; only an actual
         recorded sale (with a real amount) does."""
+        from datetime import datetime, time as _time
         from django.db.models import Sum, Case, When, F, Value, DecimalField as _DF
         from django.db.models.functions import Abs, Coalesce
         item_ids = list(self.lines.values_list('item_id', flat=True))
         if not item_ids:
             return Decimal('0')
+        start = timezone.make_aware(
+            datetime.combine(self.received_on, _time.min), timezone.get_current_timezone(),
+        )
         end = self.closed_at or timezone.now()
         _rev = Case(
             When(sale_amount__isnull=False, then=F('sale_amount')),
@@ -5943,7 +5970,7 @@ class KitchenStockReceipt(models.Model):
         )
         total = Transaction.objects.filter(
             business=self.business, item_id__in=item_ids, type='Issue',
-            created_at__gte=self.created_at, created_at__lte=end,
+            created_at__gte=start, created_at__lte=end,
         ).exclude(payment_method='void').aggregate(t=Sum(_rev))['t']
         return total or Decimal('0')
 

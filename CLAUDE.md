@@ -5833,3 +5833,45 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   needing a correction — and separately, the tile still lets a sale through as a bare
   zero-price, preset-less line when nothing is visible, which is its own real bug flagged
   but deliberately not fixed yet, per Roy's "one step at a time."
+- `KitchenStockReceipt.total_revenue()` window floor: created_at → received_on
+  (2026-08-11, same-day follow-up). The hidden-presets diagnostic above surfaced real
+  evidence: Kamau's Kuku receipt showed KES 0 Mapato / -100% Faida despite 32.5 units of
+  genuinely-recorded, backdated sales existing for its own items — confirming (not just
+  hypothesizing) the mechanism flagged earlier the same day. Root cause: the window's start
+  was `self.created_at` — the moment the RECEIPT ROW was typed into the system, always
+  "now" and never backdatable — while a catch-up posting's whole point is a sale with a
+  BACKDATED `created_at` pointing to before that. Fixed by anchoring the window's start to
+  `self.received_on` (the date the delivery physically arrived, already user-editable) via
+  `datetime.combine(received_on, time.min)` localized to the project timezone, instead of
+  `created_at`. A sale now correctly counts as long as it's dated on or after the day the
+  stock it's selling actually arrived — matching how every other backdated-sale-aware
+  figure in this app already reasons about it. Also surfaced a second, SEPARATE root cause
+  for Kuku's -9.5 "Iliyobaki" preset-ledger drift while investigating (distinct from the
+  receipt-window bug — fixing one does not fix the other): the 2026-08-09
+  `kitchen_stock_receipt_delete()` view (built to remove a "mistake duplicate" Kamau
+  receipt) is deliberately, correctly designed to delete ONLY the KitchenStockReceipt/
+  KitchenStockReceiptLine bookkeeping rows, never the real stock-adding Transaction those
+  lines created — so if that deleted duplicate really did add real chicken stock at some
+  point, that stock is still sitting in the item's overall `current_balance()` right now,
+  completely invisible to `_received_by_preset` (which only sums from surviving
+  `KitchenStockReceiptLine` rows) — a very plausible explanation for why the item's real
+  balance (13.5) and the preset anchor tally (-9.5) can both be true at once (roughly 23
+  units' worth of gap between them, matching the deleted receipt's own line size).
+  Unresolved and flagged to Roy rather than guessed at further: whether that deleted
+  receipt was a genuine duplicate (meaning phantom stock is ALSO inflating the item's real
+  balance, not just the preset tracker) or a real, separate delivery mislabeled a mistake.
+  Also explained, not fixed (working as designed): `edit_raw_material_cost()`'s retroactive
+  cost_total recompute only reaches a `KitchenBatch` that's still OPEN at correction time —
+  Roy's "nothing changed" report for Chipo's raw-potato cost fix is consistent with every
+  affected "bucket preparation" from 7th-8th August having already closed (sold through/
+  discarded) before he entered the correction days later; a closed batch's cost_total is
+  deliberately treated as a finalized historical record, per that function's own 2026-08-09
+  docstring. Given both explanations, Roy confirmed he wants a clean wipe-and-re-enter for
+  BOTH Kuku and Chipo since their most recent receipts, re-posting from the staff's paper
+  sales book via backdating — a dedicated, preview-first safe-deletion tool for this
+  (mirroring the existing "Reset Sales & Analytics" pattern, scoped to just these two
+  items/mechanisms) is the next piece of work, not yet built. 2 new tests
+  (`test_backdated_sale_before_created_at_but_after_received_on_now_counts`,
+  `test_sale_genuinely_before_received_on_does_not_count`) on
+  `KitchenStockReceiptRevenuePrecisionTest`. No migrations. 1702 tests pass (core +
+  accounts).
