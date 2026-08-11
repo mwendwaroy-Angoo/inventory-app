@@ -5624,3 +5624,71 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   of this exact page indefinitely, silently defeating the fix for exactly the users
   who need it. 3 new tests (`OfflinePageTest`). No migrations (template + static
   asset only).
+- Analytics section audit — wastage/void/owner-drawing losses used a naive formula,
+  not `cost()` (2026-08-11). Roy: "the revenues do not make sense... losses is just
+  nonsense... I think the imbalance is being resulted as an effect of the spirits
+  that are being sold in split form (quarter/half/three-quarter)." Screenshots showed
+  Net Profit at −9,994,154 and Hasara/Losses' own breakdown naming the culprit
+  directly: "Voids: 10,020,600" — on a business doing ~KES 150k of revenue for the
+  period. **Root cause, confirmed by direct trace, not guessed**: `analytics_views.py`'s
+  `wastage_loss`/`void_loss`/`owner_drawings_cost` each reimplemented a naive
+  `abs(qty) * item.cost_price` formula instead of reusing `Transaction.cost()`'s own
+  keg/bunch/batch/preset-aware proportional logic — the exact "don't reimplement,
+  always call the canonical method" anti-pattern this file's own Known Issues section
+  already warns about (raw `Sum('sale_amount')`, `Transaction.cost()`'s own
+  `kitchen_batch_id` gap, both fixed the same way before). The naive formula is only
+  correct for a plain, non-keg/non-bunch/non-batch/non-preset item. For a keg pour
+  specifically it's catastrophic: `qty` is stored in ML (`KegBarrel.record_sale()`)
+  while `item.cost_price` is priced per WHOLE KEG (thousands of KES) — a single
+  voided ~500ml pour naively priced as `500 × cost_per_keg` inflates the loss by
+  roughly 1000×, more than enough to produce a multi-million-shilling phantom figure
+  from a handful of voided pours, matching the reported scale exactly (confirmed with
+  the fixture's own real numbers: `item.cost_price=12000`, a 500ml void naively priced
+  at 6,000,000 vs the correct proportional ~33). Roy's own hypothesis (spirits split
+  sales) turned out NOT to be the dominant cause — a preset-linked quarter/half/
+  three-quarter sale's `qty` is already a small, item-comparable fraction (e.g. -0.25),
+  so the naive formula happened to be right-shaped for that case specifically;
+  reasoned this out and told him directly rather than confirming a guess that didn't
+  hold up under trace. **Fix**: extracted `Transaction.cost()`'s branch logic into
+  `_stock_movement_cost()`, reused by `cost()` (Issue only, unchanged — every existing
+  caller/test keeps working exactly as before) and new `loss_value()` (Wastage/
+  OwnerConsumption, transaction types `cost()` deliberately zeroes by design so a
+  non-sale movement never double-counts as if it were also a sale). `void_loss`
+  switched to calling `t.cost()` directly (void transactions are still `type='Issue'`,
+  so `cost()` already had the right logic — the bug was only that this call site never
+  used it). **Real edge case caught while writing the fix, not by the test suite
+  first**: `KitchenBatch.discard()`'s own Wastage row deliberately sets
+  `sale_amount=Decimal('0')` (nothing was sold) with `qty` as the unrecovered fraction
+  of `cost_total` — the original `kitchen_batch_id` branch checked `self.sale_amount
+  is not None`, which is TRUE for `0` too, wrongly taking the proportional-sale branch
+  (`0 × cost_total / revenue_collected = 0`) instead of falling through to the correct
+  `item.cost_price`-based computation (`item.cost_price == cost_total` by this app's
+  own established KitchenBatch convention) whenever the batch had ANY prior revenue
+  collected before being discarded. Fixed by checking `self.sale_amount` (truthy, i.e.
+  `> 0`) instead of `is not None` — a real sale can never legitimately be for KES 0
+  through this mechanism, so truthiness cleanly separates a genuine sale from a
+  discard row. Same naive-formula bug found and fixed in two more spots during the
+  audit: `analytics_dashboard`'s PORTION-produce revenue/cost breakdown (switched to
+  `t.revenue()`/`t.cost()`) and `daily_sales()`'s own `wastage_value` figure (switched
+  to `t.loss_value()`) — Kitchen Performance was independently confirmed already
+  correct (already used `t.revenue()`/`t.cost()` from an earlier sprint). **Also
+  fixed, same report**: `top_products`/`store_list` showed raw accumulated floats
+  ("Blue Ice 32.69999999999997 units", "Liquor Store 700.2000000000004 units") —
+  ordinary binary-float summation noise from adding many small fractional preset
+  amounts, never rounded before display unlike every other accumulated-units figure
+  already rounded elsewhere on the same page (`units_sold`, `portion_produce`'s
+  `units`) — now rounded to 2 decimals (not 1, to keep a genuine quarter-bottle sale
+  showing as 0.25, not rounded away to 0.3). 17 new tests
+  (`TransactionLossValueFixTest`, `AnalyticsVoidLossIntegrationTest`,
+  `AnalyticsUnitsFloatRoundingTest`) — plain-item Wastage unchanged (regression lock),
+  the voided-keg-pour scenario reproducing the exact reported bug end to end through
+  `/analytics/`, `ProduceBunch.discard()` correctly using `bunch.cost_price` not
+  `item.cost_price`, the `KitchenBatch.discard()`-after-prior-sales edge case, a real
+  `KitchenBatch` sale still costing correctly (regression lock), `OwnerConsumption`
+  using the new helper, `loss_value()` returning 0 for `type='Issue'` (must never
+  double-count a sale), and the float-noise-never-displayed regression lock for both
+  `top_products` and `store_list`. All pre-existing analytics/KitchenBatch/
+  ProduceBunch test classes (73 tests across `KitchenBatchModelTest`,
+  `KitchenBatchDiscardRecordsWastageTest`, `TransactionCostKitchenBatchProportionalTest`,
+  `EditProduceBunchCostTest`, `EditKitchenBatchTargetTest`, and others) confirmed
+  passing unmodified. No migrations. 1687 tests pass (core + accounts).
