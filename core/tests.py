@@ -3316,6 +3316,48 @@ class BackfillTabTokensCommandTest(TestCase):
         self.assertEqual(len(pins), len(set(pins)), 'PINs backfilled for the same business must be unique')
 
 
+class FixStaffProfilesCommandTest(TestCase):
+    """2026-08-11: fix_staff_profiles runs on every deploy's release phase
+    and previously looped over every platform User issuing one extra query
+    per user to find the ones missing a profile (N+1). Rewritten to a
+    single `userprofile__isnull=True` query — this locks in that the
+    rewrite still does exactly the same job."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Fix Staff Profiles Biz')
+        self.owner_user = User.objects.create_user(username='fsp_owner', password='x')
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+
+    def test_orphaned_user_gets_a_staff_profile_on_the_existing_business(self):
+        from django.core.management import call_command
+        orphan = User.objects.create_user(username='fsp_orphan', password='x')
+        call_command('fix_staff_profiles')
+        orphan.refresh_from_db()
+        self.assertTrue(hasattr(orphan, 'userprofile'))
+        self.assertEqual(orphan.userprofile.business_id, self.biz.id)
+        self.assertEqual(orphan.userprofile.role, 'staff')
+
+    def test_user_with_existing_profile_is_left_untouched(self):
+        from django.core.management import call_command
+        other_biz = Business.objects.create(name='Other Biz')
+        staff = User.objects.create_user(username='fsp_staff', password='x')
+        UserProfile.objects.create(user=staff, business=other_biz, role='staff')
+        call_command('fix_staff_profiles')
+        staff.refresh_from_db()
+        self.assertEqual(staff.userprofile.business_id, other_biz.id)
+
+    def test_superuser_with_no_profile_is_skipped(self):
+        from django.core.management import call_command
+        su = User.objects.create_superuser(username='fsp_super', password='x', email='x@x.com')
+        call_command('fix_staff_profiles')
+        su.refresh_from_db()
+        self.assertFalse(hasattr(su, 'userprofile'))
+
+    def test_no_orphans_is_a_clean_no_op(self):
+        from django.core.management import call_command
+        call_command('fix_staff_profiles')  # must not raise with nothing to do
+
+
 class BarTabNewCredentialsTest(TestCase):
     """Fix (2026-07-15, post-K8): BarTab.new_credentials is the single source of truth
     for tab_receipt_token/tab_pin generation, used by bar board, kitchen, and Quick Sell
