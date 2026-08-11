@@ -1151,6 +1151,32 @@ class Transaction(models.Model):
             return 0
         if self.type != 'Issue':
             return 0
+        return self._stock_movement_cost()
+
+    def _stock_movement_cost(self):
+        """The KES cost basis behind this transaction's own qty/sale_amount —
+        the keg/bunch/batch/preset-aware proportional logic shared by cost()
+        (for a real sale) and loss_value() (for a Wastage/OwnerConsumption
+        stock movement that never had revenue at all). Split out 2026-08-11
+        (live report — Roy: the Analytics "Hasara/Losses" tile showed a
+        Voids figure in the TENS OF MILLIONS on a business doing ~KES 150k of
+        revenue for the period). Root cause: analytics_views.py's wastage_loss/
+        void_loss/owner_drawings_cost each reimplemented a naive
+        `abs(qty) * item.cost_price` formula instead of calling this — correct
+        ONLY for a plain, non-keg/non-bunch/non-batch/non-preset item, and
+        catastrophically wrong for a keg pour specifically: qty there is
+        stored in ML while item.cost_price is priced per WHOLE KEG (tens of
+        thousands of KES), so a single voided 500ml pour naively priced as
+        `500 * cost_per_keg` inflates by a factor of ~1000x — more than
+        enough to produce a multi-million-shilling phantom loss from a
+        handful of voided pours, exactly the reported scale. void_loss's
+        txns are always type='Issue' (payment_method='void'), so cost()
+        itself already computes them correctly — the bug was specifically
+        that void_loss never called it. wastage_loss/owner_drawings_cost
+        needed this new helper since cost() deliberately zeroes non-Issue
+        types (by design, so a Wastage/Draw movement doesn't get double-
+        counted as if it were also a sale).
+        """
         # Keg barrel pours: qty is stored in ml — must NOT be multiplied by KES cost_price.
         # Use proportional cost: sale_amount * (barrel_cost / barrel_target).
         if self.keg_barrel_id:
@@ -1158,7 +1184,11 @@ class Transaction(models.Model):
             if barrel and float(barrel.target_revenue or 0) > 0 and self.sale_amount is not None:
                 return float(self.sale_amount) * float(barrel.cost_price) / float(barrel.target_revenue)
             return 0
-        # Bunch sales carry their cost on the bunch, not the item.
+        # Bunch sales/discards carry their cost on the bunch, not the item —
+        # qty here is a fraction of the bunch's TARGET REVENUE (see
+        # ProduceBunch._fraction()/.discard()), so it must be multiplied by
+        # the bunch's own cost_price, never item.cost_price (which isn't even
+        # the same unit of account for a bunch-tracked produce item).
         if self.produce_bunch_id and self.produce_bunch and self.produce_bunch.cost_price:
             return abs(float(self.qty)) * float(self.produce_bunch.cost_price)
         # Kitchen batch sales: qty is a constant -1 per sale (not a real unit count),
@@ -1171,11 +1201,25 @@ class Transaction(models.Model):
         # cost_total exactly, instead of N × cost_total. Found 2026-07-22 while
         # designing raw-material sack tracking — a real, pre-existing overcounting
         # bug in Kitchen Performance / overall COGS for any batch sold more than once.
+        # discard()'s own Wastage row deliberately sets sale_amount=0 (nothing was
+        # sold) and qty = -(unrecovered fraction of cost_total) — abs(qty) *
+        # item.cost_price (item.cost_price == cost_total for a batch item) is what
+        # correctly reduces to "the unrecovered value" for that specific row.
+        # Checking `self.sale_amount` (truthy) rather than `is not None` matters
+        # here — a discard row's sale_amount is exactly 0, not None, and a real
+        # sale can never legitimately be for KES 0 through this mechanism, so
+        # truthiness cleanly tells a genuine sale apart from a discard row even
+        # when the batch had prior revenue_collected > 0 (found while writing
+        # this: `is not None` would have taken the proportional branch for a
+        # discard row too, computing 0 * cost_total / revenue_collected = 0
+        # instead of correctly falling through to the item.cost_price branch).
         if self.kitchen_batch_id and self.kitchen_batch:
             batch = self.kitchen_batch
-            if float(batch.revenue_collected or 0) > 0 and self.sale_amount is not None:
+            if self.sale_amount and float(batch.revenue_collected or 0) > 0:
                 return float(self.sale_amount) * float(batch.cost_total) / float(batch.revenue_collected)
-            return 0
+            if self.type == 'Issue':
+                return 0
+            # fall through to the item.cost_price branch for a discard() row
         # Preset-attributed cost (2026-07-28) — e.g. one shared "Kuku" item sold via
         # several presets (Bawa/Paja Nzima/Paja Nusu) that don't all cost the same
         # per piece. preset.cost_price is per whole base-item-unit (set at receiving
@@ -1190,6 +1234,18 @@ class Transaction(models.Model):
         if self.item.cost_price:
             return abs(float(self.qty)) * float(self.item.cost_price)
         return 0
+
+    def loss_value(self):
+        """KES value of a Wastage/OwnerConsumption stock movement — same
+        proportional keg/bunch/batch/preset-aware logic as cost(), but usable
+        for transaction types cost() deliberately zeroes (see cost()'s own
+        type gate). Never meant for type='Issue' — use cost()/revenue() for
+        an actual sale."""
+        if self.transfer_id:
+            return 0
+        if self.type not in ('Wastage', 'OwnerConsumption'):
+            return 0
+        return self._stock_movement_cost()
 
     def profit(self):
         return self.revenue() - self.cost()

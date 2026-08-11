@@ -194,6 +194,17 @@ def analytics_dashboard(request):
     top_products = sorted(
         product_stats.values(), key=lambda x: x['revenue'], reverse=True
     )[:10]
+    # Round the accumulated float here — 2026-08-11 live report (Roy):
+    # "Blue Ice 32.69999999999997 units" — ordinary binary-float summation
+    # noise from adding many small fractional preset amounts (quarter/half/
+    # three-quarter bottle sales) never got rounded for display, unlike
+    # every other accumulated-units figure on this page. 2 decimals (not 1)
+    # to keep a genuine quarter-bottle (0.25) showing exactly, not rounded
+    # away to 0.3.
+    for p in top_products:
+        p['units'] = round(p['units'], 2)
+        p['revenue'] = round(p['revenue'], 2)
+        p['profit'] = round(p['profit'], 2)
 
     top_product_labels = [p['name'][:20] for p in top_products]
     top_product_revenue = [round(p['revenue'], 2) for p in top_products]
@@ -246,6 +257,11 @@ def analytics_dashboard(request):
         store_stats[sid]['units'] += _units(t)
 
     store_list = sorted(store_stats.values(), key=lambda x: x['revenue'], reverse=True)
+    # Same float-summation-noise fix as top_products above ("Liquor Store
+    # 700.2000000000004 units").
+    for _s in store_list:
+        _s['units'] = round(_s['units'], 2)
+        _s['revenue'] = round(_s['revenue'], 2)
 
     # ── Order analytics ──
     orders = Order.objects.filter(
@@ -406,14 +422,23 @@ def analytics_dashboard(request):
         type='OwnerConsumption',
         date__gte=start_date,
         date__lte=today,
-    ).select_related('item')
+    ).select_related('item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset')
     owner_drawings_cost = round(sum(
-        abs(float(t.qty or 0)) * float(t.item.cost_price or 0)
-        for t in owner_drawing_txns
+        t.loss_value() for t in owner_drawing_txns
     ), 2)
 
     # Wastage loss: cost of stock discarded, broken, or adjusted out — no revenue received.
-    # Uses cost_price × |qty| for each Wastage transaction in the period.
+    # Uses Transaction.loss_value() per Wastage transaction — NOT a raw
+    # abs(qty) * item.cost_price (2026-08-11 live report, Roy: the Hasara/
+    # Losses tile showed a Voids figure in the tens of millions on a business
+    # doing ~KES 150k of revenue for the period). The raw formula is only
+    # correct for a plain item with no keg/bunch/batch/preset linkage — for a
+    # keg pour specifically, qty is stored in ml while item.cost_price is
+    # priced per WHOLE KEG, so pricing a voided pour that way inflates the
+    # loss by roughly 1000x. loss_value() reuses cost()'s own keg/bunch/
+    # batch/preset-aware proportional logic instead of reimplementing a
+    # simplified formula — see Transaction._stock_movement_cost()'s
+    # docstring for the full root-cause trace.
     # invoice_no='[ADJ-NOLOSS]' excludes a Rekebisha shortage correction the
     # owner/manager explicitly marked as NOT a real loss (2026-07-31 live
     # report — reversing a duplicate-receipt bug via Rekebisha showed up as
@@ -426,29 +451,27 @@ def analytics_dashboard(request):
         type='Wastage',
         date__gte=start_date,
         date__lte=today,
-    ).exclude(invoice_no='[ADJ-NOLOSS]').select_related('item')
-    wastage_loss = round(sum(
-        abs(float(t.qty or 0)) * float(t.item.cost_price or 0)
-        for t in wastage_txns
-        if t.item and t.item.cost_price
-    ), 2)
+    ).exclude(invoice_no='[ADJ-NOLOSS]').select_related(
+        'item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
+    )
+    wastage_loss = round(sum(t.loss_value() for t in wastage_txns), 2)
 
     # Void/write-off loss: stock was served but payment was cancelled/waived.
     # Revenue was already excluded from cur_revenue (payment_method='void' excluded from
     # current_sales). But the COGS of those goods is also excluded, overstating gross profit.
-    # Add back the cost here so net_profit reflects the true position.
+    # Add back the cost here so net_profit reflects the true position. Uses
+    # Transaction.cost() directly (not a raw formula) — same 2026-08-11 fix as
+    # wastage_loss above; a voided transaction is still type='Issue', so
+    # cost() already has the correct keg/bunch/batch/preset-aware logic, the
+    # bug was only ever that this call site never used it.
     void_txns = Transaction.objects.filter(
         business=business,
         type='Issue',
         payment_method='void',
         date__gte=start_date,
         date__lte=today,
-    ).select_related('item')
-    void_loss = round(sum(
-        abs(float(t.qty or 0)) * float(t.item.cost_price or 0)
-        for t in void_txns
-        if t.item and t.item.cost_price
-    ), 2)
+    ).select_related('item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset')
+    void_loss = round(sum(t.cost() for t in void_txns), 2)
 
     total_losses = round(wastage_loss + void_loss, 2)
 
@@ -610,7 +633,7 @@ def analytics_dashboard(request):
             item__store__is_kitchen=False,
             date__gte=start_date, date__lte=today,
         )
-        .select_related('item')
+        .select_related('item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset')
     )
     from collections import defaultdict as _dd
     _pm = _dd(lambda: {'description': '', 'units': 0.0, 'revenue': 0.0, 'cost': 0.0, 'unit': ''})
@@ -619,11 +642,13 @@ def analytics_dashboard(request):
         _pm[k]['description'] = t.item.description
         _pm[k]['unit'] = t.item.unit or 'Pcs'
         qty_abs = abs(float(t.qty or 0))
-        rev = (float(t.sale_amount) if t.sale_amount is not None
-               else qty_abs * float(t.item.selling_price or 0))
+        # revenue()/cost() (not a raw reimplementation) — 2026-08-11 fix,
+        # same as analytics_dashboard's wastage_loss/void_loss; correct for a
+        # plain PORTION item either way, but also correctly honors a
+        # preset-specific cost_price if one is ever set for a portion preset.
         _pm[k]['units']   += qty_abs
-        _pm[k]['revenue'] += rev
-        _pm[k]['cost']    += qty_abs * float(t.item.cost_price or 0)
+        _pm[k]['revenue'] += float(t.revenue())
+        _pm[k]['cost']    += float(t.cost())
     portion_produce = sorted(_pm.values(), key=lambda x: -x['revenue'])
     for p in portion_produce:
         p['revenue'] = round(p['revenue'], 2)
@@ -1953,7 +1978,7 @@ def daily_sales(request):
         Transaction.objects
         .filter(business=business, type='Wastage', date=selected_date)
         .exclude(invoice_no='[ADJ-NOLOSS]')
-        .select_related('item', 'item__store')
+        .select_related('item', 'item__store', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset')
     )
     if not (show_bar and show_kitchen):
         if show_kitchen and not show_bar:
@@ -1961,10 +1986,10 @@ def daily_sales(request):
         else:
             wastage_qs = wastage_qs.filter(item__store__is_kitchen=False)
     wastage_list  = list(wastage_qs)
-    wastage_value = sum(
-        float(abs(w.qty or 0)) * float(w.item.cost_price or 0)
-        for w in wastage_list
-    )
+    # loss_value() (not a raw abs(qty)*item.cost_price formula) — same
+    # 2026-08-11 fix as analytics_dashboard's wastage_loss; a bunch/batch-
+    # linked discard's qty isn't in item.cost_price's own unit of account.
+    wastage_value = sum(w.loss_value() for w in wastage_list)
 
     # ── Owner consumption (owner/manager only) ──
     owner_consumes = []

@@ -4112,6 +4112,222 @@ class NetProfitWastageDeductionTest(TestCase):
         self.assertEqual(ctx['net_profit'], -20.0)
 
 
+class TransactionLossValueFixTest(TestCase):
+    """2026-08-11 live report (Roy, with screenshots): the Analytics "Hasara/
+    Losses" tile showed "Voids: 10,020,600" on a business doing ~KES 150k of
+    revenue for the period — an obviously impossible figure. Root cause:
+    analytics_views.py's wastage_loss/void_loss/owner_drawings_cost each
+    reimplemented a naive `abs(qty) * item.cost_price` formula instead of
+    reusing Transaction.cost()'s own keg/bunch/batch/preset-aware
+    proportional logic. For a keg pour specifically, qty is stored in ml
+    while item.cost_price is priced per WHOLE KEG (thousands of KES) — a
+    single voided ~500ml pour naively priced as `500 * cost_per_keg`
+    inflates by roughly 1000x, more than enough to produce a multi-million-
+    shilling phantom loss from a handful of voided pours. Fixed by
+    extracting Transaction.cost()'s branch logic into
+    _stock_movement_cost(), reused by both cost() (Issue only, unchanged)
+    and the new loss_value() (Wastage/OwnerConsumption)."""
+
+    def setUp(self):
+        _make_keg_setup(self, 'lossval')
+
+    def test_plain_item_wastage_unchanged(self):
+        """Regression lock — the ordinary, most common case (no keg/bunch/
+        batch/preset FK) must compute exactly as before."""
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Plain Item',
+            material_no='LV-PLAIN-01', selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=item, type='Wastage', qty=Decimal('-2'),
+        )
+        self.assertEqual(txn.loss_value(), 80.0)
+
+    def test_voided_keg_pour_is_small_proportional_value_not_millions(self):
+        """The literal reported bug: a voided keg pour must cost a few
+        shillings (proportional to the barrel's own cost/target), never
+        qty(ml) * item.cost_price(per-keg, thousands of KES)."""
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-500'), sale_amount=Decimal('50'),
+            payment_method='void', keg_barrel=self.barrel,
+        )
+        # Naive (buggy) formula would give abs(-500) * 12000 = 6,000,000.
+        naive_buggy_value = abs(float(txn.qty)) * float(self.item.cost_price)
+        self.assertGreater(naive_buggy_value, 1_000_000)
+        # Correct: sale_amount(50) * barrel.cost_price(12000) / barrel.target_revenue(18000)
+        expected = 50.0 * 12000.0 / 18000.0
+        self.assertAlmostEqual(txn.cost(), expected, places=2)
+        self.assertLess(txn.cost(), 100)  # sane, small, proportional value
+
+    def test_produce_bunch_discard_uses_bunch_cost_not_item_cost(self):
+        from core.models import ProduceBunch
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Sukuma',
+            material_no='LV-BUNCH-01', is_produce=True, produce_mode='BUNCH',
+            selling_price=Decimal('10'), cost_price=Decimal('9999'),  # deliberately wrong/stale
+        )
+        bunch = ProduceBunch.objects.create(
+            business=self.biz, item=item, size='MEDIUM',
+            cost_price=Decimal('50'), target_revenue=Decimal('80'),
+            status='OPEN',
+        )
+        bunch.record_sale(Decimal('20'), 'cash')  # 20 of 80 sold
+        txn = bunch.discard('Wilted')
+        self.assertIsNotNone(txn)
+        # leftover = 60/80 of the bunch remaining -> 0.75 * cost_price(50) = 37.5
+        self.assertAlmostEqual(txn.loss_value(), 37.5, places=2)
+        # Definitely NOT using item.cost_price (9999) in any way
+        self.assertNotAlmostEqual(txn.loss_value(), abs(float(txn.qty)) * 9999.0, places=2)
+
+    def test_kitchen_batch_discard_after_prior_sales_correctly_computes_unrecovered_value(self):
+        """Edge case caught while writing the fix: discard()'s Wastage row
+        has sale_amount=0 (not None) — `is not None` would wrongly take the
+        proportional-sale branch (0 * cost_total / revenue_collected = 0)
+        instead of falling through to the correct item.cost_price(==
+        cost_total) * qty(unrecovered fraction) computation."""
+        from core.models import KitchenBatch
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        batch_item = Item.objects.create(
+            business=self.biz, store=kitchen_store, description='Chipo',
+            material_no='LV-BATCH-01', cost_price=Decimal('1000'),
+        )
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=kitchen_store, item=batch_item,
+            cost_total=Decimal('1000'), status='OPEN',
+        )
+        batch.record_sale(Decimal('600'))  # 600 of 1000 recovered — revenue_collected > 0
+        txn = batch.discard('End of day')
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.sale_amount, Decimal('0'))
+        # unrecovered = 1000 - 600 = 400
+        self.assertAlmostEqual(txn.loss_value(), 400.0, places=2)
+
+    def test_kitchen_batch_real_sale_still_proportional_unchanged(self):
+        from core.models import KitchenBatch
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen2', is_kitchen=True)
+        batch_item = Item.objects.create(
+            business=self.biz, store=kitchen_store, description='Chipo2',
+            material_no='LV-BATCH-02', cost_price=Decimal('1000'),
+        )
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=kitchen_store, item=batch_item,
+            cost_total=Decimal('1000'), status='OPEN',
+        )
+        txn = batch.record_sale(Decimal('500'))  # first sale: 500 of 1000
+        # proportional: 500 * 1000 / 500 = 1000 (whole cost attributed to this,
+        # the only sale so far) — same formula .cost() always used, unchanged.
+        self.assertAlmostEqual(txn.cost(), 1000.0, places=2)
+
+    def test_owner_consumption_uses_loss_value(self):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Plain Item 2',
+            material_no='LV-PLAIN-02', selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=item, type='OwnerConsumption', qty=Decimal('-1'),
+        )
+        self.assertEqual(txn.loss_value(), 40.0)
+
+    def test_loss_value_returns_zero_for_issue_type(self):
+        """loss_value() is only meaningful for Wastage/OwnerConsumption —
+        must never double-count an ordinary sale."""
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Plain Item 3',
+            material_no='LV-PLAIN-03', selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash',
+        )
+        self.assertEqual(txn.loss_value(), 0)
+
+
+class AnalyticsVoidLossIntegrationTest(TestCase):
+    """End-to-end: the /analytics/ page itself must show a sane void_loss
+    for a voided keg pour, not a multi-million-shilling phantom figure —
+    the exact scenario from Roy's live screenshots."""
+
+    def setUp(self):
+        _make_keg_setup(self, 'analyticsvoid')
+
+    def test_voided_keg_pour_does_not_inflate_net_profit_loss(self):
+        # One real sale so the page has ordinary revenue to compare against.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-500'), sale_amount=Decimal('50'),
+            payment_method='cash', keg_barrel=self.barrel,
+        )
+        # One VOIDED keg pour — the literal bug scenario.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-500'), sale_amount=Decimal('50'),
+            payment_method='void', keg_barrel=self.barrel,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/analytics/?period=30')
+        self.assertEqual(resp.status_code, 200)
+        ctx = resp.context
+        # Correct: 50 * 12000 / 18000 ≈ 33.33 — nowhere near a million.
+        self.assertLess(ctx['void_loss'], 100)
+        self.assertGreater(ctx['void_loss'], 0)
+        self.assertLess(abs(ctx['net_profit']), 10_000)
+
+
+class AnalyticsUnitsFloatRoundingTest(TestCase):
+    """2026-08-11 live report (Roy, screenshots): "Blue Ice 32.69999999999997
+    units" and "Liquor Store 700.2000000000004 units" — ordinary binary-
+    float summation noise (classic `0.1+0.1+0.1 == 0.30000000000000004`)
+    from adding many small fractional preset amounts, never rounded before
+    display in top_products/store_list, unlike every other accumulated-
+    units figure already rounded elsewhere on the same page."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Float Rounding Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='floatround_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Blue Ice',
+            material_no='FR-01', selling_price=Decimal('80'), cost_price=Decimal('20'),
+        )
+
+    def test_top_products_units_never_show_float_noise(self):
+        today = timezone.localdate()
+        # Three quarter-bottle sales — 0.1 + 0.1 + 0.1 in raw Python floats
+        # is 0.30000000000000004, not 0.3.
+        for _ in range(3):
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('-0.1'), sale_amount=Decimal('20'),
+                payment_method='cash', date=today,
+            )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/analytics/?period=30')
+        self.assertEqual(resp.status_code, 200)
+        top = resp.context['top_products']
+        self.assertEqual(len(top), 1)
+        units = top[0]['units']
+        self.assertEqual(units, round(units, 2), 'units must already be exactly 2dp-rounded')
+        self.assertEqual(units, 0.3)
+
+    def test_store_list_units_never_show_float_noise(self):
+        today = timezone.localdate()
+        for _ in range(3):
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('-0.1'), sale_amount=Decimal('20'),
+                payment_method='cash', date=today,
+            )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/analytics/?period=30')
+        store_list = resp.context['store_list']
+        self.assertEqual(len(store_list), 1)
+        units = store_list[0]['units']
+        self.assertEqual(units, round(units, 2))
+        self.assertEqual(units, 0.3)
+
+
 class TabLiveOutstandingTileTest(TestCase):
     """K8-Task4: the 'Bado kulipa' tile must be hidden once outstanding drops to 0."""
 
