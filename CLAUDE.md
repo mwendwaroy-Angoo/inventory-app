@@ -5692,3 +5692,42 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `KitchenBatchDiscardRecordsWastageTest`, `TransactionCostKitchenBatchProportionalTest`,
   `EditProduceBunchCostTest`, `EditKitchenBatchTargetTest`, and others) confirmed
   passing unmodified. No migrations. 1687 tests pass (core + accounts).
+- Analytics period-filter CSS bug + tap-to-expand tile breakdowns (2026-08-11), same-day
+  follow-up. Roy: (1) "the period filter up there is misbehaving when selecting a
+  period", (2) "is it possible to break down what is being shown as the revenue... gross
+  profit, net profit, owner drawings... and losses tiles when user selects them", (3)
+  relaying a doubt from Bosco that revenue "must be extremely exaggerated" — "how do you
+  think we could figure out the truth." **(1) Period filter**: root-caused from the CSS,
+  not guessed — `.period-btn:hover` and `.period-btn.active` shared one style rule, so a
+  touch/tap on a DIFFERENT period button looked visually identical to that button being
+  the real selection, while the genuinely active period (from the currently loaded page)
+  kept its own highlight too — two pills reading "selected" at once. This is a purely
+  visual collision, not a real data bug — the underlying `period` value used for every
+  computation is always exactly what the URL says, single source of truth. Fixed by
+  giving `:hover` a lighter accent (border+text colour, no solid fill) so only the true
+  `.active` state ever shows the solid raspberry fill. **(2)+(3) Breakdowns**: the
+  concrete tool for answering "is revenue really exaggerated" empirically rather than by
+  argument — tap-to-expand `<details>/<summary>` panels (same native, no-JS pattern
+  established by the debt-erase/petty-cash disclosures) added to all 6 requested tiles.
+  Revenue/Gross Profit show a day-by-day breakdown for the CURRENT period (reusing
+  `daily_data`, already computed for the trend chart — no new query) plus the
+  PREVIOUS period's own total alongside it, so the "X vs prev" comparison is directly
+  checkable against two real numbers instead of trusted as a single percentage. Owner
+  Drawings and Hasara/Losses list every underlying `OwnerConsumption`/`Wastage`/voided-
+  `Issue` transaction with its own computed value (via `loss_value()`/`cost()` — the SAME
+  correct methods from the loss-formula fix above, so the breakdown numbers can never
+  drift from the headline total). Total Expenses lists the real `BusinessExpense` rows.
+  Net Profit's tile expands its already-shown one-line formula summary into the full
+  Gross − Expenses − Drawings − Hasara = Net breakdown. New context keys
+  (`revenue_daily_breakdown`, `prev_revenue`, `prev_profit`, `prev_start`, `prev_end`,
+  `owner_drawing_items`, `loss_items`, `expense_items`) built from data the view was
+  already computing — `owner_drawing_txns`/`wastage_txns`/`void_txns` materialized to
+  lists once (`list(...)`) so the same queryset serves both the cost SUM and the
+  breakdown LIST with no duplicate querying. Traced the actual "X vs prev" comparison
+  window while investigating Bosco's doubt and confirmed it's structurally fair (both
+  periods are exactly `days` long, back-to-back, no overlap or length mismatch) — the
+  likely honest explanation for a large multiplier, given the page's own "Active Selling
+  Days: 12/30" figure from the same screenshot, is a genuinely quieter previous period
+  rather than a computation bug; told to Roy directly as a hypothesis to verify with the
+  new breakdown, not asserted as fact. 6 new tests (`AnalyticsTileBreakdownTest`). No
+  migrations. 1693 tests pass (core + accounts).
