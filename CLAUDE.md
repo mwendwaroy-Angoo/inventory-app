@@ -5731,3 +5731,48 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   rather than a computation bug; told to Roy directly as a hypothesis to verify with the
   new breakdown, not asserted as fact. 6 new tests (`AnalyticsTileBreakdownTest`). No
   migrations. 1693 tests pass (core + accounts).
+- Live 502 investigation, second occurrence (2026-08-11) — Roy reported a 502 "right now
+  as we are speaking," shortly after two consecutive deploys, with a much fuller set of
+  Render screenshots than the first 2026-08-09 incident: Events log (both deploys marked
+  successfully live), application logs (normal traffic, healthy `/health/` checks), web
+  service Memory/CPU/Total-Instances/Total-Requests, and — new this time — the SEPARATE
+  Postgres database service's own Memory/CPU/Disk-Usage/Disk-Activity/Network/Active-
+  Connections/Transaction-Volume graphs. Investigated properly this time rather than
+  repeating the earlier session's mistake of an under-evidenced "weak signal" guess
+  (which Roy correctly and sharply rejected: "why am i able to watch YouTube videos
+  smoothly but the app says no internet connection"). Diffed both of my two most recent
+  deploys line-by-line first, specifically looking for anything that could spike CPU or
+  hang a request: the `Transaction.cost()`/`loss_value()` refactor is a pure per-instance
+  computation with no new queries; the analytics tile-breakdown feature only iterates
+  data already being pulled for the existing period-bounded chart. Neither is a plausible
+  crash/slowdown source — ruled out with evidence, not assumed. **Real finding**:
+  `render.yaml` has the Postgres database on Render's **Free plan**, not Starter — this
+  matches the "0.25GB / 0.1 CPU" ceiling visible in Roy's own screenshots exactly, and
+  free-tier Postgres has essentially no headroom to absorb a burst. Two things make that
+  already-tight ceiling worse: (1) `core/management/commands/fix_staff_profiles.py` — run
+  on EVERY deploy's release phase (`Procfile`: `migrate && fix_staff_profiles &&
+  reset_superuser`) — looped over every `User` on the WHOLE PLATFORM issuing one
+  extra query per user (`user.userprofile` on a cache miss) just to find the handful
+  missing a profile; a genuine N+1 burst of database load stacked directly at deploy
+  time, on top of whatever else is happening. Fixed to a single
+  `User.objects.filter(userprofile__isnull=True)` query. (2) `SESSION_SAVE_EVERY_REQUEST
+  = True` (deliberate, documented in this file's own Settings section — "Prevents CSRF
+  token mismatch after cold starts") means the app writes to the database-backed session
+  table on every single authenticated request, platform-wide, all day — very likely why
+  the disk-write graph in Roy's screenshot looked continuous across the whole 12-hour
+  window rather than only spiking at deploy time. Deliberately NOT touched — changing it
+  risks reintroducing the specific CSRF-mismatch bug it was added to fix, and that's not
+  a change to make on a live, money-critical app without its own careful, separately-
+  tested pass. Also confirmed unrelated to this incident, and left alone: `conn_max_age
+  =600` (connection pooling is already correctly configured, not a contributing factor);
+  the health check (`health_check()` in `core/views.py`) genuinely does touch the
+  database via `connection.ensure_connection()`, which is the plausible mechanism tying a
+  momentarily-saturated free-tier database to an actual Render-perceived instance
+  failure (a slow/timed-out health check reads as "unhealthy" to Render, which can then
+  restart the instance — the same failure signature already documented for the first
+  2026-08-09 incident, "HTTP health check failed (timed out after 5 seconds)"). Told to
+  Roy plainly: the query-count fix is real and shipped, but the most likely durable fix
+  is upgrading the database off the Free plan — a Render-dashboard/billing action only
+  Roy can take, not something fixable in code. 4 new tests (`FixStaffProfilesCommandTest`
+  — orphaned user gets a profile, existing profile left untouched, superuser skipped, and
+  a no-orphans no-op). No migrations. 1697 tests pass (core + accounts).
