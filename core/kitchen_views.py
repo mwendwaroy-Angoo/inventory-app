@@ -290,6 +290,45 @@ def kitchen_board(request):
             .values('anchor_id').annotate(total=Sum(_KAbs('qty')))
             .values_list('anchor_id', 'total')
         )
+        # 2026-08-12 live report (Roy, Monsoon Inn): the two sums above are a
+        # true LIFETIME total with no cutoff — a tether (tracks_stock_of)
+        # added AFTER old sales already happened retroactively pulls those
+        # old sales into the anchor's running total the moment the tether
+        # exists, permanently suppressing a fresh restock's "remaining" even
+        # when Roy deliberately preserved that old history (rather than
+        # wiping it via Kitchen Item Reset, the wrong tool when the goal is
+        # "keep the real revenue, just stop it dragging down a fresh
+        # restock"). ItemPortionPreset.restock_anchor_at (stamped by Kitchen
+        # Item Reset's confirm step, see kitchen_reset_views.py) is a pure
+        # visibility cursor — where set on an anchor preset, override its
+        # entry above with a re-derived total counting only activity dated
+        # on/after that point. Every anchor with no restock point keeps the
+        # exact lifetime sum computed above, byte-for-byte unchanged.
+        _anchor_ids = set(_received_by_preset) | set(_sold_by_preset)
+        _restock_anchors = dict(
+            ItemPortionPreset.objects.filter(
+                id__in=_anchor_ids, restock_anchor_at__isnull=False,
+            ).values_list('id', 'restock_anchor_at')
+        )
+        for _anchor_id, _anchor_dt in _restock_anchors.items():
+            _received_by_preset[_anchor_id] = float(
+                KitchenStockReceiptLine.objects.filter(
+                    item__store=kitchen_store, preset_id__isnull=False,
+                    receipt__received_on__gte=timezone.localtime(_anchor_dt).date(),
+                )
+                .annotate(anchor_id=_KCoalesce(F('preset__tracks_stock_of_id'), F('preset_id')))
+                .filter(anchor_id=_anchor_id)
+                .aggregate(total=Sum('qty_received'))['total'] or 0
+            )
+            _sold_by_preset[_anchor_id] = float(
+                Transaction.objects.filter(
+                    business=business, type='Issue', item__store=kitchen_store,
+                    preset_id__isnull=False, created_at__gte=_anchor_dt,
+                ).exclude(payment_method='void')
+                .annotate(anchor_id=_KCoalesce(F('preset__tracks_stock_of_id'), F('preset_id')))
+                .filter(anchor_id=_anchor_id)
+                .aggregate(total=Sum(_KAbs('qty')))['total'] or 0
+            )
         # 2026-08-09 live report (Roy): investigated a report of "unable to
         # sell in the Kuku tile" right after receiving "Full Chicken Leg"
         # via a preset-attributed Kitchen Stock Receipt line — traced it to
@@ -2428,6 +2467,60 @@ def edit_raw_material_cost(request, item_id):
             f'KES {(old_cost or 0):,.2f} kwenda KES {new_cost:,.2f} kwa kila {item.unit} '
             f'(gunia ya KES {sack_cost:,.0f} ÷ {units_per_sack:g} {item.unit}).{extra}'
         ),
+    })
+
+
+@login_required
+@require_POST
+def reset_preset_restock_anchor(request, item_id):
+    """Owner/manager-only, non-destructive sibling of Kitchen Item Reset
+    (kitchen_reset_views.py) — stamps ItemPortionPreset.restock_anchor_at
+    = now() on the item's own anchor presets (never a tethered preset's own
+    field — stock_tracking_anchor_id() never resolves to one), so the
+    per-preset "Iliyobaki" tile-visibility tally (see kitchen_board()) only
+    counts receiving/sales from this moment forward.
+
+    2026-08-12 live report (Roy, Monsoon Inn): after a genuine physical
+    restock (23 fresh Full Chicken Legs, "Mapato: KES 0" — nothing sold
+    against it yet), the tile stayed hidden because OLD sold history Roy
+    deliberately wants preserved (real revenue, kept on purpose — NOT wiped
+    by Kitchen Item Reset) still counted toward the lifetime received-vs-
+    sold tally, permanently suppressing "remaining" for that anchor. Kitchen
+    Item Reset's own confirm step now stamps this same field as a side
+    effect of its destructive wipe — but that always requires a backup +
+    typed confirmation + actually deleting rows, wrong when (like here)
+    nothing needs deleting at all, the stock is already correctly received
+    and just needs the STALE VISIBILITY confusion cleared. This is that
+    lighter-weight lever: no backup, no typed confirmation, because it never
+    deletes a single Transaction, Receipt, or KES of revenue — purely a
+    forward-looking marker for what counts toward "is there stock to sell."
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
+    business = up.business
+    if not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya mmiliki/meneja pekee'}, status=403)
+
+    item = Item.objects.filter(id=item_id, store__business=business).first()
+    if item is None:
+        return JsonResponse({'ok': False, 'error': 'Bidhaa haikupatikana'}, status=404)
+    if item.is_kitchen_batch:
+        return JsonResponse(
+            {'ok': False, 'error': 'Hii inafanya kazi kwa bidhaa za kawaida (portion) pekee, si batch.'}, status=400,
+        )
+
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Ombi hili tayari limetumwa.'}, status=409)
+
+    now = timezone.now()
+    updated = item.portion_presets.filter(tracks_stock_of__isnull=True).update(restock_anchor_at=now)
+    return JsonResponse({
+        'ok': True,
+        'updated': updated,
+        'message': f'Alama mpya imewekwa kwa {item.description} — mauzo/mapokezi ya zamani hayataathiri tena.',
     })
 
 

@@ -1977,6 +1977,18 @@
           'background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.35);border-radius:5px;color:#5da8f0;cursor:pointer;" ' +
           'onclick="event.stopPropagation(); showHiddenPresetsDiag(' + item.id + ')">🔍 ' + item.hidden_presets.length + ' zimefichwa</button>'
         : '';
+      // 2026-08-12 live request (Roy, Monsoon Inn) — a NON-destructive
+      // sibling of "🔄 Anza Upya": stamps a pure visibility cursor
+      // (ItemPortionPreset.restock_anchor_at) so old, genuinely-preserved
+      // sales stop dragging a fresh restock's "remaining" negative — no
+      // backup, no typed confirmation, because nothing is deleted. Only
+      // shown when there's actually something hidden to fix, right next to
+      // the diagnostic that explains why.
+      var anchorBtn = (IS_OWNER && item.hidden_presets && item.hidden_presets.length)
+        ? '<button class="btn btn-sm" style="width:100%;margin-top:.3rem;font-size:.68rem;padding:.15rem .3rem;' +
+          'background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.35);border-radius:5px;color:#c9a84c;cursor:pointer;" ' +
+          'onclick="event.stopPropagation(); resetRestockAnchor(' + item.id + ', \'' + item.name.replace(/'/g,"\\'") + '\')">📍 Weka Alama Mpya</button>'
+        : '';
       // 2026-08-11 live request (Roy) — a rare, deliberate "erase and
       // re-enter from the paper book" escape hatch when a ledger has
       // drifted beyond what a normal correction can untangle. Owner/
@@ -1997,6 +2009,7 @@
               restockBtn +
               depleteBtn +
               hiddenDiagBtn +
+              anchorBtn +
               resetBtn +
               '</div>';
     });
@@ -2455,6 +2468,30 @@
     });
     lines.push('', 'Mfuko unafichwa kwa sababu "Iliyobaki" iko chini/sawa na 0.');
     alert(lines.join('\n'));
+  };
+
+  // 2026-08-12 live request (Roy, Monsoon Inn) — non-destructive sibling of
+  // 🔄 Anza Upya: stamps ItemPortionPreset.restock_anchor_at = now() on the
+  // item's own anchor presets so old, deliberately-preserved sales stop
+  // suppressing a fresh restock's visibility — nothing is deleted, so no
+  // backup/confirmation step is needed, unlike Anza Upya.
+  window.resetRestockAnchor = function(itemId, itemName) {
+    if (!confirm('Weka alama mpya ya "tangu sasa" kwa ' + itemName + '?\n\n' +
+                 'Hii HAITAFUTA data yoyote — mauzo/risiti za zamani zinabaki salama. ' +
+                 'Itafanya tu mfuko uonekane tena kama una stoku, kuanzia sasa hivi.')) return;
+    var body = new URLSearchParams({
+      csrfmiddlewaretoken: CSRF,
+      idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
+    });
+    fetch('/kitchen/item/' + itemId + '/reset-restock-anchor/', {
+      method: 'POST', headers: {'X-CSRFToken': CSRF, 'Content-Type': 'application/x-www-form-urlencoded'}, body: body,
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) { showToast('✓ Alama mpya imewekwa — ' + itemName); setTimeout(function(){ location.reload(); }, 1000); }
+        else { showToast(d.error || 'Hitilafu.'); }
+      })
+      .catch(function(){ showToast('Hitilafu ya mtandao.'); });
   };
 
   window.batchTileClick = function(itemId) {

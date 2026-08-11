@@ -296,6 +296,25 @@ def kitchen_item_reset_confirm(request, item_id):
         scope['receipts_qs'].delete()
         scope['batches_qs'].delete()
 
+        # 2026-08-12 live report (Roy, Monsoon Inn): this reset already
+        # correctly leaves history dated BEFORE cutoff untouched — but the
+        # per-preset "Iliyobaki" (remaining) tile-visibility tally
+        # (kitchen_board()) is a true lifetime sum with no cutoff of its
+        # own, so genuinely preserved older sales (especially ones a tether
+        # now retroactively pulls in) kept dragging a fresh restock's
+        # remaining count back down to zero/negative even right after this
+        # reset ran. ItemPortionPreset.restock_anchor_at is a pure
+        # visibility cursor — stamping it here tells kitchen_board() to
+        # only count receiving/sales dated on/after this same cutoff for
+        # THIS item's own anchor presets, without deleting a single extra
+        # row beyond what was already removed above. Only meaningful for
+        # portion-mode items (KitchenBatch items track stock a completely
+        # different way, with no ItemPortionPreset anchor concept).
+        if not item.is_kitchen_batch:
+            item.portion_presets.filter(tracks_stock_of__isnull=True).update(
+                restock_anchor_at=scope['cutoff_dt'],
+            )
+
     request.session.pop(_backup_session_key(item.id), None)
     messages.success(request, f'{item.description} — historia ya mauzo tangu {cutoff_date} imefutwa.')
     return redirect('kitchen_item_reset_complete', item_id=item.id)

@@ -30878,6 +30878,222 @@ class KitchenItemResetTest(TestCase):
         resp = self.client.get(f'/kitchen/item-reset/{self.kuku.id}/')
         self.assertEqual(resp.status_code, 404)
 
+    # ── restock_anchor_at side effect (2026-08-12) ───────────────────────
+
+    def test_confirm_stamps_restock_anchor_on_anchor_preset_only(self):
+        """The reset's confirm step must ALSO stamp ItemPortionPreset.
+        restock_anchor_at on the item's own anchor preset(s) — a pure
+        visibility cursor, side by side with (not instead of) the actual
+        deletion. A tethered preset (none configured on Kuku in THIS
+        fixture) would never get its own field touched; here full_leg is a
+        standalone anchor (tracks_stock_of=None), so it's the one that
+        should get stamped."""
+        self.client.get(f'/kitchen/item-reset/{self.kuku.id}/backup/?cutoff={self._cutoff(6)}')
+        self.client.post(f'/kitchen/item-reset/{self.kuku.id}/confirm/', {
+            'cutoff': self._cutoff(6), 'confirm_text': self.kuku.description,
+        })
+        self.full_leg.refresh_from_db()
+        self.assertIsNotNone(self.full_leg.restock_anchor_at)
+        expected_date = timezone.localdate() - timedelta(days=6)
+        self.assertEqual(timezone.localtime(self.full_leg.restock_anchor_at).date(), expected_date)
+
+    def test_batch_item_reset_never_touches_portion_presets(self):
+        """A KitchenBatch item (Chipo) has no ItemPortionPreset anchor
+        concept for this mechanism — the reset's anchor-stamping branch must
+        skip it entirely, never crash, never touch chipo_preset."""
+        self.client.get(f'/kitchen/item-reset/{self.chipo.id}/backup/?cutoff={self._cutoff(2)}')
+        resp = self.client.post(f'/kitchen/item-reset/{self.chipo.id}/confirm/', {
+            'cutoff': self._cutoff(2), 'confirm_text': self.chipo.description,
+        })
+        self.assertRedirects(resp, f'/kitchen/item-reset/{self.chipo.id}/complete/')
+        self.chipo_preset.refresh_from_db()
+        self.assertIsNone(self.chipo_preset.restock_anchor_at)
+
+    def test_reset_then_fresh_receipt_ignores_preserved_older_sold_history(self):
+        """End-to-end reproduction of Roy's exact live scenario: after the
+        reset, a NEW preset-attributed receipt correctly shows as sellable
+        even though genuinely-preserved older sold history for the SAME
+        anchor (the day-10 sale, deliberately kept — older than the cutoff)
+        still exists in the database. Without the anchor stamp this would
+        still show Iliyobaki <= 0 forever, no matter how much fresh stock
+        comes in."""
+        self.client.get(f'/kitchen/item-reset/{self.kuku.id}/backup/?cutoff={self._cutoff(6)}')
+        self.client.post(f'/kitchen/item-reset/{self.kuku.id}/confirm/', {
+            'cutoff': self._cutoff(6), 'confirm_text': self.kuku.description,
+        })
+        # The day-10 sale (older than cutoff) genuinely survives, deliberately.
+        self.assertTrue(
+            Transaction.objects.filter(item=self.kuku, preset=self.full_leg, type='Issue').exists(),
+            'The deliberately-preserved older sale must still exist',
+        )
+        # Fresh receipt of 23 legs, dated today — nothing sold against it yet.
+        new_receipt = KitchenStockReceipt.objects.create(
+            business=self.biz, store=self.store, supplier='Kamau (fresh)',
+            received_on=timezone.localdate(),
+        )
+        KitchenStockReceiptLine.objects.create(
+            receipt=new_receipt, item=self.kuku, preset=self.full_leg,
+            qty_received=Decimal('23'), line_cost=Decimal('3700'),
+        )
+        resp = self.client.get('/kitchen/')
+        import json as _json
+        body = resp.content.decode()
+        start = body.index('var _portionItems')
+        eq = body.index('=', start)
+        end = body.index(';\n', eq)
+        items = _json.loads(body[eq + 1:end].strip())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        labels = [p['label'] for p in kuku['presets']]
+        self.assertIn('Full Chicken Leg', labels,
+                       'Old preserved history must not suppress a fresh restock once the anchor is stamped')
+        full_leg = next(p for p in kuku['presets'] if p['label'] == 'Full Chicken Leg')
+        self.assertEqual(full_leg['_received'], 23.0)
+        self.assertEqual(full_leg['_sold'], 0.0)
+
+
+class ResetPresetRestockAnchorTest(TestCase):
+    """2026-08-12 live report (Roy, Monsoon Inn): a lighter, NON-destructive
+    sibling of Kitchen Item Reset — "I do not want to delete all the
+    transactions made from a long time ago... put a receipt for last week
+    and start putting in sales till date... the presets received should
+    show." After a genuine fresh restock (nothing sold against it yet), the
+    tile still hid every preset because old, deliberately-preserved sold
+    history for the same anchor (esp. once a tether groups it in) still
+    counted toward the lifetime received-vs-sold tally. This endpoint
+    stamps ItemPortionPreset.restock_anchor_at = now() with zero deletion —
+    no backup, no typed confirmation needed, since nothing is destroyed."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Restock Anchor Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='ra_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='ra_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='ra_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='RA-KUKU', unit='Pcs', selling_price=Decimal('0'),
+        )
+        self.full_leg = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Full Chicken Leg', price=Decimal('250'), quantity_consumed=Decimal('1'),
+        )
+        self.half_leg = ItemPortionPreset.objects.create(
+            item=self.kuku, label='Half Chicken Leg', price=Decimal('150'),
+            quantity_consumed=Decimal('0.5'), tracks_stock_of=self.full_leg,
+        )
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='RA-CHIPO', unit='Batch', selling_price=Decimal('100'),
+            is_kitchen_batch=True,
+        )
+        self.client.force_login(self.owner)
+
+    def _post(self, item_id, token=None):
+        import uuid as _uuid
+        return self.client.post(
+            f'/kitchen/item/{item_id}/reset-restock-anchor/',
+            {'idempotency_token': token or f'ra-tok-{_uuid.uuid4()}'},
+        )
+
+    def test_stamps_anchor_on_standalone_preset(self):
+        before = timezone.now()
+        resp = self._post(self.kuku.id)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['updated'], 1)  # only full_leg is an anchor (tracks_stock_of=None)
+        self.full_leg.refresh_from_db()
+        self.half_leg.refresh_from_db()
+        self.assertIsNotNone(self.full_leg.restock_anchor_at)
+        self.assertGreaterEqual(self.full_leg.restock_anchor_at, before)
+        self.assertIsNone(self.half_leg.restock_anchor_at, 'A tethered preset never gets its own field stamped')
+
+    def test_resolves_drift_without_deleting_anything(self):
+        """Reproduce the exact live scenario: a chunk of old SOLD history
+        exists for this anchor with no matching RECEIVED-side record at all
+        (e.g. sales recorded before the tether/receipt-line tracking ever
+        existed for this cut — the real mechanism traced from Roy's live
+        report) — deliberately preserved, never deleted. A fresh restock
+        alone can't outrun it (30 old-sold > 23 new-received), so the tile
+        stays hidden until the anchor is explicitly stamped."""
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, preset=self.half_leg, type='Issue',
+            qty=Decimal('-30'), sale_amount=Decimal('9000'), payment_method='cash',
+            created_at=timezone.now() - timedelta(days=29),
+        )
+
+        # Fresh restock: 23 new legs, nothing sold against them yet.
+        new_receipt = KitchenStockReceipt.objects.create(
+            business=self.biz, store=self.store, supplier='Kamau', received_on=timezone.localdate(),
+        )
+        KitchenStockReceiptLine.objects.create(
+            receipt=new_receipt, item=self.kuku, preset=self.full_leg,
+            qty_received=Decimal('23'), line_cost=Decimal('3700'),
+        )
+        txn_count_before = Transaction.objects.filter(item=self.kuku).count()
+        receipt_count_before = KitchenStockReceiptLine.objects.filter(item=self.kuku).count()
+
+        # Before stamping: still hidden — 23 received vs 30 old-sold nets negative.
+        resp = self.client.get('/kitchen/')
+        import json as _json
+        def _blob(body):
+            start = body.index('var _portionItems')
+            eq = body.index('=', start)
+            end = body.index(';\n', eq)
+            return _json.loads(body[eq + 1:end].strip())
+        items = _blob(resp.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        self.assertNotIn('Full Chicken Leg', [p['label'] for p in kuku['presets']])
+
+        # Stamp the anchor — no deletion.
+        resp2 = self._post(self.kuku.id)
+        self.assertTrue(resp2.json()['ok'], resp2.json())
+        self.assertEqual(Transaction.objects.filter(item=self.kuku).count(), txn_count_before,
+                          'Stamping the anchor must never delete a single transaction')
+        self.assertEqual(KitchenStockReceiptLine.objects.filter(item=self.kuku).count(), receipt_count_before,
+                          'Stamping the anchor must never delete a single receipt line')
+
+        resp3 = self.client.get('/kitchen/')
+        items3 = _blob(resp3.content.decode())
+        kuku3 = next(i for i in items3 if i['id'] == self.kuku.id)
+        self.assertIn('Full Chicken Leg', [p['label'] for p in kuku3['presets']],
+                       'Fresh restock must be sellable once the stale drift is excluded via the anchor')
+        full_leg = next(p for p in kuku3['presets'] if p['label'] == 'Full Chicken Leg')
+        self.assertEqual(full_leg['_received'], 23.0)
+        self.assertEqual(full_leg['_sold'], 0.0)
+
+    def test_manager_may_stamp_anchor(self):
+        self.client.force_login(self.manager)
+        resp = self._post(self.kuku.id)
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_staff_blocked(self):
+        self.client.force_login(self.staff)
+        resp = self._post(self.kuku.id)
+        self.assertEqual(resp.status_code, 403)
+        self.full_leg.refresh_from_db()
+        self.assertIsNone(self.full_leg.restock_anchor_at)
+
+    def test_batch_item_rejected(self):
+        resp = self._post(self.chipo.id)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_cross_business_item_rejected(self):
+        other_biz = Business.objects.create(name='Other Restock Anchor Biz')
+        other_owner = User.objects.create_user(username='ra_other', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        self.client.force_login(other_owner)
+        resp = self._post(self.kuku.id)
+        self.assertEqual(resp.status_code, 404)
+
+    def test_duplicate_idempotency_token_blocked(self):
+        r1 = self._post(self.kuku.id, token='ra-dup-1')
+        self.assertTrue(r1.json()['ok'])
+        r2 = self._post(self.kuku.id, token='ra-dup-1')
+        self.assertEqual(r2.status_code, 409)
+
 
 class KitchenRevenueBreakdownTest(TestCase):
     """2026-08-09, second same-day follow-up (Roy — "for Leo to adjust

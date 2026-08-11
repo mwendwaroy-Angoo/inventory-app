@@ -6210,3 +6210,45 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   guard, `transferable_tabs_api`'s `is_debt` tagging, and a station-scoping regression
   lock (a bar-only staffer still cannot target a kitchen-only tab as a transfer
   destination, debt or not). No migrations — every change reuses existing model fields.
+- Kitchen preset visibility — restock anchor (2026-08-12). Live root-cause diagnosis with
+  Roy (Monsoon Inn), traced from a real diagnostic-tap screenshot, not guessed. After
+  properly using the Kitchen Item Reset tool (built the day before) with a partial cutoff
+  — deliberately preserving genuinely old sales/revenue history he did NOT want deleted —
+  Roy received a fresh 23-unit Full Chicken Leg delivery and the Kuku tile still hid every
+  preset. Root cause: `_received_by_preset`/`_sold_by_preset` (`kitchen_board()`,
+  `core/kitchen_views.py`) are a true LIFETIME sum with no cutoff at all — by design, these
+  power the "is there stock to sell" tile-visibility gate, completely separate from any
+  reset's own cutoff. The `tracks_stock_of` tether (Half Chicken Leg → Full Chicken Leg,
+  added AFTER some of those old sales already happened) retroactively pulls old, deliberately-
+  preserved Half Chicken Leg sales into the Full Chicken Leg anchor's running total the
+  moment the tether exists, regardless of how long ago they happened — permanently
+  suppressing "remaining" for a fresh restock unless the new stock alone outweighs ALL
+  sold-ever history for that anchor. This conflated two genuinely separate concerns: (1)
+  permanent revenue/COGS history, which must never be silently erased, and (2) a simple
+  "is there physical stock right now" flag, which should be resettable without touching (1).
+  New `ItemPortionPreset.restock_anchor_at` (migration 0161, nullable DateTimeField, pure
+  visibility cursor — never read by any revenue/cost/analytics code, only by the tile-
+  visibility gate) — when set on an anchor preset (never a tethered one; `stock_tracking_
+  anchor_id()` never resolves to a tethered preset's own id), `_received_by_preset`/
+  `_sold_by_preset` re-derive that ONE anchor's totals from only receiving/sales dated
+  on/after the anchor timestamp, overriding the lifetime sum computed for every other
+  anchor (which stays byte-for-byte unchanged when `restock_anchor_at` is null — the
+  default, so this is a fully backward-compatible addition). Two ways to set it, both
+  owner/manager only: (1) `kitchen_item_reset_confirm()` (`core/kitchen_reset_views.py`)
+  now ALSO stamps `restock_anchor_at = cutoff_dt` on the item's own anchor presets as a
+  side effect of its existing destructive wipe — the natural integration point when the
+  wipe and the visibility reset are happening together anyway; (2) new, deliberately
+  lighter, NON-destructive endpoint `reset_preset_restock_anchor()` (`/kitchen/item/<id>/
+  reset-restock-anchor/`, `core/kitchen_views.py`) stamps `restock_anchor_at = now()` with
+  zero deletion — no backup, no typed confirmation, since nothing is destroyed — for
+  exactly Roy's actual situation: the fresh stock was ALREADY correctly received, nothing
+  needed erasing, only the stale visibility confusion needed clearing. New "📍 Weka Alama
+  Mpya" button on the Kuku tile (`kitchen_board.html`), owner-only, shown right alongside
+  the existing "🔍 N zimefichwa" diagnostic whenever there's something hidden to fix — a
+  plain `confirm()` (not the destructive Anza Upya's typed-name flow) explaining that
+  nothing gets deleted. Idempotency-guarded (`claim_checkout_token`, matching every other
+  checkout-shaped endpoint in this app). 13 new tests (`ResetPresetRestockAnchorTest` — 7;
+  3 more added to `KitchenItemResetTest` for the reset-confirm integration, including a
+  direct end-to-end reproduction of Roy's exact scenario: preserved older sold history
+  co-existing with a fresh receipt, correctly excluded from visibility once the anchor is
+  stamped). One migration (0161, additive).

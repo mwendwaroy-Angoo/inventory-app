@@ -3783,6 +3783,30 @@ class ItemPortionPreset(models.Model):
         ),
     )
 
+    restock_anchor_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text=(
+            'A pure TILE-VISIBILITY cursor — never touches revenue, cost, or '
+            'transaction history. When set, the received-vs-sold "Iliyobaki" '
+            'tally for this preset (see kitchen_board()) only counts receiving '
+            'and sales dated on/after this point, ignoring anything earlier — '
+            'even genuinely-preserved old history the owner deliberately kept. '
+            '2026-08-12 live request (Roy, Monsoon Inn): the received/sold '
+            'tally is otherwise a true LIFETIME sum with no cutoff at all; a '
+            'tether (tracks_stock_of) added after old sales already happened '
+            'retroactively pulls those old sales into the anchor\'s running '
+            'total the moment the tether exists, permanently suppressing a '
+            'fresh restock\'s "remaining" even when Roy explicitly does NOT '
+            'want that old history deleted (Kitchen Item Reset\'s own destructive '
+            'wipe is the wrong tool for this — it would erase real revenue '
+            'history he wants to keep). Stamped automatically by Kitchen Item '
+            'Reset\'s confirm step on the item\'s own anchor presets (never on a '
+            'tethered preset\'s own field — stock_tracking_anchor_id() never '
+            'resolves to one). Blank = today\'s exact lifetime-sum behavior, '
+            'unchanged, for every preset that has never been through a reset.'
+        ),
+    )
+
     class Meta:
         ordering = ['display_order', 'price']
         verbose_name = 'Item Portion Preset'
