@@ -44,6 +44,30 @@
             </div>
         </div>
 
+        <!-- Rekebisha (adjust stock balance) delegation (2026-08-11) -->
+        <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        ⚖️ {% trans 'Rekebisha (Correct Stock Balance)' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans "Allow this staff member to use ⚖️ Rekebisha on Stock List to correct an item's balance to a real physical count, when the owner or manager is not around." %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'Off by default. Never extends the "not a real loss" judgment call — that stays owner/manager-only regardless.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_adjust_stock"
+                           id="can_adjust_stock"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_adjust_stock %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+
         <!-- Cost price -->
         <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
             <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
@@ -215,6 +239,29 @@
                        {% if staff_profile.can_authorize_tab_accumulation %}checked{% endif %}>
             </div>
         </div>
+        {% endif %}
+
+        <!-- Waitress: convert an existing tab to debt (2026-08-11) -->
+        {% if staff_profile.role == 'waitress' %}
+        {% if biz_profile.modules.keg or biz_profile.modules.kitchen %}
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-3" style="margin-top:1rem;padding-top:1rem;border-top:1px solid #2a2a2a;">
+            <div>
+                <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                    🤝 {% trans 'Convert Tab to Debt' %}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                    {% trans "Allow this waitress to convert an already-open tab's unpaid balance to debt (Geuza Deni), including at shift close. This does NOT let her place NEW credit directly — that rule never changes for any waitress, regardless of this toggle." %}
+                </div>
+            </div>
+            <div class="form-check form-switch" style="padding-top:.25rem;">
+                <input type="checkbox" name="can_convert_tabs_to_debt"
+                       id="can_convert_tabs_to_debt"
+                       class="form-check-input" role="switch"
+                       style="width:3rem; height:1.5rem; cursor:pointer;"
+                       {% if staff_profile.can_convert_tabs_to_debt %}checked{% endif %}>
+            </div>
+        </div>
+        {% endif %}
         {% endif %}
 
         <!-- Keg management delegation (2026-08-11) -->

@@ -475,6 +475,32 @@ class UserProfile(models.Model):
         help_text='Staff may approve tab orders for customers who already have outstanding debt. Owner-only by default.'
     )
 
+    can_adjust_stock = models.BooleanField(
+        default=False,
+        help_text=(
+            '2026-08-11 live request (Roy — "in the event the manager or business owner is '
+            'not around"): staff may use ⚖️ Rekebisha on Stock List to correct an item\'s '
+            'balance to a real physical count. Owner/manager-only by default. Still requires '
+            'the staffer to have an open shift. Never extends the "sio hasara halisi" '
+            '(not-a-real-loss) judgment call — that checkbox stays hidden for a delegated '
+            'staffer even when this is on; only owner/manager ever gets to decide a shortage '
+            "doesn't count as a real loss."
+        ),
+    )
+
+    can_convert_tabs_to_debt = models.BooleanField(
+        default=False,
+        help_text=(
+            '2026-08-11 live request (Roy): a waitress may never PLACE new credit directly '
+            '(that rule is unchanged — every checkout surface still blocks her outright), but '
+            'with this on she may convert an existing open tab\'s unpaid balance to debt '
+            '(Geuza Deni / bulk shift-close conversion) — the goods are already served either '
+            'way; this only affects who gets to record that it happened. Off by default. Has '
+            'no effect for any role other than waitress, since every other role can already '
+            'do this.'
+        ),
+    )
+
     can_manage_kegs = models.BooleanField(
         default=False,
         help_text=(

@@ -155,6 +155,7 @@ from core.petty_cash_views import (
     petty_cash_list,
     review_petty_cash,
     edit_petty_cash,
+    delete_petty_cash,
     respond_petty_cash,
 )
 from core.customer_ussd import customer_ussd_callback
@@ -555,6 +556,7 @@ urlpatterns = [
     path("petty-cash/record/",                    record_petty_cash,  name="record_petty_cash"),
     path("petty-cash/<int:entry_id>/review/",     review_petty_cash,  name="review_petty_cash"),
     path("petty-cash/<int:entry_id>/edit/",       edit_petty_cash,    name="edit_petty_cash"),
+    path("petty-cash/<int:entry_id>/delete/",     delete_petty_cash,  name="delete_petty_cash"),
     path("petty-cash/<int:entry_id>/respond/",    respond_petty_cash, name="respond_petty_cash"),
 
     path("stock/stores/", manage_stores, name="manage_stores"),

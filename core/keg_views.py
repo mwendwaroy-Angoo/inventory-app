@@ -837,6 +837,7 @@ def bar_board(request):
         'is_owner': is_owner,
         'is_waitress': up.role == 'waitress',
         'can_manage_kegs': is_owner or getattr(up, 'can_manage_kegs', False),
+        'can_convert_tabs_to_debt': getattr(up, 'can_convert_tabs_to_debt', False),
         'business': business,
         'success_data': success_data,
         'current_user_id': request.user.id,
@@ -3445,7 +3446,13 @@ def convert_tab_to_debt(request, tab_id):
     # 2026-08-06 live request (Monsoon Inn) — a waitress may settle tabs on
     # either counter but must never be the one to PLACE a debt — Geuza
     # Deni goes through counter staff, a manager, or the owner.
-    if up.role == 'waitress':
+    # 2026-08-11 correction (Roy): a waitress explicitly granted
+    # can_convert_tabs_to_debt may now do this specific action — the goods
+    # are already served either way, this only changes who records it. This
+    # does NOT touch the separate, unconditional block on a waitress
+    # placing NEW credit directly (bar_board()'s checkout path) — that rule
+    # is unchanged for every waitress regardless of this toggle.
+    if up.role == 'waitress' and not getattr(up, 'can_convert_tabs_to_debt', False):
         return JsonResponse({
             'ok': False,
             'error': 'Huwezi kugeuza tab kuwa deni — mwombe muhusika wa counter, '
@@ -3683,7 +3690,9 @@ def bulk_convert_tabs_to_debt(request):
     # 2026-08-06 live request (Monsoon Inn) — a waitress must never be the
     # one to place a debt, even her own leftover tabs at shift close;
     # counter staff, a manager, or the owner does this instead.
-    if up.role == 'waitress':
+    # 2026-08-11 correction (Roy): same can_convert_tabs_to_debt bypass as
+    # convert_tab_to_debt() — see that view's comment for the reasoning.
+    if up.role == 'waitress' and not getattr(up, 'can_convert_tabs_to_debt', False):
         return JsonResponse({
             'ok': False,
             'error': 'Huwezi kugeuza tab kuwa deni — mwombe muhusika wa counter, '

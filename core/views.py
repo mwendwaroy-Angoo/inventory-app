@@ -4046,6 +4046,7 @@ def quick_sell(request):
             "success_data": success_data,
             "is_owner": (user_profile.is_owner_or_manager if user_profile else False),
             "is_waitress": (user_profile.role == 'waitress' if user_profile else False),
+            "can_convert_tabs_to_debt": (getattr(user_profile, 'can_convert_tabs_to_debt', False) if user_profile else False),
             "open_tab_names": open_tab_names,
             "qs_items": items_qs,
         },

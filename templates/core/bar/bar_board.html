@@ -1876,6 +1876,10 @@
   // rather than showing a button that always errors (backend also blocks
   // this — see convert_tab_to_debt/bulk_convert_tabs_to_debt).
   var IS_WAITRESS = {% if is_waitress %}true{% else %}false{% endif %};
+  // 2026-08-11 live request (Roy): a waitress explicitly granted
+  // can_convert_tabs_to_debt may now see/use "Geuza Deni" — everywhere else
+  // IS_WAITRESS already hides it, this just narrows those checks further.
+  var CAN_CONVERT_DEBT = {% if can_convert_tabs_to_debt %}true{% else %}false{% endif %};
   window.PETTY_CASH_STATION = 'bar';  // 2026-07-27 — which till the shared petty cash modal records against on this board
   window.EXPENSE_STATION = 'bar';  // 2026-08-09 — which counter the shared ad-hoc expense modal tags entries with
   var CSRF        = "{{ csrf_token }}";
@@ -2980,7 +2984,7 @@
         var staleHtmlF = isStale
           ? '<div style="background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.3);border-radius:6px;padding:.25rem .6rem;margin-bottom:.35rem;font-size:.75rem;color:#ff9800;display:flex;align-items:center;justify-content:space-between;">' +
             '<span>Tab ya ' + tab.opened_date + ' — bado haijafungwa</span>' +
-            (IS_WAITRESS ? '' : '<button onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')" style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>') +
+            ((IS_WAITRESS && !CAN_CONVERT_DEBT) ? '' : '<button onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')" style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>') +
             '</div>'
           : '';
         var receiptLinkHtmlF = tab.receipt_url
@@ -3096,7 +3100,7 @@
         var staleHtml = isStale
           ? '<div style="background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.3);border-radius:6px;padding:.25rem .6rem;margin-bottom:.35rem;font-size:.75rem;color:#ff9800;display:flex;align-items:center;justify-content:space-between;">' +
             '<span>Tab ya ' + tab.opened_date + ' — bado haijafungwa</span>' +
-            (IS_WAITRESS ? '' : '<button onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')" style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>') +
+            ((IS_WAITRESS && !CAN_CONVERT_DEBT) ? '' : '<button onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')" style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>') +
             '</div>'
           : '';
 
@@ -3181,7 +3185,7 @@
           '<button class="tab-action-btn tab-btn-stk" onclick="window.openTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + safeCust + '\',false,\'' + (tab.customer_phone||'').replace(/'/g,"\\'") + '\')">📲 STK Push</button>' +
           '</div>' +
           '<div class="tab-actions-row" style="margin-top:0.3rem;">' +
-          (IS_WAITRESS ? '' : '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>') +
+          ((IS_WAITRESS && !CAN_CONVERT_DEBT) ? '' : '<button class="tab-action-btn tab-btn-debt" onclick="window.openDebtModal(' + tab.id + ',\'' + safeCust + '\')">→ Deni</button>') +
           (tab.unpaid_total > 0
             ? '<button class="tab-action-btn" style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.35);color:#4caf50;" ' +
               'onclick="window.openTransferWholeTabModal(' + tab.id + ',\'' + safeCust + '\',' + tab.unpaid_total + ')">🔀 Tab Yote</button>'

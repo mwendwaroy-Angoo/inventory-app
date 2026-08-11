@@ -13490,6 +13490,96 @@ class PettyCashAccountabilityTest(TestCase):
         entry.refresh_from_db()
         self.assertEqual(entry.amount, Decimal('150'))
 
+    def test_staff_can_edit_own_rejected_entry_and_it_resubmits_to_pending(self):
+        """2026-08-11 live request (Roy): widened from pending-only — a
+        staffer may now correct a REJECTED entry's amount, which clears the
+        stale rejection and sends it straight back to the owner side."""
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+            status='rejected', reviewed_by=self.owner, reviewed_at=timezone.now(),
+            review_note='Kiasi ni kikubwa mno',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/edit/', {
+            'amount': '120', 'reason': 'transport', 'description': 'Sahihi zaidi',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data['resubmitted'])
+        self.assertEqual(data['status'], 'pending')
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount, Decimal('120'))
+        self.assertEqual(entry.status, 'pending')
+        self.assertIsNone(entry.reviewed_by)
+        self.assertIsNone(entry.reviewed_at)
+        self.assertEqual(entry.review_note, '')
+
+    def test_editing_rejected_entry_notifies_owner_not_self(self):
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+            status='rejected', reviewed_by=self.owner, reviewed_at=timezone.now(),
+        )
+        self.client.force_login(self.staff)
+        self.client.post(f'/petty-cash/{entry.id}/edit/', {'amount': '120'})
+        notif = Notification.objects.filter(user=self.owner, title__icontains='Imesahihishwa').first()
+        self.assertIsNotNone(notif)
+        self.assertFalse(Notification.objects.filter(user=self.staff, title__icontains='Imesahihishwa').exists())
+
+    def test_staff_can_delete_own_pending_entry(self):
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/delete/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertFalse(self.PettyCash.objects.filter(id=entry.id).exists())
+
+    def test_staff_can_delete_own_rejected_entry(self):
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+            status='rejected', reviewed_by=self.owner, reviewed_at=timezone.now(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/delete/')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertFalse(self.PettyCash.objects.filter(id=entry.id).exists())
+
+    def test_staff_cannot_delete_approved_entry(self):
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+            status='approved', reviewed_by=self.owner, reviewed_at=timezone.now(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/delete/')
+        self.assertFalse(resp.json()['ok'])
+        self.assertTrue(self.PettyCash.objects.filter(id=entry.id).exists())
+
+    def test_staff_cannot_delete_someone_elses_entry(self):
+        other = User.objects.create_user(username='pca_other3', password='x')
+        UserProfile.objects.create(user=other, business=self.biz, role='staff')
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=other, date=timezone.localdate(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/petty-cash/{entry.id}/delete/')
+        self.assertFalse(resp.json()['ok'])
+        self.assertTrue(self.PettyCash.objects.filter(id=entry.id).exists())
+
+    def test_delete_notifies_owner(self):
+        entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('150'), reason='transport',
+            recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.staff)
+        self.client.post(f'/petty-cash/{entry.id}/delete/')
+        self.assertTrue(Notification.objects.filter(user=self.owner, title__icontains='Imefutwa').exists())
+
     def test_staff_cannot_edit_someone_elses_entry(self):
         other = User.objects.create_user(username='pca_other', password='x')
         UserProfile.objects.create(user=other, business=self.biz, role='staff')
@@ -30691,3 +30781,204 @@ class CanManageKegsPermissionTest(TestCase):
         data2 = resp2.json()
         row2 = next(k for k in data2['kegs'] if k['item_id'] == self.item2.id)
         self.assertEqual(row2['last_closed_by_name'], 'cmk_staff')
+
+
+class AdjustStockPermissionTest(TestCase):
+    """2026-08-11 live request (Roy — "in the event the manager or business
+    owner is not around"): UserProfile.can_adjust_stock lets a trusted
+    staffer use ⚖️ Rekebisha, closing a real pre-existing gap — the view had
+    NO permission gate at all despite its own docstring's "owner/manager"
+    claim. Still requires an open shift; never extends the "not a real
+    loss" judgment call to a delegated staffer."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='ASP Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='asp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='asp_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff, business=self.biz, role='staff', can_adjust_stock=False,
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Whisky 750ml',
+            material_no='ASP-01', unit='Btl', selling_price=Decimal('1500'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('10'),
+        )
+
+    def _open_shift(self, user):
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=user,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+
+    def test_owner_can_adjust_without_toggle(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '7'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertEqual(self.item.current_balance(), Decimal('7'))
+
+    def test_plain_staff_blocked_without_toggle(self):
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '7'})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.item.current_balance(), Decimal('10'))
+
+    def test_can_adjust_stock_staff_with_shift_may_adjust(self):
+        self.staff_profile.can_adjust_stock = True
+        self.staff_profile.save(update_fields=['can_adjust_stock'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '7'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertEqual(self.item.current_balance(), Decimal('7'))
+
+    def test_can_adjust_stock_staff_without_shift_blocked(self):
+        self.staff_profile.can_adjust_stock = True
+        self.staff_profile.save(update_fields=['can_adjust_stock'])
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '7'})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json().get('shift_required'))
+        self.assertEqual(self.item.current_balance(), Decimal('10'))
+
+    def test_no_real_loss_ignored_for_delegated_staff(self):
+        """The 'not a real loss' judgment stays owner/manager-only — a
+        delegated staffer's submission of this flag is silently ignored."""
+        self.staff_profile.can_adjust_stock = True
+        self.staff_profile.save(update_fields=['can_adjust_stock'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '6', 'no_real_loss': '1',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        txn = Transaction.objects.filter(item=self.item, type='Wastage').order_by('-id').first()
+        self.assertEqual(txn.invoice_no, '[ADJ]')
+
+    def test_owner_no_real_loss_still_works(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '6', 'no_real_loss': '1',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        txn = Transaction.objects.filter(item=self.item, type='Wastage').order_by('-id').first()
+        self.assertEqual(txn.invoice_no, '[ADJ-NOLOSS]')
+
+
+class WaitressConvertToDebtPermissionTest(TestCase):
+    """2026-08-11 live request (Roy): UserProfile.can_convert_tabs_to_debt
+    lets a specific waitress convert an EXISTING open tab's unpaid balance
+    to debt (Geuza Deni / bulk shift-close conversion). Deliberately does
+    NOT touch the separate, unconditional rule that a waitress can never
+    PLACE new credit directly at checkout — that's regression-locked here
+    too, with the toggle ON, to prove the two rules stay independent."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WCD Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar Counter')
+        self.owner = User.objects.create_user(username='wcd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='wcd_waitress', password='x')
+        self.waitress_profile = UserProfile.objects.create(
+            user=self.waitress, business=self.biz, role='waitress',
+            can_convert_tabs_to_debt=False,
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='WCD Keg Item',
+            material_no='WCD-01', unit='Cup', selling_price=Decimal('100'), is_keg=True,
+        )
+        self.barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.item, status='TAPPED',
+            cost_price=Decimal('1000'), target_revenue=Decimal('2000'),
+            tare_weight_kg=Decimal('5'), gross_weight_kg=Decimal('15'),
+        )
+        self.preset = ItemPortionPreset.objects.create(
+            item=self.item, label='Cup', price=Decimal('180'), quantity_consumed=Decimal('0.3'),
+        )
+
+    def _open_tab(self, name='WCD Customer'):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-0.3'), sale_amount=Decimal('180'),
+            payment_method='credit', recipient=name, keg_barrel=self.barrel,
+            date=timezone.localdate(),
+        )
+        tab = BarTab.objects.create(business=self.biz, customer_name=name, status='OPEN')
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='Cup', amount=Decimal('180'))
+        return tab
+
+    def test_waitress_without_toggle_blocked_from_convert(self):
+        tab = self._open_tab()
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': tab.customer_name})
+        self.assertEqual(resp.status_code, 403)
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'OPEN')
+
+    def test_waitress_with_toggle_may_convert(self):
+        self.waitress_profile.can_convert_tabs_to_debt = True
+        self.waitress_profile.save(update_fields=['can_convert_tabs_to_debt'])
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        tab = self._open_tab()
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': tab.customer_name})
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_waitress_with_toggle_but_no_shift_blocked_from_convert(self):
+        self.waitress_profile.can_convert_tabs_to_debt = True
+        self.waitress_profile.save(update_fields=['can_convert_tabs_to_debt'])
+        tab = self._open_tab()
+        self.client.force_login(self.waitress)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': tab.customer_name})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json().get('shift_required'))
+
+    def test_waitress_with_toggle_still_blocked_from_bulk_convert_without_toggle_off(self):
+        # Sanity: toggle OFF still blocks bulk convert.
+        tab = self._open_tab()
+        self.client.force_login(self.waitress)
+        resp = self.client.post('/bar/tabs/bulk-convert-to-debt/', {
+            'tab_ids': json.dumps([tab.id]),
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_waitress_with_toggle_may_bulk_convert(self):
+        self.waitress_profile.can_convert_tabs_to_debt = True
+        self.waitress_profile.save(update_fields=['can_convert_tabs_to_debt'])
+        tab = self._open_tab()
+        self.client.force_login(self.waitress)
+        resp = self.client.post('/bar/tabs/bulk-convert-to-debt/', {
+            'tab_ids': json.dumps([tab.id]),
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_waitress_with_toggle_still_blocked_from_placing_new_credit_directly(self):
+        """The toggle only affects CONVERTING an existing tab — a waitress
+        must still never be able to place NEW credit directly at checkout
+        (the partial-debt checkout shortcut), regardless of this toggle."""
+        self.waitress_profile.can_convert_tabs_to_debt = True
+        self.waitress_profile.save(update_fields=['can_convert_tabs_to_debt'])
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        self.client.force_login(self.waitress)
+        resp = self.client.post('/bar/', {
+            'keg_cart': json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}]),
+            'payment_method': 'tab',
+            'tab_customer': 'Waitress New Credit',
+            'partial_cash': '120',
+            'partial_mpesa': '0',
+            'idempotency_token': 'wcd-block-1',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(
+            BarTab.objects.filter(business=self.biz, customer_name='Waitress New Credit').exists()
+        )

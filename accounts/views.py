@@ -243,6 +243,8 @@ def staff_permissions(request, staff_id):
         staff_profile.can_receive_stock = request.POST.get('can_receive_stock') == 'on'
         staff_profile.can_authorize_tab_accumulation = request.POST.get('can_authorize_tab_accumulation') == 'on'
         staff_profile.can_manage_kegs = request.POST.get('can_manage_kegs') == 'on'
+        staff_profile.can_adjust_stock = request.POST.get('can_adjust_stock') == 'on'
+        staff_profile.can_convert_tabs_to_debt = request.POST.get('can_convert_tabs_to_debt') == 'on'
         # Manager-only toggles — template only renders these two for role='manager',
         # but the fields exist on every profile; harmless no-op to save 'off' for
         # a non-manager who could never reach these controls anyway.
@@ -253,7 +255,7 @@ def staff_permissions(request, staff_id):
             'can_input_cost_price', 'can_override_restrictions',
             'can_access_kitchen', 'can_access_bar', 'kitchen_requires_shift',
             'can_receive_kitchen_stock', 'can_receive_stock', 'can_authorize_tab_accumulation',
-            'can_manage_kegs',
+            'can_manage_kegs', 'can_adjust_stock', 'can_convert_tabs_to_debt',
             'can_review_petty_cash', 'can_confirm_shifts', 'can_approve_debt_erase',
         ])
         staff_name = staff_profile.user.get_full_name() or staff_profile.user.username

@@ -99,15 +99,22 @@ def record_petty_cash(request):
     })
 
 
-# ── Staff self-edit (own entry, still pending only) ───────────────────────────
+# ── Staff self-edit (own entry, anything not yet approved) ─────────────────────
 
 @login_required
 @require_POST
 def edit_petty_cash(request, entry_id):
-    """Let the RECORDING staffer correct their own entry before the owner reviews
-    it (2026-07-26 live request) — e.g. they mistyped the amount. Once reviewed
-    (approved/rejected) this is no longer available; use respond_petty_cash for a
-    rejected entry instead, which explains rather than silently changes it.
+    """Let the RECORDING staffer correct their own entry (2026-07-26 live
+    request) — e.g. they mistyped the amount.
+
+    2026-08-11 live request (Roy): widened from "pending only" to "anything
+    not yet APPROVED" — a staffer may now also correct a REJECTED entry
+    (amount, reason, description), not just explain it away via
+    respond_petty_cash. Correcting a rejected entry resubmits it as pending
+    — "sending it straight to the business owner side" again — clearing the
+    stale review verdict rather than leaving a corrected amount sitting
+    under an old rejection. Once APPROVED, this is permanently locked —
+    that's the one point of no return, matching Roy's own framing.
     """
     up = _get_up(request)
     if not up:
@@ -116,8 +123,8 @@ def edit_petty_cash(request, entry_id):
     entry = get_object_or_404(PettyCash, id=entry_id, business=up.business)
     if entry.recorded_by_id != request.user.id:
         return JsonResponse({'ok': False, 'error': 'Unaweza kubadilisha entry yako mwenyewe pekee.'}, status=403)
-    if entry.status != 'pending':
-        return JsonResponse({'ok': False, 'error': 'Entry hii tayari imepitiwa na haiwezi kubadilishwa tena.'}, status=400)
+    if entry.status == 'approved':
+        return JsonResponse({'ok': False, 'error': 'Entry hii tayari imekubaliwa na haiwezi kubadilishwa tena.'}, status=400)
 
     amount_str = request.POST.get('amount', '').strip()
     reason = request.POST.get('reason', entry.reason)
@@ -134,10 +141,36 @@ def edit_petty_cash(request, entry_id):
     if reason not in valid_reasons:
         reason = entry.reason
 
+    was_rejected = entry.status == 'rejected'
     entry.amount = amount
     entry.reason = reason
     entry.description = description
-    entry.save(update_fields=['amount', 'reason', 'description'])
+    update_fields = ['amount', 'reason', 'description']
+    if was_rejected:
+        entry.status = 'pending'
+        entry.reviewed_by = None
+        entry.reviewed_at = None
+        entry.review_note = ''
+        update_fields += ['status', 'reviewed_by', 'reviewed_at', 'review_note']
+    entry.save(update_fields=update_fields)
+
+    if was_rejected:
+        who = request.user.get_full_name() or request.user.username
+        from .models import Notification
+        from accounts.models import UserProfile as _UP
+        for op in _UP.objects.filter(business=up.business, role__in=['owner', 'manager']).exclude(
+            user=request.user
+        ).select_related('user'):
+            Notification.objects.create(
+                user=op.user,
+                title='🔄 Petty Cash — Imesahihishwa, Inasubiri Tena',
+                message=(
+                    f"{who} amesahihisha KES {entry.amount:,.0f} ({entry.get_reason_display()}) "
+                    f"baada ya kukataliwa — inasubiri ukague tena."
+                ),
+                notification_type='info',
+                link_url='/petty-cash/',
+            )
 
     return JsonResponse({
         'ok': True,
@@ -145,7 +178,52 @@ def edit_petty_cash(request, entry_id):
         'amount': float(entry.amount),
         'reason_display': entry.get_reason_display(),
         'description': entry.description,
+        'status': entry.status,
+        'resubmitted': was_rejected,
     })
+
+
+# ── Staff self-delete (own entry, anything not yet approved) ───────────────────
+
+@login_required
+@require_POST
+def delete_petty_cash(request, entry_id):
+    """Let the RECORDING staffer delete their own entry entirely (2026-08-11
+    live request, Roy) — same boundary as edit_petty_cash: allowed for
+    pending or rejected, blocked once APPROVED. Approved entries are also
+    mirrored into Expense Intelligence (linked_expense) and reflected in
+    till_expected_cash() — deleting one out from under that would silently
+    corrupt both, exactly the "point of no return" Roy asked for.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Not authenticated'}, status=401)
+
+    entry = get_object_or_404(PettyCash, id=entry_id, business=up.business)
+    if entry.recorded_by_id != request.user.id:
+        return JsonResponse({'ok': False, 'error': 'Unaweza kufuta entry yako mwenyewe pekee.'}, status=403)
+    if entry.status == 'approved':
+        return JsonResponse({'ok': False, 'error': 'Entry hii tayari imekubaliwa na haiwezi kufutwa.'}, status=400)
+
+    who = request.user.get_full_name() or request.user.username
+    amount = entry.amount
+    reason_display = entry.get_reason_display()
+    entry.delete()
+
+    from .models import Notification
+    from accounts.models import UserProfile as _UP
+    for op in _UP.objects.filter(business=up.business, role__in=['owner', 'manager']).exclude(
+        user=request.user
+    ).select_related('user'):
+        Notification.objects.create(
+            user=op.user,
+            title='🗑 Petty Cash Imefutwa',
+            message=f"{who} amefuta ombi lake la KES {amount:,.0f} ({reason_display}).",
+            notification_type='info',
+            link_url='/petty-cash/',
+        )
+
+    return JsonResponse({'ok': True})
 
 
 # ── Staff explains after a rejection (does not change status) ────────────────

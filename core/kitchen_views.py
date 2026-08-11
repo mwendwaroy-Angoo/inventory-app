@@ -617,6 +617,7 @@ def kitchen_board(request):
     return render(request, 'core/kitchen/kitchen_board.html', {
         'is_owner': is_owner,
         'is_waitress': up.role == 'waitress',
+        'can_convert_tabs_to_debt': getattr(up, 'can_convert_tabs_to_debt', False),
         'business': business,
         'kitchen_store': kitchen_store,
         'portion_items': json.dumps(portion_items),

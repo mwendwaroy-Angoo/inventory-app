@@ -637,19 +637,40 @@ def review_variance(request, var_id):
     return JsonResponse({'ok': False, 'error': 'Invalid action.'})
 
 
-@owner_or_manager_required
 def adjust_stock_balance(request, item_id):
     """
     Quick stock-balance correction for countable items (wines, spirits, dry goods).
     Owner/manager enters the physical count; a Wastage (shortage) or Receipt (surplus)
     transaction is created to reconcile the book balance.
     Returns JSON — called from stock_list.html modal.
+
+    2026-08-11 live request (Roy — "in the event the manager or business owner
+    is not around"): this view was previously gated by @owner_or_manager_
+    required, a decorator built for full-page views — it HTML-redirects on
+    failure, which is wrong for an AJAX endpoint that only ever returns JSON
+    (the caller's fetch() just saw a redirected HTML response, not a real
+    error). Removed the decorator; the permission check now lives inline
+    (JSON-friendly, matching every other AJAX endpoint in this app) and
+    additionally accepts an explicit UserProfile.can_adjust_stock opt-in for
+    a trusted staffer, same delegation pattern as can_manage_kegs/
+    can_receive_stock. Still requires an open shift for delegated staff.
     """
     up = get_user_profile(request)
     if not up:
         return JsonResponse({'ok': False, 'error': 'Not authenticated.'}, status=403)
     if request.method != 'POST':
         return JsonResponse({'ok': False, 'error': 'POST required.'}, status=405)
+
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not is_owner:
+        if not getattr(up, 'can_adjust_stock', False):
+            return JsonResponse({'ok': False, 'error': 'Ruhusa ya kurekebisha stock inahitajika.'}, status=403)
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
 
     business = up.business
     item = Item.objects.filter(id=item_id, store__business=business).select_related('store').first()
@@ -661,7 +682,10 @@ def adjust_stock_balance(request, item_id):
 
     actual_str = request.POST.get('actual_count', '').strip()
     note = request.POST.get('note', '').strip()
-    no_real_loss = request.POST.get('no_real_loss') in ('1', 'true', 'on')
+    # "Not a real loss" is an owner/manager judgment call only (unchanged
+    # rule, now actually enforced) — a delegated staffer's submission of
+    # this flag is silently ignored rather than trusted.
+    no_real_loss = is_owner and request.POST.get('no_real_loss') in ('1', 'true', 'on')
 
     if not actual_str:
         return JsonResponse({'ok': False, 'error': 'Taja hesabu halisi.'}, status=400)

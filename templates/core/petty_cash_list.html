@@ -146,16 +146,27 @@
             onclick="toggleReconsider(this)">↺ Badilisha uamuzi</button>
     {% endif %}
     {% elif entry.recorded_by_id == my_user_id %}
-    <!-- 2026-07-26 (item 1) — staff self-service: edit while still pending
-         (before review), or explain themselves once rejected. Also covers a
-         manager with can_review_petty_cash looking at their OWN entry — they
-         can never review that one regardless of the toggle (2026-07-30). -->
-    {% if entry.status == 'pending' %}
-    <button class="btn btn-sm" style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);color:#5da8f0;"
-            onclick="openEditPetty({{ entry.id }}, {{ entry.amount|floatformat:0 }}, '{{ entry.description|escapejs }}')">✏️ Hariri</button>
-    {% elif entry.status == 'rejected' and not entry.staff_note %}
-    <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
-            onclick="openRespondPetty({{ entry.id }}, this)">💬 Eleza</button>
+    <!-- 2026-07-26 (item 1) — staff self-service on their own entry. Also
+         covers a manager with can_review_petty_cash looking at their OWN
+         entry — they can never review that one regardless of the toggle
+         (2026-07-30).
+         2026-08-11 live request (Roy): widened from "pending only" to
+         "anything not yet APPROVED" — a staffer can now edit (amount/
+         reason/description) or delete a REJECTED entry outright, not just
+         explain it away. Editing a rejected entry resubmits it to pending —
+         straight back to the owner side. Once approved, none of this shows
+         at all (matches Roy's own "point of no return" framing). -->
+    {% if entry.status != 'approved' %}
+    <div class="d-flex gap-2 flex-wrap justify-content-end">
+      <button class="btn btn-sm" style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);color:#5da8f0;"
+              onclick="openEditPetty({{ entry.id }}, {{ entry.amount|floatformat:0 }}, '{{ entry.description|escapejs }}')">✏️ Hariri</button>
+      <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);color:#c0395a;"
+              onclick="deletePettyCash({{ entry.id }})">🗑 Futa</button>
+    </div>
+    {% endif %}
+    {% if entry.status == 'rejected' and not entry.staff_note %}
+    <button class="btn btn-sm mt-1" style="background:transparent;border:1px dashed #555;color:#999;font-size:.7rem;padding:.15rem .5rem;"
+            onclick="openRespondPetty({{ entry.id }}, this)">💬 Eleza pia</button>
     {% endif %}
     {% endif %}
   </div>
@@ -412,8 +423,30 @@ window.openEditPetty = function (entryId, currentAmount, currentDesc) {
   })
     .then(function (r) { return r.json(); })
     .then(function (d) {
-      if (d.ok) { pcShowToast('Imesahihishwa.'); location.reload(); }
+      if (d.ok) {
+        pcShowToast(d.resubmitted ? 'Imesahihishwa — imetumwa tena kwa ukaguzi.' : 'Imesahihishwa.');
+        location.reload();
+      }
       else { alert(d.error || 'Hitilafu.'); }
+    })
+    .catch(function () { alert('Hitilafu ya mtandao.'); });
+};
+
+// 2026-08-11 live request (Roy): staff may delete their own entry outright
+// as long as it hasn't been approved yet — same boundary as openEditPetty.
+window.deletePettyCash = function (entryId) {
+  if (!confirm('Futa ombi hili la petty cash kabisa?')) return;
+  var body = new URLSearchParams({csrfmiddlewaretoken: '{{ csrf_token }}'});
+  fetch('/petty-cash/' + entryId + '/delete/', {
+    method: 'POST', body: body, headers: {'X-CSRFToken': '{{ csrf_token }}'},
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        pcShowToast('Imefutwa.');
+        var card = document.getElementById('pc-entry-' + entryId);
+        if (card) card.remove();
+      } else { alert(d.error || 'Hitilafu.'); }
     })
     .catch(function () { alert('Hitilafu ya mtandao.'); });
 };

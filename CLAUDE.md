@@ -6103,3 +6103,50 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   staff got stuck. Reworded to explicitly name the "✓ Imekwisha" button to press first.
   1 new test (`test_tap_blocked_while_another_barrel_already_selling_names_the_button`,
   added to `CanManageKegsPermissionTest`). No migrations.
+- Manager delegated-oversight toggles + opening-shift stock take + Recent Sales access
+  (2026-08-11): three live requests handled together. **(1) Petty cash self-service
+  widened**: staff could already edit (`edit_petty_cash`) their own entry while it was
+  `pending`, but not a `rejected` one, and had no delete path at all — Roy: "the only time
+  they cannot make changes is if it had gone to the business owner and the business owner
+  accepted it." `edit_petty_cash`'s gate loosened from `status != 'pending'` to `status ==
+  'approved'` (blocks only the true point of no return); editing a REJECTED entry now
+  resets it to `pending` (clearing `reviewed_by`/`reviewed_at`/`review_note`) — "sending it
+  straight to the business owner side" again — and notifies owner/manager (excluding the
+  actor) that it was corrected and resubmitted. New `delete_petty_cash` view, same boundary
+  (blocked once `approved`, since that's also when `linked_expense`/`till_expected_cash()`
+  start depending on it), also notifying owner/manager. `petty_cash_list.html` — already the
+  SAME page owner and staff both use (`can_review` differentiates what's actionable), so no
+  new page was needed — gained a "🗑 Futa" button alongside "✏️ Hariri" for any non-approved
+  entry, "💬 Eleza" demoted to a secondary "Eleza pia" affordance rather than the only option.
+  **(2) Rekebisha delegation**: new `UserProfile.can_adjust_stock` (accounts migration
+  0062). Real finding while wiring the gate in: `adjust_stock_balance()` was NOT ungated as
+  first assumed — it already carried `@owner_or_manager_required` — but that's a full-page
+  decorator that HTML-redirects on failure, wrong for an endpoint that only ever returns
+  JSON to `stock_list.html`'s `fetch()` (a non-owner/manager caller was silently getting a
+  redirected HTML blob back instead of a real JSON error, undetected until this session's
+  own tests caught it as `Content-Type: text/html` where JSON was expected). Removed the
+  decorator; the permission check now lives inline (JSON-friendly, matching every other AJAX
+  endpoint in this app) and additionally accepts `can_adjust_stock`, gated on an open shift
+  for the delegated staffer. The "sio hasara halisi" (not a real loss) judgment stays
+  owner/manager-only even when delegated — the backend silently ignores that flag from
+  anyone else, and the checkbox itself is hidden from a delegated staffer in the modal
+  (`adj-noloss-row`, now `{% if is_owner_or_manager %}`-gated; the JS that toggles/reads it
+  null-guarded to match, since it no longer unconditionally exists in the DOM). Stock List's
+  Rekebisha button/column widened from strict `is_owner` to `is_owner_or_manager or
+  can_adjust_stock` — incidentally also fixes a pre-existing gap where even a MANAGER
+  couldn't see this button at all. **(3) Waitress convert-to-debt delegation**: new
+  `UserProfile.can_convert_tabs_to_debt` — `convert_tab_to_debt()`/`bulk_convert_tabs_to_
+  debt()`'s existing unconditional `role == 'waitress'` block (2026-08-06) now reads `role
+  == 'waitress' and not can_convert_tabs_to_debt`. Deliberately narrow: does NOT touch the
+  separate, unconditional block on a waitress placing NEW credit directly at checkout
+  (`bar_board()`'s `is_partial_debt_checkout` gate) — converting an EXISTING tab's already-
+  served goods to debt is a different decision from originating new credit, and Roy's own
+  framing ("this only affects who gets to record that it happened") drew that exact line.
+  "Geuza Deni"/"→ Deni" buttons in all three tabs drawers (bar_board/kitchen_board/
+  quick_sell) widened from `IS_WAITRESS ? hide : show` to `(IS_WAITRESS && !CAN_CONVERT_
+  DEBT) ? hide : show`, per the tabs-drawer-parity rule. New toggle in `staff_permissions.
+  html`, shown only for `role == 'waitress'` on a keg/kitchen business. 19 new tests across
+  three classes (`PettyCashAccountabilityTest` +7, new `AdjustStockPermissionTest` — 6,
+  new `WaitressConvertToDebtPermissionTest` — 6) — including a direct regression lock that
+  the new waitress toggle does NOT bleed into the separate new-credit-at-checkout block.
+  One migration (accounts 0062), additive.

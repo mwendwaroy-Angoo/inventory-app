@@ -2738,6 +2738,7 @@
     var CSRF = '{{ csrf_token }}';
     var QS_IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
     var QS_IS_WAITRESS = {% if is_waitress %}true{% else %}false{% endif %};
+    var QS_CAN_CONVERT_DEBT = {% if can_convert_tabs_to_debt %}true{% else %}false{% endif %};
     var _qsTabsJustSettled = false;
 
     function qsPost(url, data) {
@@ -2972,7 +2973,7 @@
                   'padding:.25rem .6rem;margin-bottom:.35rem;font-size:.75rem;color:#ff9800;' +
                   'display:flex;align-items:center;justify-content:space-between;">' +
                   '<span>Tab ya ' + tab.opened_date + ' — bado haijafungwa</span>' +
-                  (QS_IS_WAITRESS ? '' : '<button onclick="qsOpenTabDebt(' + tab.id + ',\'' + sc + '\')" ' +
+                  ((QS_IS_WAITRESS && !QS_CAN_CONVERT_DEBT) ? '' : '<button onclick="qsOpenTabDebt(' + tab.id + ',\'' + sc + '\')" ' +
                   'style="background:rgba(192,57,90,.2);border:1px solid rgba(192,57,90,.4);border-radius:4px;' +
                   'color:#c0395a;font-size:.72rem;padding:.1rem .4rem;cursor:pointer;white-space:nowrap;">Geuza Deni</button>') +
                   '</div>'
@@ -3045,7 +3046,7 @@
                 '<button class="qs-tab-btn" style="background:rgba(76,175,80,0.08);color:#4caf50;border:1px solid rgba(76,175,80,0.3);" onclick="qsOpenTabStk(' + tab.id + ',' + tab.unpaid_total + ',\'' + tab.customer_name.replace(/'/g,"\\'") + '\',\'' + (tab.customer_phone||'').replace(/'/g,"\\'") + '\')">📲 STK Push</button>' +
                 '</div>' +
                 '<div class="qs-tab-actions" style="margin-top:0.3rem;">' +
-                (QS_IS_WAITRESS ? '' : '<button class="qs-tab-btn" style="background:rgba(201,168,76,0.08);color:#c9a84c;border:1px solid rgba(201,168,76,0.25);" onclick="qsOpenTabDebt(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">→ Deni</button>') +
+                ((QS_IS_WAITRESS && !QS_CAN_CONVERT_DEBT) ? '' : '<button class="qs-tab-btn" style="background:rgba(201,168,76,0.08);color:#c9a84c;border:1px solid rgba(201,168,76,0.25);" onclick="qsOpenTabDebt(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\')">→ Deni</button>') +
                 (tab.unpaid_total > 0
                   ? '<button class="qs-tab-btn" style="background:rgba(76,175,80,0.08);color:#4caf50;border:1px solid rgba(76,175,80,0.3);" onclick="qsOpenTransferWholeTabModal(' + tab.id + ',\'' + tab.customer_name.replace(/'/g,"\\'")+'\',' + tab.unpaid_total + ')">🔀 Tab Yote</button>'
                   : '') +

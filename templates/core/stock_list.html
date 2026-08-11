@@ -187,7 +187,7 @@
                 <th>{% trans 'Status' %}</th>
                 <th>{% trans 'Expiry' %}</th>
                 <th>{% trans 'Store' %}</th>
-                {% if user.userprofile.is_owner %}<th></th>{% endif %}
+                {% if user.userprofile.is_owner_or_manager or user.userprofile.can_adjust_stock %}<th></th>{% endif %}
             </tr>
         </thead>
         <tbody>
@@ -256,11 +256,13 @@
                     {% endif %}
                 </td>
                 <td>{{ item.store.name }}</td>
-                {% if user.userprofile.is_owner %}
+                {% if user.userprofile.is_owner_or_manager or user.userprofile.can_adjust_stock %}
                 <td onclick="event.stopPropagation()">
                     <div class="d-flex gap-1 flex-wrap">
+                        {% if user.userprofile.is_owner %}
                         <a href="{% url 'edit_item' item.id %}"
                            class="btn btn-sm btn-outline-primary">{% trans 'Edit' %}</a>
+                        {% endif %}
                         {% if not item.is_keg and not item.is_produce %}
                         <button class="btn btn-sm" data-adjust-item="{{ item.id }}"
                                 style="border:1px solid rgba(201,168,76,0.4); color:var(--gold); background:rgba(201,168,76,0.07);"
@@ -287,7 +289,7 @@
 </div>
 
 <!-- ── Adjust Stock Balance Modal ─────────────────────────────────────────── -->
-{% if user.userprofile.is_owner %}
+{% if user.userprofile.is_owner_or_manager or user.userprofile.can_adjust_stock %}
 <div class="modal fade" id="adjustStockModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content" style="background:#1e1e1e; border:1px solid #333; border-radius:12px;">
@@ -332,12 +334,18 @@
                      an actual financial loss that never happened. Shown only for
                      a shortage (negative variance) — a surplus never counts
                      toward wastage cost in the first place. -->
+                {% if user.userprofile.is_owner_or_manager %}
+                <!-- 2026-08-11: this judgment call stays owner/manager-only
+                     even for a staffer delegated can_adjust_stock — the
+                     backend already silently ignores this field from
+                     anyone else, hidden here to match. -->
                 <div class="mb-1" id="adj-noloss-row" style="display:none;">
                     <label style="display:flex; align-items:flex-start; gap:8px; font-size:0.8rem; color:#b0b0b0; cursor:pointer;">
                         <input type="checkbox" id="adj-no-real-loss" style="margin-top:0.2rem;">
                         <span>{% trans 'Hii sio hasara halisi — inarekebisha kosa la awali la kuandika (k.m. hitilafu ya mfumo), si upotevu wa bidhaa. Haitahesabiwa kama gharama iliyopotea.' %}</span>
                     </label>
                 </div>
+                {% endif %}
             </div>
             <div class="modal-footer" style="border-top:1px solid #2a2a2a; gap:0.5rem;">
                 <button type="button" class="btn btn-sm" data-bs-dismiss="modal"
@@ -457,8 +465,13 @@
         document.getElementById('adj-note').value                = '';
         document.getElementById('adj-variance-preview').textContent = '—';
         document.getElementById('adj-variance-preview').style.color = '#888';
-        document.getElementById('adj-no-real-loss').checked      = false;
-        document.getElementById('adj-noloss-row').style.display  = 'none';
+        // adj-no-real-loss / adj-noloss-row only render for owner/manager
+        // (2026-08-11) — null-guarded here since a delegated can_adjust_stock
+        // staffer never gets this element at all.
+        var _adjNoLossCb = document.getElementById('adj-no-real-loss');
+        if (_adjNoLossCb) _adjNoLossCb.checked = false;
+        var _adjNoLossRow = document.getElementById('adj-noloss-row');
+        if (_adjNoLossRow) _adjNoLossRow.style.display = 'none';
         document.getElementById('adj-submit-btn').disabled       = false;
         document.getElementById('adj-submit-btn').textContent    = '{% trans "Rekebisha Salio" %}';
         var modal = new bootstrap.Modal(document.getElementById('adjustStockModal'));
@@ -492,16 +505,17 @@
             if (diff === 0) {
                 preview.textContent = '± 0 (hakuna mabadiliko)';
                 preview.style.color = '#888';
-                noLossRow.style.display = 'none';
+                if (noLossRow) noLossRow.style.display = 'none';
             } else if (diff < 0) {
                 preview.textContent = '▼ ' + Math.abs(diff).toFixed(2).replace(/\.?0+$/, '');
                 preview.style.color = '#f87171';
-                noLossRow.style.display = 'block';
+                if (noLossRow) noLossRow.style.display = 'block';
             } else {
                 preview.textContent = '▲ +' + diff.toFixed(2).replace(/\.?0+$/, '');
                 preview.style.color = '#6ee7b7';
-                noLossRow.style.display = 'none';
-                document.getElementById('adj-no-real-loss').checked = false;
+                if (noLossRow) noLossRow.style.display = 'none';
+                var _nlcb = document.getElementById('adj-no-real-loss');
+                if (_nlcb) _nlcb.checked = false;
             }
         });
     });
@@ -509,7 +523,8 @@
     function submitAdjustment() {
         var actual = document.getElementById('adj-actual-count').value.trim();
         var note   = document.getElementById('adj-note').value.trim();
-        var noRealLoss = document.getElementById('adj-no-real-loss').checked;
+        var _nlcbSubmit = document.getElementById('adj-no-real-loss');
+        var noRealLoss = _nlcbSubmit ? _nlcbSubmit.checked : false;
         var btn    = document.getElementById('adj-submit-btn');
         if (!actual) { alert('{% trans "Ingiza hesabu halisi kwanza." %}'); return; }
         btn.disabled = true;
