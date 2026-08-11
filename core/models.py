@@ -4839,8 +4839,13 @@ class BarTabEntry(models.Model):
             )
             if entry.is_paid:
                 raise ValueError('Kiingilio hiki tayari kimelipwa.')
-            if entry.tab.status != 'OPEN':
-                raise ValueError('Tab ya kiingilio hiki haiko wazi.')
+            # 2026-08-11 live request (Roy): a source customer already
+            # converted to debt (tab.status='SETTLED') must still be
+            # transferable — entry.is_paid=False above already guarantees
+            # this is a genuine, still-owed item; SETTLED is allowed
+            # alongside OPEN, everything else (VOID) is not.
+            if entry.tab.status not in ('OPEN', 'SETTLED'):
+                raise ValueError('Tab ya kiingilio hiki haiko wazi wala haijawa deni.')
 
             paid_amount = Decimal(str(paid_amount))
             if paid_amount < 0 or paid_amount >= entry.amount:
@@ -4851,8 +4856,12 @@ class BarTabEntry(models.Model):
                 raise ValueError('Njia ya malipo si sahihi.')
 
             dest_tab = BarTab.objects.select_for_update().get(id=dest_tab_id, business=business)
-            if dest_tab.status != 'OPEN':
-                raise ValueError('Tab lengwa haiko wazi.')
+            # 2026-08-11: a destination already converted to debt (SETTLED)
+            # is now a valid target too — see accept()'s own comment for how
+            # the underlying Transaction.recipient gets synced so the debt
+            # ledger correctly attributes the moved item to its new owner.
+            if dest_tab.status not in ('OPEN', 'SETTLED'):
+                raise ValueError('Tab lengwa haiko wazi wala haijawa deni.')
             if dest_tab.id == entry.tab_id:
                 raise ValueError('Huwezi kuhamisha kwenye tab iyo hiyo.')
 
@@ -5217,11 +5226,31 @@ class TabTransferRequest(models.Model):
             result = fresh
             for row in siblings:
                 dest_tab = BarTab.objects.select_for_update().get(pk=row.dest_tab_id)
-                if dest_tab.status != 'OPEN':
-                    raise ValueError('Tab lengwa haiko wazi tena.')
+                # 2026-08-11 live request (Roy): a destination already
+                # converted to debt (SETTLED) is now a valid target too.
+                if dest_tab.status not in ('OPEN', 'SETTLED'):
+                    raise ValueError('Tab lengwa haiko wazi tena wala haijawa deni.')
                 entry = BarTabEntry.objects.select_for_update().get(pk=row.entry_id)
                 entry.tab = dest_tab
                 entry.save(update_fields=['tab'])
+                # If the destination is a debt-converted tab, there is no
+                # future convert_tab_to_debt() call coming to attribute this
+                # moved item correctly — convert_tab_to_debt()'s own entry
+                # loop only runs ONCE, at the moment of conversion, and that
+                # already happened before this item arrived. Sync the
+                # underlying Transaction's recipient/payment_method right
+                # here instead, mirroring exactly what conversion itself
+                # does, so the debt tracker attributes it to its new owner.
+                # An OPEN destination needs no such sync — either it stays
+                # open (irrelevant to the debt ledger, correctly excluded by
+                # _get_customer_debt_data()'s own tab__status='OPEN'
+                # exclusion) or it gets converted later, at which point that
+                # future conversion sets recipient correctly on its own.
+                if dest_tab.status != 'OPEN':
+                    txn = entry.transaction
+                    txn.recipient = dest_tab.customer_name
+                    txn.payment_method = 'credit'
+                    txn.save(update_fields=['recipient', 'payment_method'])
                 row.status = 'ACCEPTED'
                 row.resolved_at = timezone.now()
                 row.save(update_fields=['status', 'resolved_at'])
@@ -5325,10 +5354,14 @@ class TabTransferRequest(models.Model):
         with _txn.atomic():
             source_tab = BarTab.objects.select_for_update().get(id=source_tab_id, business=business)
             dest_tab = BarTab.objects.select_for_update().get(id=dest_tab_id, business=business)
-            if source_tab.status != 'OPEN':
-                raise ValueError('Tab chanzo haiko wazi.')
-            if dest_tab.status != 'OPEN':
-                raise ValueError('Tab lengwa haiko wazi.')
+            # 2026-08-11 live request (Roy): either side may already be
+            # converted to debt (SETTLED) — see split_and_transfer_locked()'s
+            # matching comment and accept()'s recipient-sync for the full
+            # reasoning.
+            if source_tab.status not in ('OPEN', 'SETTLED'):
+                raise ValueError('Tab chanzo haiko wazi wala haijawa deni.')
+            if dest_tab.status not in ('OPEN', 'SETTLED'):
+                raise ValueError('Tab lengwa haiko wazi wala haijawa deni.')
             if source_tab.id == dest_tab.id:
                 raise ValueError('Huwezi kuhamisha kwenye tab iyo hiyo.')
 

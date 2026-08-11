@@ -449,6 +449,22 @@
         <h6>🧾 {% trans 'Unpaid Credit Transactions' %}</h6>
         <span style="color:#888; font-size:0.78rem;">{{ unpaid_transactions|length }} {% trans 'item(s)' %}</span>
     </div>
+    <!-- 2026-08-11 live request (Roy): "a way for staff to transfer both
+         single items and whole tabs for one customer to the other, even if
+         that customer is in the debt tracker side." One button per distinct
+         tab this customer's debt originated from — most debt customers have
+         exactly one, but someone with several converted tabs over time gets
+         one button per tab, each moving only that tab's own items. -->
+    {% if transferable_tabs %}
+    <div class="px-3 pt-2 pb-1 d-flex flex-wrap gap-2" style="border-bottom:1px solid #2a2a2a;">
+        {% for t in transferable_tabs %}
+        <button class="btn btn-sm" onclick="window.openDebtWholeTabTransfer({{ t.id }}, {{ t.count }}, {{ t.total }})"
+                style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.3);color:#c9a84c;font-size:0.76rem;">
+            🔀 {% trans 'Hamisha Tab Yote' %} ({{ t.count }} {% trans 'item(s)' %}, KES {{ t.total|floatformat:0 }})
+        </button>
+        {% endfor %}
+    </div>
+    {% endif %}
     {% if unpaid_transactions %}
     <div class="table-responsive">
         <table class="table mb-0">
@@ -508,6 +524,13 @@
                             {% endif %}
                             {% endif %}
                         {% else %}
+                        {% if entry.tab_entry_id %}
+                        <button onclick="window.openDebtItemTransfer({{ entry.tab_entry_id }}, {{ entry.source_tab_id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
+                            style="background:rgba(201,168,76,0.06);border:1px solid rgba(201,168,76,0.25);border-radius:6px;
+                                   color:#c9a84c;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;margin-right:0.3rem;">
+                            🔀 {% trans 'Hamisha' %}
+                        </button>
+                        {% endif %}
                         <button onclick="openWriteOffModal({{ entry.txn.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
                             style="background:rgba(192,57,90,0.06);border:1px solid rgba(192,57,90,0.25);border-radius:6px;
                                    color:#c0395a;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;">
@@ -688,6 +711,46 @@
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 2026-08-11 live request (Roy): transfer a single debt item, or this
+     customer's whole debt (per originating tab), to a different customer —
+     the same mechanism the tabs drawers already use, reused here since it
+     was extended to accept an already-converted debt tab as either side.
+     One shared modal for both modes (mode tracked in JS, not two separate
+     modals) — a debt-page transfer is always a FULL move, no partial-split
+     UI needed, unlike the richer split modal in the live tabs drawers. -->
+<div class="modal fade" id="debtTransferModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0" style="background:#1e1e1e; border:1px solid rgba(255,255,255,0.1) !important;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title" style="color:var(--gold); font-family:'Playfair Display',serif; font-size:1rem;">
+                    🔀 <span id="dtModalTitle">Hamisha</span>
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p id="dtInfo" style="color:#b0b0b0; font-size:0.85rem; margin-bottom:0.75rem;"></p>
+                <label style="font-size:0.8rem; color:#b0b0b0; display:block; margin-bottom:0.35rem;">
+                    {% trans 'Hamishia kwa mteja:' %}
+                </label>
+                <select id="dtDest" class="form-select form-select-sm mb-2"
+                        onchange="window._onDtDestChange()"
+                        style="background:#111; border-color:#333; color:#f0ece4;"></select>
+                <input type="text" id="dtDestNewName" placeholder="Jina la mteja (mtu bila tab)"
+                       style="display:none; width:100%; background:#111; border:1px solid #333; border-radius:6px;
+                              color:#f0ece4; padding:0.5rem 0.7rem; font-size:0.85rem; margin-bottom:0.5rem;">
+                <p id="dtError" style="color:#f87171; font-size:0.78rem; min-height:1.2em; margin:0;"></p>
+                <div class="d-flex gap-2 justify-content-end mt-3">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal"
+                        style="border-color:rgba(255,255,255,0.2); color:#b0b0b0;">Ghairi</button>
+                    <button type="button" id="dtSubmitBtn" class="btn btn-sm"
+                        style="background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4); color:#c9a84c;"
+                        onclick="window._doDebtTransfer()">Hamisha</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1062,6 +1125,125 @@ function openWriteOffModal(txnId, itemName, amount) {
     var modal = new bootstrap.Modal(document.getElementById('writeOffModal'));
     modal.show();
 }
+
+/* ── Debt item / whole-tab transfer (2026-08-11 live request) ────────────
+   "A way for staff to transfer both single items and whole tabs for one
+   customer to the other, even if that customer is in the debt tracker
+   side." Reuses the SAME split_and_transfer_entry / transfer_whole_tab
+   endpoints the live tabs drawers already use — now relaxed on the backend
+   to accept an already-converted debt tab on either side — and the same
+   cross-counter transferable_tabs_api destination picker. Always a FULL
+   move from this page (paid_amount=0 for a single item); no partial-split
+   UI, unlike the richer modal in the live tabs drawers. */
+var _dtMode = null;     // 'item' | 'tab'
+var _dtEntryId = null;  // BarTabEntry id, for mode='item'
+var _dtTabId = null;    // source tab id, both modes (exclude from picker; POST target for mode='tab')
+
+window.openDebtItemTransfer = function (tabEntryId, sourceTabId, itemDesc, amount) {
+    _dtMode = 'item'; _dtEntryId = tabEntryId; _dtTabId = sourceTabId;
+    document.getElementById('dtModalTitle').textContent = 'Hamisha Kipengele Kimoja';
+    document.getElementById('dtInfo').textContent =
+        itemDesc + ' — KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0}) +
+        '. Mteja mwingine atalipa KES hii yote — ' + '{{ customer.name|escapejs }}' + ' halipi chochote kwa kipengele hiki.';
+    document.getElementById('dtSubmitBtn').textContent = 'Hamisha';
+    _dtOpenModal(sourceTabId);
+};
+
+window.openDebtWholeTabTransfer = function (sourceTabId, count, total) {
+    _dtMode = 'tab'; _dtEntryId = null; _dtTabId = sourceTabId;
+    document.getElementById('dtModalTitle').textContent = 'Hamisha Tab Yote';
+    document.getElementById('dtInfo').textContent =
+        '{{ customer.name|escapejs }}' + ' — vitu ' + count + ', jumla KES ' +
+        parseFloat(total).toLocaleString('en-KE', {maximumFractionDigits:0}) +
+        '. Vitu vyote vitahamishiwa kwa mteja mwingine.';
+    document.getElementById('dtSubmitBtn').textContent = 'Hamisha Tab Yote';
+    _dtOpenModal(sourceTabId);
+};
+
+function _dtOpenModal(excludeTabId) {
+    document.getElementById('dtError').textContent = '';
+    var sel = document.getElementById('dtDest');
+    sel.innerHTML = '<option value="">Inapakia...</option>';
+    document.getElementById('dtDestNewName').style.display = 'none';
+    document.getElementById('dtDestNewName').value = '';
+    fetch('/bar/tabs/transferable/?exclude=' + excludeTabId, {credentials: 'same-origin'})
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            sel.innerHTML = '';
+            var newOpt = document.createElement('option');
+            newOpt.value = '__new__';
+            newOpt.textContent = '➕ Mtu asiye na tab (fungua tab mpya)';
+            sel.appendChild(newOpt);
+            (d.tabs || []).forEach(function (t) {
+                var opt = document.createElement('option');
+                opt.value = t.id;
+                var stationTag = t.source === 'kitchen' ? ' 🍽' : (t.source === 'bar' ? ' 🍺' : ' ⚡');
+                var debtTag = t.is_debt ? ' [DENI]' : '';
+                opt.textContent = t.customer_name + stationTag + debtTag +
+                    ' (KES ' + parseFloat(t.unpaid_total).toLocaleString('en-KE', {maximumFractionDigits:0}) + ')';
+                sel.appendChild(opt);
+            });
+        })
+        .catch(function () {
+            sel.innerHTML = '<option value="__new__">➕ Mtu asiye na tab (fungua tab mpya)</option>';
+        });
+    var modal = new bootstrap.Modal(document.getElementById('debtTransferModal'));
+    modal.show();
+}
+
+window._onDtDestChange = function () {
+    var isNew = document.getElementById('dtDest').value === '__new__';
+    document.getElementById('dtDestNewName').style.display = isNew ? 'block' : 'none';
+};
+
+window._doDebtTransfer = function () {
+    var destSel = document.getElementById('dtDest').value;
+    var destNewName = document.getElementById('dtDestNewName').value.trim();
+    var errEl = document.getElementById('dtError');
+    errEl.textContent = '';
+    var body = {
+        csrfmiddlewaretoken: _woCsrf(),
+        idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
+    };
+    if (_dtMode === 'item') {
+        body.paid_amount = '0';
+    }
+    if (destSel === '__new__') {
+        if (!destNewName) { errEl.textContent = 'Weka jina la mteja.'; return; }
+        body.dest_customer_name = destNewName;
+    } else if (destSel) {
+        body.dest_tab_id = destSel;
+    } else {
+        errEl.textContent = 'Chagua mteja lengwa.'; return;
+    }
+    var url = _dtMode === 'item'
+        ? '/bar/tabs/entries/' + _dtEntryId + '/split-transfer/'
+        : '/bar/tabs/' + _dtTabId + '/transfer-whole/';
+    var btn = document.getElementById('dtSubmitBtn');
+    btn.disabled = true; btn.textContent = 'Inahamisha...';
+    var formBody = new URLSearchParams(body);
+    fetch(url, {
+        method: 'POST',
+        headers: {'X-CSRFToken': _woCsrf(), 'Content-Type': 'application/x-www-form-urlencoded'},
+        body: formBody,
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            btn.disabled = false;
+            if (d.ok) {
+                bootstrap.Modal.getInstance(document.getElementById('debtTransferModal')).hide();
+                location.reload();
+            } else {
+                btn.textContent = _dtMode === 'item' ? 'Hamisha' : 'Hamisha Tab Yote';
+                errEl.textContent = d.error || 'Hitilafu.';
+            }
+        })
+        .catch(function () {
+            btn.disabled = false;
+            btn.textContent = _dtMode === 'item' ? 'Hamisha' : 'Hamisha Tab Yote';
+            errEl.textContent = 'Hitilafu ya mtandao.';
+        });
+};
 
 document.addEventListener('DOMContentLoaded', function() {
     var cb = document.getElementById('woIsMistake');

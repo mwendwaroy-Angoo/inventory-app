@@ -85,6 +85,21 @@ def _txn_transfer_note(txn):
     return entry.transfer_reason_note()
 
 
+def _txn_tab_entry(txn):
+    """The live BarTabEntry backing a debt transaction, or None — same
+    try/except-on-a-reverse-OneToOne pattern as _txn_transfer_note()
+    (2026-08-11 live request: transfer a single debt item / whole debt to
+    another customer). A transaction with no BarTabEntry at all (a direct
+    Quick Sell credit sale, never on a tab) has nothing transferable this
+    way — a documented, narrower scope than "every possible debt origin,"
+    matching the split/whole-tab transfer feature's own existing BarTabEntry
+    foundation rather than inventing a second, parallel mechanism."""
+    try:
+        return txn.tab_entry
+    except Exception:
+        return None
+
+
 def _score_from_metrics(has_credit_txns, total_credit_amount, total_paid,
                           has_overdue, outstanding, avg_days, window, has_payments):
     """Shared credit-score formula, factored out of _get_customer_debt_data
@@ -479,6 +494,31 @@ def customer_debt_profile(request, customer_id):
         for entry in data.get('unpaid_transactions', []):
             entry['write_off'] = wo_map.get(entry['txn'].id)
 
+    # 2026-08-11 live request (Roy): "a way for staff to transfer both
+    # single items and whole tabs for one customer to the other, even if
+    # that customer is in the debt tracker side." Each unpaid transaction
+    # that still has a live BarTabEntry behind it (the common case — most
+    # debt here originated from a tab conversion, not a tab-less direct
+    # credit sale) gets a tab_entry_id so the template can offer a per-row
+    # "🔀 Hamisha" button calling the SAME split_and_transfer_entry endpoint
+    # the tabs drawers already use (now relaxed to accept a debt-converted
+    # source, see BarTabEntry.split_and_transfer_locked()). Grouped by
+    # source tab too, for one "Hamisha Tab Yote" button per distinct tab
+    # this customer's debt actually came from — a debt customer can have
+    # more than one, if they've had several tabs converted over time.
+    transferable_tabs = {}
+    for entry in data.get('unpaid_transactions', []):
+        te = _txn_tab_entry(entry['txn'])
+        entry['tab_entry_id'] = te.id if te else None
+        entry['source_tab_id'] = te.tab_id if te else None
+        if te:
+            row = transferable_tabs.setdefault(te.tab_id, {'id': te.tab_id, 'count': 0, 'total': 0.0})
+            row['count'] += 1
+            row['total'] += entry['amount']
+    for row in transferable_tabs.values():
+        row['total'] = round(row['total'], 2)
+    transferable_tabs = sorted(transferable_tabs.values(), key=lambda r: -r['total'])
+
     # 2026-07-31 — debt-section "Ilikuwa Kosa" (erase a mistaken entry)
     # feature: whether it executes immediately (self-service, default) or
     # needs owner/manager approval, and whether THIS viewer could approve
@@ -501,6 +541,7 @@ def customer_debt_profile(request, customer_id):
         'is_owner':        is_owner,
         'scope':           scope,
         'has_kitchen':     has_kitchen,
+        'transferable_tabs': transferable_tabs,
         'has_daraja':      has_daraja,
         'today':           timezone.now().date().isoformat(),
         'today_label':     timezone.now().date().strftime('%B %d, %Y'),

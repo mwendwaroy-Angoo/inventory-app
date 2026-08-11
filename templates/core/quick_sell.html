@@ -3818,7 +3818,9 @@
                     var opt = document.createElement('option');
                     opt.value = t.id;
                     var stationTag = t.source === 'kitchen' ? ' 🍽' : (t.source === 'bar' ? ' 🍺' : ' ⚡');
-                    opt.textContent = t.customer_name + stationTag + ' (KES ' + qsFmt(t.unpaid_total) + ')';
+                    // 2026-08-11: a customer already converted to debt is pickable too.
+                    var debtTag = t.is_debt ? ' [DENI]' : '';
+                    opt.textContent = t.customer_name + stationTag + debtTag + ' (KES ' + qsFmt(t.unpaid_total) + ')';
                     sel.appendChild(opt);
                 });
                 if (cb) cb();

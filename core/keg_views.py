@@ -1638,9 +1638,15 @@ def transferable_tabs_api(request):
     if not up:
         return JsonResponse({'tabs': []})
 
+    # 2026-08-11 live request (Roy): a customer already converted to debt
+    # (SETTLED with an unpaid balance) must be pickable as a transfer
+    # destination too, not just a live OPEN tab — labelled distinctly
+    # (is_debt) so the picker can show "(DENI)" instead of a station icon.
     qs = BarTab.objects.filter(
-        business=up.business, status='OPEN', source__in=_allowed_tab_sources(up),
-    ).order_by('-opened_at')
+        business=up.business, source__in=_allowed_tab_sources(up),
+    ).filter(
+        Q(status='OPEN') | Q(status='SETTLED', entries__is_paid=False)
+    ).distinct().order_by('-opened_at')
 
     exclude_id = (request.GET.get('exclude') or '').strip()
     if exclude_id.isdigit():
@@ -1653,6 +1659,7 @@ def transferable_tabs_api(request):
                 'customer_name': t.customer_name,
                 'source': t.source,
                 'unpaid_total': float(t.unpaid_total()),
+                'is_debt': t.status != 'OPEN',
             }
             for t in qs
         ],
@@ -2719,10 +2726,17 @@ def _resolve_transfer_dest_tab(request, up, source_tab):
             return None, JsonResponse({'ok': False, 'error': 'Tab lengwa haikupatikana.'}, status=404)
         return dest_tab, None
     if dest_customer_name:
+        # 2026-08-11 live request (Roy): also match a tab already converted
+        # to debt (SETTLED with an unpaid balance) — typing a debt
+        # customer's exact name must find their existing debt, not silently
+        # open a second, duplicate tab for them.
         dest_tab = BarTab.objects.filter(
-            business=up.business, status='OPEN', customer_name__iexact=dest_customer_name,
+            business=up.business, status__in=('OPEN', 'SETTLED'),
+            customer_name__iexact=dest_customer_name,
             source__in=_allowed_tab_sources(up),
-        ).first()
+        ).filter(
+            Q(status='OPEN') | Q(entries__is_paid=False)
+        ).distinct().first()
         if not dest_tab:
             dest_tab = BarTab.create_with_credentials(
                 business=up.business, store=source_tab.store, customer_name=dest_customer_name,

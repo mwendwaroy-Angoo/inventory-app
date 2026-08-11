@@ -13142,6 +13142,348 @@ class FullItemAndWholeTabTransferTest(TestCase):
         self.assertIn('Roy', names)
 
 
+class DebtTrackerTransferTest(TestCase):
+    """2026-08-11 live request: "a way for staff to transfer both single
+    items and whole tabs for one customer to the other, even if that
+    customer is in the debt tracker side." Extends the pre-existing
+    split/whole-tab transfer mechanism (previously OPEN-tab-only) to accept
+    a debt-converted tab (status='SETTLED' with an unpaid balance) on
+    either the source or destination side, and adds a new entry point
+    directly on customer_debt_profile()."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Transfer Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='dt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='dt_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Smirnoff',
+            material_no='DT-01', selling_price=Decimal('600'), cost_price=Decimal('300'),
+        )
+
+    def _make_tab(self, name, source='bar'):
+        return BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source=source, store=self.bar_store,
+        )
+
+    def _make_entry(self, tab, amount, payment_method=''):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method=payment_method,
+        )
+        return BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=self.item.description, amount=amount, is_paid=False,
+        )
+
+    def _convert_to_debt(self, tab):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': tab.customer_name})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        tab.refresh_from_db()
+
+    # ── Model layer: debt-converted source is transferable ──────────────
+
+    def test_split_transfer_from_debt_converted_source_to_open_dest(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('600'), payment_method='credit')
+        self._convert_to_debt(roy_tab)
+        self.assertEqual(roy_tab.status, 'SETTLED')
+
+        bosco_tab = self._make_tab('Bosco')
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        self.assertEqual(tfr.status, 'PENDING')
+
+    def test_accept_moving_onto_a_debt_dest_syncs_recipient(self):
+        """No future convert_tab_to_debt() call is coming for an entry
+        moved onto an ALREADY-converted destination tab — accept() must
+        sync Transaction.recipient/payment_method itself, right here."""
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('600'), payment_method='')
+
+        bosco_tab = self._make_tab('Bosco')
+        bosco_entry = self._make_entry(bosco_tab, Decimal('100'), payment_method='credit')
+        self._convert_to_debt(bosco_tab)
+        self.assertEqual(bosco_tab.status, 'SETTLED')
+        # entry.transaction was set directly via create(transaction=txn), so
+        # Django cached that exact (now-stale) Python instance — refresh to
+        # see what conversion actually wrote to the DB.
+        bosco_entry.refresh_from_db()
+        self.assertEqual(bosco_entry.transaction.recipient, 'Bosco')
+
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.accept()
+        entry.refresh_from_db()
+        self.assertEqual(entry.tab_id, bosco_tab.id)
+        self.assertEqual(entry.transaction.recipient, 'Bosco',
+                          'Moved onto an already-converted debt tab — must be attributed to its new owner immediately')
+        self.assertEqual(entry.transaction.payment_method, 'credit')
+
+    def test_accept_moving_onto_a_still_open_dest_does_not_touch_recipient(self):
+        """An OPEN destination needs no sync — recipient stays blank until
+        (if ever) that tab is later converted, at which point conversion
+        itself sets it correctly."""
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('600'), payment_method='')
+        bosco_tab = self._make_tab('Bosco')
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.accept()
+        entry.refresh_from_db()
+        self.assertEqual(entry.transaction.recipient, '')
+
+    def test_debt_to_debt_transfer_syncs_recipient_to_new_owner(self):
+        """Both source and destination already converted — item moves from
+        one debt customer straight onto another's existing debt."""
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('600'), payment_method='credit')
+        self._convert_to_debt(roy_tab)
+
+        bosco_tab = self._make_tab('Bosco')
+        bosco_entry = self._make_entry(bosco_tab, Decimal('50'), payment_method='credit')
+        self._convert_to_debt(bosco_tab)
+
+        _e, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+        )
+        tfr.accept()
+        entry.refresh_from_db()
+        self.assertEqual(entry.tab_id, bosco_tab.id)
+        self.assertEqual(entry.transaction.recipient, 'Bosco')
+
+        from core.debt_views import _get_customer_debt_data
+        roy_customer = Customer.objects.get(business=self.biz, name='Roy')
+        bosco_customer = Customer.objects.get(business=self.biz, name='Bosco')
+        roy_data = _get_customer_debt_data(roy_customer, self.biz)
+        bosco_data = _get_customer_debt_data(bosco_customer, self.biz)
+        self.assertEqual(roy_data['outstanding'], 0.0, 'The item left Roy\'s debt entirely')
+        self.assertEqual(bosco_data['outstanding'], 650.0, 'Bosco\'s original 50 plus the transferred 600')
+
+    def test_void_source_still_rejected(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('600'))
+        roy_tab.status = 'VOID'
+        roy_tab.save(update_fields=['status'])
+        bosco_tab = self._make_tab('Bosco')
+        with self.assertRaises(ValueError):
+            BarTabEntry.split_and_transfer_locked(
+                entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+                paid_method='cash', dest_tab_id=bosco_tab.id, staff_user=self.staff,
+            )
+
+    # ── Whole-tab transfer with a debt-converted side ────────────────────
+
+    def test_whole_tab_transfer_from_debt_converted_source(self):
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('200'), payment_method='credit')
+        self._make_entry(roy_tab, Decimal('300'), payment_method='credit')
+        self._convert_to_debt(roy_tab)
+        bosco_tab = self._make_tab('Bosco')  # still OPEN — not converted at transfer time
+
+        batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        self.assertEqual(len(requests), 2)
+        requests[0].accept()  # cascades across every sibling sharing batch_id
+        for r in requests:
+            r.refresh_from_db()
+            self.assertEqual(r.status, 'ACCEPTED')
+
+        from core.debt_views import _get_customer_debt_data
+        roy_customer = Customer.objects.get(business=self.biz, name='Roy')
+        self.assertEqual(_get_customer_debt_data(roy_customer, self.biz)['outstanding'], 0.0,
+                          'The whole debt left Roy entirely')
+        # Bosco's destination tab was still OPEN at transfer time, so per
+        # accept()'s own documented design the items sit there unpaid but
+        # NOT yet counted as debt (an open tab is never debt) — until Bosco's
+        # tab is itself later converted, at which point conversion's own
+        # entry loop attributes it correctly, same as any ordinary tab.
+        bosco_tab.refresh_from_db()
+        self.assertEqual(bosco_tab.unpaid_total(), Decimal('500'))
+        self._convert_to_debt(bosco_tab)
+        bosco_customer = Customer.objects.get(business=self.biz, name='Bosco')
+        self.assertEqual(_get_customer_debt_data(bosco_customer, self.biz)['outstanding'], 500.0)
+
+    def test_whole_tab_transfer_to_debt_converted_dest(self):
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('200'))
+        bosco_tab = self._make_tab('Bosco')
+        self._make_entry(bosco_tab, Decimal('80'), payment_method='credit')
+        self._convert_to_debt(bosco_tab)
+
+        batch_id, requests = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy_tab.id, dest_tab_id=bosco_tab.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        requests[0].accept()
+
+        from core.debt_views import _get_customer_debt_data
+        bosco_customer = Customer.objects.get(business=self.biz, name='Bosco')
+        self.assertEqual(_get_customer_debt_data(bosco_customer, self.biz)['outstanding'], 280.0)
+
+    # ── View layer: customer_debt_profile() context ──────────────────────
+
+    def test_debt_profile_annotates_tab_entry_id_and_transferable_tabs(self):
+        roy_tab = self._make_tab('Roy')
+        e1 = self._make_entry(roy_tab, Decimal('200'), payment_method='credit')
+        e2 = self._make_entry(roy_tab, Decimal('300'), payment_method='credit')
+        self._convert_to_debt(roy_tab)
+        customer = Customer.objects.get(business=self.biz, name='Roy')
+
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/debt/{customer.id}/')
+        self.assertEqual(resp.status_code, 200)
+        ctx = resp.context
+        self.assertEqual(len(ctx['transferable_tabs']), 1)
+        row = ctx['transferable_tabs'][0]
+        self.assertEqual(row['id'], roy_tab.id)
+        self.assertEqual(row['count'], 2)
+        self.assertEqual(row['total'], 500.0)
+        entry_ids = {e['tab_entry_id'] for e in ctx['unpaid_transactions']}
+        self.assertEqual(entry_ids, {e1.id, e2.id})
+        self.assertContains(resp, 'Hamisha Tab Yote')
+        self.assertContains(resp, 'openDebtItemTransfer')
+
+    def test_debt_profile_no_transferable_tabs_for_direct_credit_sale(self):
+        """A direct Quick Sell credit sale (no tab at all) has nothing to
+        transfer this way — tab_entry_id must be None, no crash."""
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('600'),
+            payment_method='credit', recipient='DirectDebt',
+        )
+        customer = Customer.objects.create(business=self.biz, name='DirectDebt')
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/debt/{customer.id}/')
+        self.assertEqual(resp.status_code, 200)
+        ctx = resp.context
+        self.assertEqual(ctx['transferable_tabs'], [])
+        self.assertEqual(ctx['unpaid_transactions'][0]['tab_entry_id'], None)
+        # The "Hamisha Tab Yote" button row itself is wrapped in
+        # {% if transferable_tabs %} — its rendered onclick(...) call must
+        # not appear at all. The JS *function definition* for
+        # openDebtWholeTabTransfer is always present (unconditional <script>
+        # block), so check for the button's own call-site shape instead.
+        html = resp.content.decode()
+        self.assertNotIn('onclick="window.openDebtWholeTabTransfer(', html)
+        self.assertNotIn('onclick="window.openDebtItemTransfer(', html)
+
+    # ── End-to-end via the real endpoints, from the debt page's own flow ─
+
+    def test_end_to_end_item_transfer_via_split_transfer_endpoint(self):
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('600'), payment_method='credit')
+        self._convert_to_debt(roy_tab)
+        bosco_tab = self._make_tab('Bosco')
+
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f'/bar/tabs/entries/{entry.id}/split-transfer/',
+            {'paid_amount': '0', 'dest_tab_id': str(bosco_tab.id), 'idempotency_token': 'dt-e2e-1'},
+        )
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        tfr = TabTransferRequest.objects.get(id=data['transfer_id'])
+        self.assertEqual(tfr.entry_id, entry.id)
+        self.assertEqual(tfr.dest_tab_id, bosco_tab.id)
+
+    def test_end_to_end_whole_tab_transfer_via_transfer_whole_endpoint(self):
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('200'), payment_method='credit')
+        self._convert_to_debt(roy_tab)
+        bosco_tab = self._make_tab('Bosco')
+
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f'/bar/tabs/{roy_tab.id}/transfer-whole/',
+            {'dest_tab_id': str(bosco_tab.id), 'idempotency_token': 'dt-e2e-2'},
+        )
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(TabTransferRequest.objects.filter(source_tab_id=roy_tab.id).count(), 1)
+
+    def test_transferable_tabs_api_includes_debt_tabs_tagged(self):
+        roy_tab = self._make_tab('Roy')
+        self._make_entry(roy_tab, Decimal('200'), payment_method='credit')
+        self._convert_to_debt(roy_tab)
+        self._make_tab('Bosco')  # plain open tab, untouched
+
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/tabs/transferable/')
+        data = resp.json()
+        by_name = {t['customer_name']: t for t in data['tabs']}
+        self.assertTrue(by_name['Roy']['is_debt'])
+        self.assertFalse(by_name['Bosco']['is_debt'])
+
+    def test_transfer_by_name_finds_existing_debt_customer_not_a_duplicate(self):
+        """Typing a debt customer's exact name as the destination must find
+        their existing debt tab, never silently open a second one."""
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('100'), payment_method='')
+        bosco_tab = self._make_tab('Bosco')
+        self._make_entry(bosco_tab, Decimal('50'), payment_method='credit')
+        self._convert_to_debt(bosco_tab)
+        self.assertEqual(BarTab.objects.filter(business=self.biz, customer_name='Bosco').count(), 1)
+
+        self.client.force_login(self.staff)
+        resp = self.client.post(
+            f'/bar/tabs/entries/{entry.id}/split-transfer/',
+            {'paid_amount': '0', 'dest_customer_name': 'Bosco', 'idempotency_token': 'dt-e2e-3'},
+        )
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(
+            BarTab.objects.filter(business=self.biz, customer_name='Bosco').count(), 1,
+            'Must reuse Bosco\'s existing debt tab, never open a duplicate',
+        )
+
+    def test_station_scoping_blocks_cross_station_transfer_target(self):
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        kitchen_item = Item.objects.create(
+            business=self.biz, store=kitchen_store, description='Chips',
+            material_no='DT-02', selling_price=Decimal('150'), cost_price=Decimal('60'),
+        )
+        bar_only_staff = User.objects.create_user(username='dt_baronly', password='x')
+        UserProfile.objects.create(user=bar_only_staff, business=self.biz, role='staff', can_access_kitchen=False)
+        Shift.objects.create(business=self.biz, staff=bar_only_staff, status='OPEN')
+
+        roy_tab = self._make_tab('Roy')
+        entry = self._make_entry(roy_tab, Decimal('600'), payment_method='credit')
+        self._convert_to_debt(roy_tab)
+
+        kitchen_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Wanjiku', status='OPEN',
+            source='kitchen', store=kitchen_store,
+        )
+        kitchen_txn = Transaction.objects.create(
+            business=self.biz, item=kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'), payment_method='credit',
+        )
+        BarTabEntry.objects.create(
+            tab=kitchen_tab, transaction=kitchen_txn, description='Chips', amount=Decimal('150'), is_paid=False,
+        )
+
+        self.client.force_login(bar_only_staff)
+        resp = self.client.post(
+            f'/bar/tabs/entries/{entry.id}/split-transfer/',
+            {'paid_amount': '0', 'dest_tab_id': str(kitchen_tab.id), 'idempotency_token': 'dt-e2e-4'},
+        )
+        data = resp.json()
+        self.assertFalse(data['ok'], 'Bar-only staff must not be able to target a kitchen-only tab')
+
+
 class TransferIdempotencyTest(TestCase):
     """2026-07-25 audit finding: unlike the paid_amount>0 split path (self-
     protected — the original entry flips is_paid=True, so a retry hits the

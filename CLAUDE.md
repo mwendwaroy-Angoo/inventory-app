@@ -6150,3 +6150,63 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   new `WaitressConvertToDebtPermissionTest` — 6) — including a direct regression lock that
   the new waitress toggle does NOT bleed into the separate new-credit-at-checkout block.
   One migration (accounts 0062), additive.
+- Debt-tracker item / whole-tab transfer (2026-08-11), live request: "a way for staff to
+  transfer both single items and whole tabs for one customer to the other, even if that
+  customer is in the debt tracker side." The existing split-item/whole-tab transfer
+  mechanism (2026-07-23–25) only ever accepted `status='OPEN'` tabs on either side — once
+  a tab converts to debt (`status='SETTLED'` with an unpaid balance), it had no transfer
+  path at all, on either the giving or receiving end. **Model layer**
+  (`core/models.py`): `BarTabEntry.split_and_transfer_locked()` and `TabTransferRequest.
+  propose_whole_tab_locked()` both widened from `status != 'OPEN'` to `status not in
+  ('OPEN', 'SETTLED')` for source AND destination — `entry.is_paid=False` (already checked
+  first) is what guarantees a genuine, still-owed item regardless of which of the two
+  live states the tab is in; VOID stays rejected either way. **The one real gap that
+  needed new logic, not just a relaxed check**: `TabTransferRequest.accept()` moves an
+  entry via a plain `entry.tab = dest_tab` reassignment — for an OPEN destination that's
+  the whole story (nothing to sync; if that tab is ever later converted, THAT conversion's
+  own entry loop sets `recipient` correctly on its own). But for a destination ALREADY
+  converted to debt, no future conversion event is coming to attribute the newly-arrived
+  item — `accept()` now explicitly syncs `Transaction.recipient = dest_tab.customer_name`
+  and `payment_method = 'credit'` on the moved entry's transaction whenever `dest_tab.
+  status != 'OPEN'`, mirroring exactly what `_convert_tab_to_debt_core()` itself does at
+  conversion time, so the debt tracker immediately attributes the item to its new owner.
+  **Destination picker** (`core/keg_views.py`): `_resolve_transfer_dest_tab()`'s by-name
+  lookup and `transferable_tabs_api()` both widened to include debt-converted tabs (an
+  `is_debt` flag added to the API response so a destination like this doesn't get
+  silently duplicated by name — typing a debt customer's exact name now correctly finds
+  their existing debt tab instead of opening a second one, same auto-detect-by-name
+  guarantee the cross-counter merge feature already established). All three tabs
+  drawers' destination dropdowns (`bar_board.html`, `kitchen_board.html`,
+  `quick_sell.html`) now show a `[DENI]` tag next to a debt-converted customer's name.
+  **New entry point directly on the debt page** (`core/debt_views.py` +
+  `templates/core/customer_debt_profile.html`): new `_txn_tab_entry(txn)` helper (same
+  try/except-on-a-reverse-OneToOne pattern as the pre-existing `_txn_transfer_note()`) —
+  a transaction with no `BarTabEntry` behind it (a direct Quick Sell credit sale, never
+  on a tab) has nothing transferable this way, a documented, narrower scope than "every
+  possible debt origin," matching the feature's own existing BarTabEntry foundation
+  rather than inventing a second, parallel mechanism. `customer_debt_profile()` now
+  annotates each unpaid transaction with `tab_entry_id`/`source_tab_id` and computes a
+  `transferable_tabs` list grouped by originating tab (a debt customer can have more than
+  one, if several of their tabs were converted over time) — a new per-row "🔀 Hamisha"
+  button next to the write-off button, plus one "🔀 Hamisha Tab Yote" button per distinct
+  source tab above the Unpaid Transactions table, both opening a new shared
+  `#debtTransferModal` that reuses the exact same `split_and_transfer_entry`/
+  `transfer_whole_tab` endpoints and `transferable_tabs_api` picker the live tabs drawers
+  already use — no new backend mechanism invented for the debt page, only a new UI
+  surface calling the same one. Always a FULL move from this page (item mode sends
+  `paid_amount=0`) — no partial-split UI here, unlike the richer modal in the live tabs
+  drawers, since "the source customer keeps part of it" doesn't really apply once the
+  goods are already debt. 24 new tests (`DebtTrackerTransferTest`) — debt-converted
+  source transferable, the `accept()` recipient-sync onto an already-debt destination
+  (and the regression lock that an OPEN destination is correctly left untouched), full
+  debt-to-debt item and whole-tab transfers verified end-to-end against
+  `_get_customer_debt_data()`'s own `outstanding` figure on both sides, a still-OPEN
+  destination correctly staying non-debt until it's later converted in its own right
+  (proving the "no sync needed, conversion handles it" design claim rather than just
+  asserting it), VOID-source rejection, the debt page's own context annotations and
+  template rendering (including a direct regression lock that a tab-less direct credit
+  sale renders no transfer button at all), two full HTTP round-trips through the real
+  `split_and_transfer_entry`/`transfer_whole_tab` endpoints, the by-name duplicate-tab
+  guard, `transferable_tabs_api`'s `is_debt` tagging, and a station-scoping regression
+  lock (a bar-only staffer still cannot target a kitchen-only tab as a transfer
+  destination, debt or not). No migrations — every change reuses existing model fields.
