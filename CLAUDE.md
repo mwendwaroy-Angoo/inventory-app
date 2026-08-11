@@ -6252,3 +6252,41 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   direct end-to-end reproduction of Roy's exact scenario: preserved older sold history
   co-existing with a fresh receipt, correctly excluded from visibility once the anchor is
   stamped). One migration (0161, additive).
+- Kitchen batch/bunch backdating gap — Chipo (2026-08-12, same-day follow-up). Roy caught
+  both halves of a real gap while re-entering his batch's history: "no matter how much i
+  select and backdate in [checkout] has taken the sale into account as if it is today's,"
+  and separately "+Pata Stok then chipo from the raw potatoes backdate entry of 7th August
+  because there is actually no way to do that." Traced and confirmed both, exactly as
+  reported — no guessing. **(1) Sale-side**: the "⏰ Haya ni Mauzo ya Nyuma" backdate
+  toggle (built 2026-08-09) was only ever wired into `_kitchen_checkout()`'s plain
+  portion-item branch — `KitchenBatch.record_sale()` and `ProduceBunch.record_sale()`/
+  `record_sale_locked()` had NO `created_at` parameter at all, so a Chipo or grill-batch
+  sale always stamped "now" regardless of what the checkout form's date was set to (the
+  portion branch's own comment already said as much: "batch/bunch record_sale() have no
+  created_at param" — this fixes exactly that gap). Both methods gained an optional
+  `created_at=None` kwarg (default behavior byte-for-byte unchanged); `_kitchen_checkout()`
+  now threads the SAME `kb_backdated_at` already computed for the portion branch into both
+  new call sites, gated identically (`kb_backdated_at and not active_tab` — never for a
+  Tab/Deni sale, matching the existing cash/mpesa-only rule). No frontend change needed for
+  selling — `kbBatchSell()`/grill-batch tiles already route through the shared cart →
+  checkout flow that already carries `backdated_at`; only the backend was silently ignoring
+  it. **(2) Receiving-side**: `KitchenBatch.open_batch()` had no way to backdate the batch
+  itself — `received_on` (a real field on the model) was never settable, always defaulting
+  to today; the raw-material Draw transaction it creates (for a `raw_material_source`-linked
+  item like Chipo) had the identical gap. New optional `received_on=None` kwarg — when
+  given, stamps `batch.received_on` AND the Draw transaction's `created_at` to the same
+  date, so both halves of one physical event agree (matters for the raw item's own
+  `avg_daily_issues()`/reorder-alert history, not just the batch's own P&L). `kitchen_
+  receive()`'s `kitchen_batch` mode (both the raw-material-draw and plain-manual-cost sub-
+  paths) now reads an optional `received_on` POST field, parses it defensively (blank/
+  invalid silently falls back to today, matching Kitchen Stock Receipt's own established
+  convention), and passes it through. New "Tarehe (kwa default: leo)" date input added to
+  the "+Pata Stok" modal's kitchen-batch fields section (auto-filled to today on open,
+  editable), threaded into `submitReceive`'s POST body — the exact same UX pattern Kitchen
+  Stock Receipt's own "Ilipokewa Tarehe" field already established for portion items,
+  applied here for parity. 17 new tests (`KitchenBackdatedCheckoutTest` +5 — batch and bunch
+  backdated-sale regression locks mirroring the pre-existing portion-item ones exactly, plus
+  the tab-exclusion and no-backdate-param baselines; new `KitchenBatchOpenBatchReceivedOnTest`
+  — 6, covering both `open_batch()` directly and the full `kitchen_receive()` HTTP round-trip
+  for draw/manual modes, blank and invalid date fallback). No migrations — `received_on`/
+  `created_at` were both already real, existing fields; only the write path was missing.

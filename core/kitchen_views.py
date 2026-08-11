@@ -947,6 +947,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                         recipient=txn_recipient,
                         preset=preset,
                         recorded_by=request.user,
+                        created_at=(kb_backdated_at if kb_backdated_at and not active_tab else None),
                     )
             except KitchenBatch.DoesNotExist:
                 continue
@@ -966,6 +967,7 @@ def _kitchen_checkout(request, up, business, is_owner):
             # settlement callbacks, so the race can't reopen at any one of them).
             txn = ProduceBunch.record_sale_locked(
                 bunch_id, business, amount, txn_pm, txn_recipient, recorded_by=request.user,
+                created_at=(kb_backdated_at if kb_backdated_at and not active_tab else None),
             )
             if not txn:
                 continue
@@ -1373,6 +1375,19 @@ def kitchen_receive(request):
             return JsonResponse({'ok': False, 'error': 'item_id batili'}, status=400)
         cost_note = (request.POST.get('cost_note') or '').strip()[:200]
         note      = (request.POST.get('note') or '').strip()[:200]
+        # 2026-08-12 live request (Roy): a batch opened to catch up a past
+        # day's fries (or a raw-material draw for one) had no way to be
+        # dated anything but "today" — the other half of the same complaint
+        # as the backdated-sale fix above. Optional; blank/invalid falls
+        # back to today exactly as before.
+        received_on = None
+        _received_on_raw = (request.POST.get('received_on') or '').strip()
+        if _received_on_raw:
+            try:
+                from datetime import datetime as _dt
+                received_on = _dt.strptime(_received_on_raw, '%Y-%m-%d').date()
+            except ValueError:
+                received_on = None
         try:
             # Raw-material sack tracking (2026-07-22): if this item has a
             # raw_material_source configured, cost is derived from "kg drawn
@@ -1382,13 +1397,14 @@ def kitchen_receive(request):
                 batch = KitchenBatch.open_batch(
                     business=business, store=kitchen_store, item=item,
                     recorded_by=request.user, cost_note=cost_note, note=note,
-                    draw_qty=draw_qty,
+                    draw_qty=draw_qty, received_on=received_on,
                 )
             else:
                 cost_total = Decimal(str(request.POST.get('cost_total', '0') or '0'))
                 batch = KitchenBatch.open_batch(
                     business=business, store=kitchen_store, item=item,
                     recorded_by=request.user, cost_note=cost_note, note=note,
+                    received_on=received_on,
                     cost_total=cost_total,
                 )
         except (InvalidOperation, ValueError) as e:

@@ -1019,7 +1019,14 @@
         <!-- Kitchen batch fields — for is_kitchen_batch items (chips, stew, ugali) -->
         <div id="kr-kitchen-batch-fields" style="display:none;">
           <div style="background:rgba(76,175,80,0.08);border:1px solid rgba(76,175,80,0.25);border-radius:6px;padding:.5rem .6rem;margin-bottom:.6rem;font-size:.77rem;color:#a5d6a7;line-height:1.4;">
-            🍳 <strong style="color:#4caf50;">Batch Mpya (LEO)</strong> — Weka kiasi ulichotumia kununua malighafi (viazi, nyama, nk.). Mfumo utafuatilia faida ya batch ya LEO peke yake.
+            🍳 <strong style="color:#4caf50;">Batch Mpya</strong> — Weka kiasi ulichotumia kununua malighafi (viazi, nyama, nk.). Mfumo utafuatilia faida ya batch hii peke yake.
+          </div>
+          <!-- 2026-08-12 live request (Roy): a batch opened to catch up a
+               past day's fries needs a real date, not always "today". -->
+          <div style="margin-bottom:.5rem;">
+            <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Tarehe (kwa default: leo)</label>
+            <input type="date" id="kr-kb-received-on"
+                   style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
           </div>
           <!-- Manual cost path — items with no raw_material_source -->
           <div id="kr-kb-manual-fields">
@@ -5654,6 +5661,8 @@
             kbFields.style.display = 'block';
             var noteEl = document.getElementById('kr-kb-cost-note');
             if (noteEl) noteEl.value = '';
+            var dateEl = document.getElementById('kr-kb-received-on');
+            if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().slice(0, 10);
             var rawId = opt.getAttribute('data-raw-id');
             var manualEl = document.getElementById('kr-kb-manual-fields');
             var drawEl   = document.getElementById('kr-kb-draw-fields');
@@ -5700,6 +5709,7 @@
       if (!isKb) { origSubmit && origSubmit(); return; }
 
       var noteEl = document.getElementById('kr-kb-cost-note');
+      var dateEl = document.getElementById('kr-kb-received-on');
       var errEl  = document.getElementById('kr-error');
       var btn    = document.getElementById('kr-submit-btn');
       var rawId  = opt.getAttribute('data-raw-id');
@@ -5709,6 +5719,7 @@
       body.append('item_id', itemId);
       body.append('mode', 'kitchen_batch');
       body.append('cost_note', (noteEl||{}).value||'');
+      body.append('received_on', (dateEl||{}).value||'');
       body.append('idempotency_token',
         (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
 

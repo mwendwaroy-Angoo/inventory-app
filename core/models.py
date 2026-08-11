@@ -3927,15 +3927,22 @@ class ProduceBunch(models.Model):
         return (Decimal(str(amount)) / target).quantize(Decimal('0.0001'))
 
     # ── selling ───────────────────────────────────────────────────────────
-    def record_sale(self, amount, payment_method='cash', recipient='', recorded_by=None):
+    def record_sale(self, amount, payment_method='cash', recipient='', recorded_by=None, created_at=None):
         """
         Deplete this bunch by `amount` shillings. Creates the stock Transaction
         (Issue, real cash on sale_amount) and updates the envelope. Returns the
         Transaction. Selling past target is allowed — the surplus is tracked.
+
+        created_at (2026-08-12 live request, Roy): catch-up/backdated posting
+        for a grill-batch sale, mirroring the plain portion-item checkout's
+        own backdate support — previously this ALWAYS stamped "now" with no
+        override at all, silently ignoring whatever backdate the checkout
+        form was set to. None (the default) behaves exactly as before.
         """
         amount = Decimal(str(amount))
         if amount <= 0:
             return None
+        when = created_at or timezone.now()
         txn = Transaction.objects.create(
             item=self.item,
             business=self.business or self.item.business,
@@ -3946,19 +3953,20 @@ class ProduceBunch(models.Model):
             recipient=recipient or '',
             produce_bunch=self,
             recorded_by=recorded_by,
+            **({'created_at': created_at} if created_at else {}),
         )
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
         if self.opened_on is None:
-            self.opened_on = timezone.now()
+            self.opened_on = when
         if self.remaining() <= 0 and self.status == 'OPEN':
             self.status = 'DEPLETED'
-            self.closed_on = timezone.now()
+            self.closed_on = when
         self.save(update_fields=['revenue_collected', 'opened_on', 'status', 'closed_on'])
         return txn
 
     @classmethod
     def record_sale_locked(cls, bunch_id, business, amount, payment_method='cash',
-                            recipient='', recorded_by=None):
+                            recipient='', recorded_by=None, created_at=None):
         """Thread-safe wrapper around record_sale using SELECT FOR UPDATE — mirrors
         KegBarrel.record_sale_locked. Single lock-safe entry point for all call
         sites (Quick Sell greens/mix, kitchen board grill batches, both STK
@@ -3973,7 +3981,9 @@ class ProduceBunch(models.Model):
                 )
             except cls.DoesNotExist:
                 return None
-            return bunch.record_sale(amount, payment_method, recipient, recorded_by=recorded_by)
+            return bunch.record_sale(
+                amount, payment_method, recipient, recorded_by=recorded_by, created_at=created_at,
+            )
 
     def discard(self, reason='Wilted / end of day'):
         """Write off the unsold remainder of this bunch as wastage."""
@@ -5798,8 +5808,15 @@ class KitchenBatch(models.Model):
         end = self.closed_on.date() if self.closed_on else _tz.localdate()
         return (end - self.received_on).days + 1
 
-    def record_sale(self, amount, payment_method='cash', recipient='', preset=None, recorded_by=None):
-        """Sell from this batch. Creates Transaction, updates revenue_collected + khaki count."""
+    def record_sale(self, amount, payment_method='cash', recipient='', preset=None, recorded_by=None,
+                     created_at=None):
+        """Sell from this batch. Creates Transaction, updates revenue_collected + khaki count.
+
+        created_at (2026-08-12 live request, Roy — Chipo backdated catch-up
+        sales weren't taking effect, always landing on today): mirrors the
+        plain portion-item checkout's own backdate support, which never
+        reached this batch/envelope path before. None (the default) behaves
+        exactly as before — always "now"."""
         amount = Decimal(str(amount))
         if amount <= 0:
             return None
@@ -5813,6 +5830,7 @@ class KitchenBatch(models.Model):
             recipient=recipient or '',
             kitchen_batch=self,
             recorded_by=recorded_by,
+            **({'created_at': created_at} if created_at else {}),
         )
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
         if preset:
@@ -5825,7 +5843,7 @@ class KitchenBatch(models.Model):
 
     @classmethod
     def open_batch(cls, business, store, item, recorded_by, cost_total=None,
-                    cost_note='', note='', draw_qty=None):
+                    cost_note='', note='', draw_qty=None, received_on=None):
         """
         Single entry point for opening a new KitchenBatch — used by both
         kitchen_receive()'s kitchen_batch mode and kitchen_batch_receive()
@@ -5841,6 +5859,16 @@ class KitchenBatch(models.Model):
           - Otherwise: cost_total must be supplied directly — the original
             manual-entry flow, unchanged.
 
+        received_on (2026-08-12 live request, Roy): backdate the batch itself
+        — a `date` — so a raw-material draw/batch opened to catch up a past
+        day's fries doesn't land on "today" with no way to correct it (this
+        was the other half of the same complaint as record_sale()'s
+        created_at param above). Also backdates the raw-material Draw
+        transaction's own created_at to match, so the sack's own history
+        (avg_daily_issues, reorder alerts) reflects the real day the kg was
+        actually drawn, not the day it was typed into the system. None (the
+        default) behaves exactly as before — both stamp "today"/"now".
+
         Always sets item.cost_price = cost_total afterwards — discard()'s
         wastage Transaction relies on that (see its own docstring).
 
@@ -5850,6 +5878,12 @@ class KitchenBatch(models.Model):
         from django.db import transaction as _txn
         source_item = None
         source_qty = None
+        draw_created_at = None
+        if received_on is not None:
+            from datetime import datetime as _dt, time as _time
+            draw_created_at = timezone.make_aware(
+                _dt.combine(received_on, _time.min), timezone.get_current_timezone(),
+            )
         with _txn.atomic():
             if item.raw_material_source_id:
                 if draw_qty is None:
@@ -5870,6 +5904,7 @@ class KitchenBatch(models.Model):
                     qty=-draw_qty,
                     recipient=f'Kitchen batch: {item.description}'[:200],
                     recorded_by=recorded_by,
+                    **({'created_at': draw_created_at} if draw_created_at else {}),
                 )
                 source_qty = draw_qty
             else:
@@ -5883,6 +5918,7 @@ class KitchenBatch(models.Model):
                 cost_total=cost_total, cost_note=cost_note, note=note,
                 recorded_by=recorded_by,
                 source_item=source_item, source_qty_drawn=source_qty,
+                **({'received_on': received_on} if received_on else {}),
             )
             # See the matching comment in discard() — its wastage math relies
             # on item.cost_price == cost_total (one batch = one unit here).

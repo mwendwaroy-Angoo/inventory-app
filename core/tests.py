@@ -29005,6 +29005,27 @@ class KitchenBackdatedCheckoutTest(TestCase):
             material_no='KBBD-KUKU', unit='Pcs', selling_price=Decimal('150'),
         )
         Transaction.objects.create(business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('10'))
+        # Batch item (Chipo) + grill-batch item — 2026-08-12 same-day
+        # follow-up: Roy's backdate toggle had no effect on either of these,
+        # only on the plain portion-item branch above.
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='KBBD-CHIPO', unit='Batch', selling_price=Decimal('100'),
+            is_kitchen_batch=True,
+        )
+        self.chipo_batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            cost_total=Decimal('1000'), status='OPEN', recorded_by=self.owner,
+        )
+        self.smokies = Item.objects.create(
+            business=self.biz, store=self.store, description='Smokies',
+            material_no='KBBD-SMOKIES', unit='Batch', selling_price=Decimal('40'),
+            is_produce=True, produce_mode='BUNCH',
+        )
+        self.bunch = ProduceBunch.objects.create(
+            item=self.smokies, business=self.biz, size='LARGE',
+            cost_price=Decimal('300'), target_revenue=Decimal('500'),
+        )
         self.client.force_login(self.owner)
 
     def test_backdated_cash_sale_uses_the_given_timestamp(self):
@@ -29047,6 +29068,163 @@ class KitchenBackdatedCheckoutTest(TestCase):
         self.assertTrue(resp.json().get('ok'), resp.json())
         txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
         self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+
+    # ── 2026-08-12 same-day follow-up: batch/bunch tiles never honoured the
+    # backdate toggle at all — record_sale()/record_sale_locked() had no
+    # created_at param, only the plain portion-item branch above did. ─────
+
+    def test_batch_backdated_cash_sale_uses_the_given_timestamp(self):
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        cart = _json.dumps([{'batch_id': self.chipo_batch.id, 'qty': 1, 'amount': 100, 'description': 'Chipo — Ya 100'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, kitchen_batch=self.chipo_batch, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
+
+    def test_batch_sale_backdate_ignored_for_food_tab(self):
+        import json as _json
+        past = (timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        cart = _json.dumps([{'batch_id': self.chipo_batch.id, 'qty': 1, 'amount': 100, 'description': 'Chipo — Ya 100'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'food_tab', 'tab_customer': 'Mary',
+            'backdated_at': past.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, kitchen_batch=self.chipo_batch, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+
+    def test_batch_no_backdate_param_behaves_exactly_as_before(self):
+        import json as _json
+        cart = _json.dumps([{'batch_id': self.chipo_batch.id, 'qty': 1, 'amount': 100, 'description': 'Chipo — Ya 100'}])
+        resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, kitchen_batch=self.chipo_batch, type='Issue').first()
+        self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+
+    def test_bunch_backdated_cash_sale_uses_the_given_timestamp(self):
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        cart = _json.dumps([{'bunch_id': self.bunch.id, 'qty': 1, 'amount': 40, 'description': 'Smokies — Ya 40'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, produce_bunch=self.bunch, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
+
+
+class KitchenBatchOpenBatchReceivedOnTest(TestCase):
+    """2026-08-12 live request (Roy) — the OTHER half of the same complaint:
+    "+Pata Stok" for a batch item (raw-material draw or plain manual cost)
+    had no way to backdate the batch itself, always landing on today with
+    no correction path — blocking re-entering Chipo history from a chosen
+    date the same way the Stock Receipt tool already supports for portion
+    items."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Received On Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbro_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.raw_potatoes = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Potatoes',
+            material_no='KBRO-RAW', unit='Ndoo', selling_price=Decimal('0'),
+            cost_price=Decimal('100'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.raw_potatoes, type='Receipt', qty=Decimal('20'))
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='KBRO-CHIPO', unit='Batch', selling_price=Decimal('100'),
+            is_kitchen_batch=True, raw_material_source=self.raw_potatoes,
+        )
+        self.stew = Item.objects.create(
+            business=self.biz, store=self.store, description='Stew',
+            material_no='KBRO-STEW', unit='Batch', selling_price=Decimal('150'),
+            is_kitchen_batch=True,
+        )
+        self.client.force_login(self.owner)
+
+    # ── Model layer ──────────────────────────────────────────────────────
+
+    def test_open_batch_with_received_on_stamps_batch_and_draw_transaction(self):
+        past_date = timezone.localdate() - timedelta(days=5)
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.chipo,
+            recorded_by=self.owner, draw_qty=Decimal('5'), received_on=past_date,
+        )
+        self.assertEqual(batch.received_on, past_date)
+        draw_txn = Transaction.objects.filter(item=self.raw_potatoes, type='Draw').first()
+        self.assertIsNotNone(draw_txn)
+        self.assertEqual(timezone.localtime(draw_txn.created_at).date(), past_date)
+
+    def test_open_batch_without_received_on_defaults_to_today(self):
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.stew,
+            recorded_by=self.owner, cost_total=Decimal('500'),
+        )
+        self.assertEqual(batch.received_on, timezone.localdate())
+
+    # ── View layer ───────────────────────────────────────────────────────
+
+    def test_kitchen_receive_draw_mode_honours_received_on(self):
+        past_date = timezone.localdate() - timedelta(days=5)
+        resp = self.client.post('/kitchen/receive/', {
+            'item_id': self.chipo.id, 'mode': 'kitchen_batch',
+            'draw_qty': '5', 'received_on': past_date.isoformat(),
+            'idempotency_token': 'kbro-tok-1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        batch = KitchenBatch.objects.get(id=data['batch']['id'])
+        self.assertEqual(batch.received_on, past_date)
+
+    def test_kitchen_receive_manual_mode_honours_received_on(self):
+        past_date = timezone.localdate() - timedelta(days=3)
+        resp = self.client.post('/kitchen/receive/', {
+            'item_id': self.stew.id, 'mode': 'kitchen_batch',
+            'cost_total': '500', 'received_on': past_date.isoformat(),
+            'idempotency_token': 'kbro-tok-2',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        batch = KitchenBatch.objects.get(id=data['batch']['id'])
+        self.assertEqual(batch.received_on, past_date)
+
+    def test_kitchen_receive_blank_received_on_defaults_to_today(self):
+        resp = self.client.post('/kitchen/receive/', {
+            'item_id': self.stew.id, 'mode': 'kitchen_batch',
+            'cost_total': '500', 'received_on': '',
+            'idempotency_token': 'kbro-tok-3',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        batch = KitchenBatch.objects.get(id=data['batch']['id'])
+        self.assertEqual(batch.received_on, timezone.localdate())
+
+    def test_kitchen_receive_invalid_received_on_falls_back_to_today(self):
+        resp = self.client.post('/kitchen/receive/', {
+            'item_id': self.stew.id, 'mode': 'kitchen_batch',
+            'cost_total': '500', 'received_on': 'not-a-date',
+            'idempotency_token': 'kbro-tok-4',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        batch = KitchenBatch.objects.get(id=data['batch']['id'])
+        self.assertEqual(batch.received_on, timezone.localdate())
 
 
 class RawMaterialSourcePencilBugTest(TestCase):
