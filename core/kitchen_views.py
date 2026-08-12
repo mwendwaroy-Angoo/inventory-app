@@ -1543,6 +1543,40 @@ def kitchen_receive(request):
 
 def _kitchen_stock_receipt_to_dict(receipt):
     lines = list(receipt.lines.select_related('item', 'preset'))
+    # 2026-08-12 live report (Roy): a receipt for a RAW MATERIAL (e.g. Raw
+    # Potatoes, feeding Chipo's batch draws) always shows "Mapato: KES 0" —
+    # correctly, since the raw item itself is never sold directly, only
+    # drawn into a batch (type='Draw', never counted as revenue). That's
+    # not a bug, but it left Roy with no visibility on this card into
+    # whether the money actually came back — "I have sold on it and it has
+    # reflected in the tile but not in the receipt." Rather than force a
+    # false match between two genuinely different revenue streams (which
+    # this app's own history already found to be a precision trap — see
+    # total_revenue()'s own docstring), surface the linked FINISHED
+    # PRODUCT's own already-correct, already-live tile figures alongside
+    # the raw material's line — clearly labelled as belonging to Chipo (or
+    # whichever batch item), not folded into this receipt's own total.
+    raw_material_for = []
+    seen_batch_items = set()
+    for l in lines:
+        for batch_item in l.item.derived_batch_items.all():
+            if batch_item.id in seen_batch_items:
+                continue
+            seen_batch_items.add(batch_item.id)
+            open_batches = KitchenBatch.objects.filter(
+                item=batch_item, source_item_id=l.item_id, status='OPEN',
+            )
+            if not open_batches.exists():
+                continue
+            cost = sum((b.cost_total for b in open_batches), Decimal('0'))
+            revenue = sum((b.revenue_collected or Decimal('0') for b in open_batches), Decimal('0'))
+            raw_material_for.append({
+                'item_name': batch_item.description,
+                'open_batch_count': open_batches.count(),
+                'cost': float(cost),
+                'revenue': float(revenue),
+                'profit': float(revenue - cost),
+            })
     return {
         'id':            receipt.id,
         'supplier':      receipt.supplier,
@@ -1554,6 +1588,7 @@ def _kitchen_stock_receipt_to_dict(receipt):
         'total_revenue': float(receipt.total_revenue()),
         'profit':        float(receipt.profit),
         'profit_pct':    receipt.profit_pct,
+        'raw_material_for': raw_material_for,
         'lines': [
             {
                 'id':            l.id,

@@ -6290,3 +6290,41 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   — 6, covering both `open_batch()` directly and the full `kitchen_receive()` HTTP round-trip
   for draw/manual modes, blank and invalid date fallback). No migrations — `received_on`/
   `created_at` were both already real, existing fields; only the write path was missing.
+- Raw-material receipt now shows the finished product's own sales + backdate label fix
+  (2026-08-12, same-day follow-up). Two more Chipo asks from Roy after the backdating fix
+  above. **(1)** "ensure the chipo receipt tracks sales as well, as you can see I have
+  sold on it and it has reflected in the tile but not in the receipt." Traced and
+  confirmed CORRECT-BUT-CONFUSING behavior, not a bug: `KitchenStockReceipt.total_revenue()`
+  sums Issue-transaction revenue for the RECEIPT'S OWN item(s) — for a raw-material receipt
+  (Raw Potatoes), that will structurally always be KES 0, since the raw item itself is
+  never sold directly, only drawn into a batch (`type='Draw'`, never revenue). Chipo's own
+  sales genuinely were already reflected — on Chipo's own tile (Gharama/Mapato/Faida),
+  which reads directly from `KitchenBatch.revenue_collected`/`cost_total` and was already
+  correct — but nowhere near the Raw Potatoes receipt card Roy was actually looking at.
+  Deliberately did NOT attempt to make the receipt's own `total_revenue()` include Chipo's
+  sales directly (would conflate two genuinely different revenue streams into one number,
+  the same precision trap this file's own 2026-08-11 entry already hit and was explicitly
+  told to abandon for a *same-item* case — this is a *cross-item* case and doesn't need
+  that same fragile matching at all). Instead, `_kitchen_stock_receipt_to_dict()` now adds
+  a `raw_material_for` list — for each receipt line whose item is a `raw_material_source`
+  for one or more `is_kitchen_batch` items (`item.derived_batch_items`), sums cost/revenue
+  across that finished item's currently-OPEN `KitchenBatch` row(s) (already-correct,
+  already-live numbers, no new computation) and returns them as a clearly separate,
+  clearly-labelled block. Kitchen Board's Stock Receipt cards (both open and closed) now
+  render a "→ Chipo (batch N iliyo wazi): Gharama KES X · Mapato KES Y · Faida KES Z" line
+  under the raw material's own Gharama/Mapato/Faida row — visually distinct, never summed
+  into the receipt's own total. A closed/depleted batch is excluded (only "current state"
+  is shown, matching what the Chipo tile itself displays). **(2)** "if i backdate and
+  choose a date there at idadi iliyopokelewa in chipo, it should ask me idadi iliyopokelewa
+  hiyo siku not idadi iliyopokelewa leo" — the raw-material draw field's label ("Kiasi
+  Ulichotumia Leo") was static text, always saying "Leo" (today) regardless of the date
+  just picked in the new `received_on` field from the same-day backdating fix, confusing
+  when entering several past days' bucket counts in order. New `_kbUpdateDrawQtyLabel()`
+  (`kitchen_board.html`) reads the date field's current value and rewrites the label to
+  name that actual date (`Kiasi Ulichotumia 07/08` etc.), falling back to "Leo" only when
+  the date is genuinely today; wired to the date field's `input`/`change` events and to
+  the modal's own item-selection handler so it's correct immediately on open, not just
+  after the user touches the date field once. 4 new tests
+  (`KitchenStockReceiptRawMaterialForTest`) — empty when no open batch exists, correct
+  cost/revenue/profit surfaced for a linked open batch, a depleted batch correctly
+  excluded, and an unrelated item's receipt never shows the block. No migrations.

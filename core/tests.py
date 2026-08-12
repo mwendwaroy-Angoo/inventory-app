@@ -30746,6 +30746,94 @@ class EditRawMaterialCostTest(TestCase):
         self.assertTrue(ob['from_draw'])
 
 
+class KitchenStockReceiptRawMaterialForTest(TestCase):
+    """2026-08-12 live report (Roy): "ensure the chipo receipt tracks sales
+    as well, as you can see I have sold on it and it has reflected in the
+    tile but not in the receipt." A raw-material receipt (Raw Potatoes)
+    always shows Mapato KES 0 — CORRECTLY, since the raw item itself is
+    never sold directly, only drawn into a batch. _kitchen_stock_receipt_to_
+    dict() now surfaces the linked finished product's (Chipo) own already-
+    correct open-batch figures alongside it, clearly labelled as belonging
+    to Chipo — never folded into the receipt's own (always-zero) total."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KSR Raw Material Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='ksrraw_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.raw_potatoes = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Potatoes',
+            material_no='KSRRAW-RAW', unit='Ndoo', selling_price=Decimal('0'),
+            cost_price=Decimal('100'),
+        )
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='KSRRAW-CHIPO', unit='Batch', selling_price=Decimal('100'),
+            is_kitchen_batch=True, raw_material_source=self.raw_potatoes,
+        )
+        self.client.force_login(self.owner)
+
+    def _create_raw_receipt(self, qty='6', cost='680'):
+        import json, uuid
+        return self.client.post('/kitchen/stock-receipt/create/', {
+            'supplier': 'Market', 'invoice_no': '',
+            'lines': json.dumps([{'item_id': self.raw_potatoes.id, 'qty': qty, 'cost': cost}]),
+            'idempotency_token': str(uuid.uuid4()),
+        })
+
+    def test_receipt_with_no_open_batch_has_empty_raw_material_for(self):
+        resp = self._create_raw_receipt()
+        receipt_id = resp.json()['receipt']['id']
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        r = next(x for x in listing['open'] if x['id'] == receipt_id)
+        self.assertEqual(r['total_revenue'], 0.0, 'A raw material is never sold directly — always 0, correctly')
+        self.assertEqual(r['raw_material_for'], [])
+
+    def test_receipt_surfaces_linked_open_batch_revenue(self):
+        self._create_raw_receipt()
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.chipo,
+            recorded_by=self.owner, draw_qty=Decimal('5'),
+        )
+        batch.record_sale(Decimal('100'), payment_method='cash')
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        r = listing['open'][0]
+        self.assertEqual(r['total_revenue'], 0.0, 'The receipt\'s OWN total must stay untouched by this')
+        self.assertEqual(len(r['raw_material_for']), 1)
+        linked = r['raw_material_for'][0]
+        self.assertEqual(linked['item_name'], 'Chipo')
+        self.assertEqual(linked['open_batch_count'], 1)
+        self.assertEqual(linked['cost'], float(batch.cost_total))
+        self.assertEqual(linked['revenue'], 100.0)
+        self.assertEqual(linked['profit'], 100.0 - float(batch.cost_total))
+
+    def test_closed_batch_excluded_from_raw_material_for(self):
+        self._create_raw_receipt()
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.chipo,
+            recorded_by=self.owner, draw_qty=Decimal('5'),
+        )
+        batch.deplete()
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        r = listing['open'][0]
+        self.assertEqual(r['raw_material_for'], [], 'Only OPEN batches count — a depleted one is not "current"')
+
+    def test_unrelated_item_never_shows_raw_material_for(self):
+        soda = Item.objects.create(
+            business=self.biz, store=self.store, description='Soda',
+            material_no='KSRRAW-SODA', unit='Pcs', selling_price=Decimal('50'),
+        )
+        import json, uuid
+        self.client.post('/kitchen/stock-receipt/create/', {
+            'supplier': 'Market', 'invoice_no': '',
+            'lines': json.dumps([{'item_id': soda.id, 'qty': '10', 'cost': '400'}]),
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        r = listing['open'][0]
+        self.assertEqual(r['raw_material_for'], [])
+
+
 class KitchenStockReceiptDeleteTest(TestCase):
     """2026-08-09 live report (Roy): "you have made the previous receipt
     which was a mistake show up, I do not need it" — a mistaken

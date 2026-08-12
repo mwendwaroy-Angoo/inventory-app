@@ -1040,7 +1040,7 @@
           <div id="kr-kb-draw-fields" style="display:none;">
             <div id="kr-kb-draw-balance" style="font-size:.77rem;color:#9fcaa0;margin-bottom:.4rem;"></div>
             <div style="margin-bottom:.5rem;">
-              <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Kiasi Ulichotumia Leo <span style="color:#c0395a;">*</span></label>
+              <label id="kr-kb-draw-qty-label" style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Kiasi Ulichotumia Leo <span style="color:#c0395a;">*</span></label>
               <input type="number" id="kr-kb-draw-qty" min="0.01" step="0.01" placeholder="e.g. 5"
                      style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
               <div id="kr-kb-draw-cost-preview" style="font-size:.73rem;color:#c9a84c;margin-top:.25rem;"></div>
@@ -4431,6 +4431,27 @@
     }).join('');
   }
 
+  // 2026-08-12 live report (Roy): a raw-material receipt (e.g. Raw
+  // Potatoes) always shows "Mapato: KES 0" — correct, since the raw item
+  // itself is never sold directly, only drawn into a batch. Roy: "ensure
+  // the chipo receipt tracks sales as well... reflected in the tile but
+  // not in the receipt." Surfaces the linked finished-product's (Chipo)
+  // OWN already-correct open-batch figures right here, clearly labelled
+  // as belonging to that item — never folded into this receipt's own
+  // (always-zero) total, which would misrepresent two different revenue
+  // streams as one.
+  function _ksrRawMaterialForHtml(r) {
+    if (!r.raw_material_for || !r.raw_material_for.length) return '';
+    return r.raw_material_for.map(function(b){
+      var pftColor = b.profit >= 0 ? '#4caf50' : '#c0395a';
+      return '<div style="font-size:.74rem;color:#9fcaa0;margin-top:.3rem;">' +
+        '→ ' + b.item_name + ' (batch ' + b.open_batch_count + ' iliyo wazi): ' +
+        'Gharama KES ' + Math.round(b.cost) + ' · Mapato KES ' + Math.round(b.revenue) + ' · Faida: ' +
+        '<strong style="color:' + pftColor + ';">KES ' + Math.round(b.profit) + '</strong>' +
+      '</div>';
+    }).join('');
+  }
+
   function loadStockReceipts() {
     fetch('/kitchen/stock-receipt/list/')
       .then(function(r){ return r.json(); })
@@ -4457,6 +4478,7 @@
             '</div>' +
             '<div style="font-size:.74rem;margin:.35rem 0;">' + _ksrLineHtml(r) + '</div>' +
             '<div style="font-size:.78rem;color:#b0b0b0;">Gharama: KES ' + Math.round(r.total_cost) + ' · Mapato: KES ' + Math.round(r.total_revenue) + ' · Faida: <strong style="color:' + pftColor + ';">KES ' + Math.round(pft) + '</strong>' + (r.profit_pct !== null ? ' (' + r.profit_pct + '%)' : '') + '</div>' +
+            _ksrRawMaterialForHtml(r) +
           '</div>';
         }).join('');
         // 2026-08-09 (Roy — "ensure the stock receipt appends and adjusts
@@ -4479,6 +4501,7 @@
             '</div>' +
             '<div style="font-size:.74rem;margin:.35rem 0;">' + _ksrLineHtml(r) + '</div>' +
             '<div style="font-size:.78rem;color:#888;">Gharama: KES ' + Math.round(r.total_cost) + ' · Mapato: KES ' + Math.round(r.total_revenue) + ' · Faida: <strong style="color:' + pftColor + ';">KES ' + Math.round(pft) + '</strong>' + (r.profit_pct !== null ? ' (' + r.profit_pct + '%)' : '') + '</div>' +
+            _ksrRawMaterialForHtml(r) +
           '</div>';
         }).join('');
         panel.innerHTML = openHtml + closedHtml;
@@ -5640,6 +5663,27 @@
         var costPer = parseFloat(opt.getAttribute('data-raw-cost')) || 0;
         prevEl.textContent = qty > 0 ? ('≈ Gharama: KES ' + fmt(qty * costPer)) : '';
       }
+      // 2026-08-12 live request (Roy): "Kiasi Ulichotumia Leo" (quantity
+      // used TODAY) was a static label, always saying "Leo" even once a
+      // backdated date is picked above — confusing when entering several
+      // past days' buckets in order. Now reflects whichever date is
+      // actually selected, so "Leo" only shows when it's genuinely today.
+      function _kbUpdateDrawQtyLabel() {
+        var labelEl = document.getElementById('kr-kb-draw-qty-label');
+        var dateEl2 = document.getElementById('kr-kb-received-on');
+        if (!labelEl) return;
+        var todayIso = new Date().toISOString().slice(0, 10);
+        var chosen = dateEl2 && dateEl2.value ? dateEl2.value : todayIso;
+        var dayLabel = (chosen === todayIso) ? 'Leo' : chosen.split('-').reverse().join('/');
+        labelEl.innerHTML = 'Kiasi Ulichotumia ' + dayLabel + ' <span style="color:#c0395a;">*</span>';
+      }
+      var _kbDateEl = document.getElementById('kr-kb-received-on');
+      if (_kbDateEl && !_kbDateEl.dataset.labelBound) {
+        _kbDateEl.addEventListener('input', _kbUpdateDrawQtyLabel);
+        _kbDateEl.addEventListener('change', _kbUpdateDrawQtyLabel);
+        _kbDateEl.dataset.labelBound = '1';
+      }
+      _kbUpdateDrawQtyLabel();
       var _drawQtyEl = document.getElementById('kr-kb-draw-qty');
       if (_drawQtyEl && !_drawQtyEl.dataset.previewBound) {
         _drawQtyEl.addEventListener('input', _kbUpdateDrawPreview);
@@ -5663,6 +5707,7 @@
             if (noteEl) noteEl.value = '';
             var dateEl = document.getElementById('kr-kb-received-on');
             if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().slice(0, 10);
+            _kbUpdateDrawQtyLabel();
             var rawId = opt.getAttribute('data-raw-id');
             var manualEl = document.getElementById('kr-kb-manual-fields');
             var drawEl   = document.getElementById('kr-kb-draw-fields');
