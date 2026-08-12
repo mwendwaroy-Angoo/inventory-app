@@ -382,7 +382,7 @@ def edit_staff(request, user_id):
         staff_profile.save()
 
         if new_username != old_username:
-            from core.notifications import normalize_ke_phone, send_sms_notification
+            from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             from core.models import Notification
             display_name = staff_profile.user.get_full_name() or new_username
             sms = (
@@ -400,7 +400,7 @@ def edit_staff(request, user_id):
                 normalized = normalize_ke_phone(staff_profile.phone)
                 if normalized:
                     try:
-                        send_sms_notification(sms, normalized)
+                        send_sms_notification_async(sms, normalized)
                     except Exception:
                         pass
             messages.success(

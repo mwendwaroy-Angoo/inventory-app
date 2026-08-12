@@ -72,7 +72,7 @@ def _sms_receipt_to_payer(payment, receipt):
     if not phone or not receipt:
         return
     try:
-        from .notifications import normalize_ke_phone, send_sms_notification
+        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
         normalized = normalize_ke_phone(phone)
         if normalized:
             receipt_url = f"{_SITE_URL}/r/{receipt.token}/"
@@ -80,7 +80,7 @@ def _sms_receipt_to_payer(payment, receipt):
                 f"Asante! KES {int(float(payment.amount))} kwa "
                 f"{payment.business.name}. Risiti: {receipt_url}"
             )
-            send_sms_notification(sms, normalized)
+            send_sms_notification_async(sms, normalized)
     except Exception:
         pass
 
@@ -528,7 +528,7 @@ def _settle_receipt_entries_from_payment(payment):
         # Notify original serving staff, current on-shift staff, owners, managers
         try:
             from .models import Notification as _Notif
-            from .notifications import normalize_ke_phone, send_sms_notification
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             from accounts.models import UserProfile as _UP
 
             customer_name = (rcpt_for_notif.customer_name if rcpt_for_notif else '') or 'Mteja'
@@ -597,7 +597,7 @@ def _settle_receipt_entries_from_payment(payment):
                 if phone:
                     phone_n = normalize_ke_phone(phone)
                     if phone_n:
-                        send_sms_notification(notif_msg, phone_n)
+                        send_sms_notification_async(notif_msg, phone_n)
         except Exception as _notif_err:
             logger.warning("Receipt payment notifications failed payment=%s: %s", payment.id, _notif_err)
 
@@ -1233,15 +1233,15 @@ def c2b_confirmation(request):
             )
             try:
                 from accounts.models import UserProfile as _UP
-                from .notifications import normalize_ke_phone, send_sms_notification
+                from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                 if agreement.customer.phone:
-                    send_sms_notification(tenant_msg, normalize_ke_phone(agreement.customer.phone))
+                    send_sms_notification_async(tenant_msg, normalize_ke_phone(agreement.customer.phone))
                 for op in _UP.objects.filter(business=business, role__in=['owner', 'manager']).select_related('user'):
                     create_in_app_notification(
                         op.user, '💰 Kodi Imelipwa', tenant_msg, notification_type='info',
                     )
                     if op.phone:
-                        send_sms_notification(tenant_msg, normalize_ke_phone(op.phone))
+                        send_sms_notification_async(tenant_msg, normalize_ke_phone(op.phone))
             except Exception:
                 pass
             return JsonResponse({'ResultCode': 0, 'ResultDesc': 'Accepted'})
@@ -1453,13 +1453,13 @@ def confirm_prompt(request, prompt_id):
     # SMS the payer with the receipt link (non-blocking)
     if prompt.phone:
         try:
-            from .notifications import send_sms_notification
+            from .notifications import send_sms_notification, send_sms_notification_async
             receipt_url = f"https://www.dukamwecheche.co.ke/r/{receipt_obj.token}/"
             sms_text = (
                 f"Asante! KES {int(float(prompt.amount))} kwa {profile.business.name}. "
                 f"Risiti: {receipt_url}"
             )
-            send_sms_notification(sms_text, prompt.phone)
+            send_sms_notification_async(sms_text, prompt.phone)
         except Exception:
             pass
 

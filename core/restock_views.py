@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .models import Item, Notification, StockRequest
-from .notifications import normalize_ke_phone, send_sms_notification
+from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def request_restock(request):
         owner_phone = getattr(op, 'phone', '') or business.phone or ''
         if owner_phone:
             try:
-                send_sms_notification(sms_msg, normalize_ke_phone(owner_phone))
+                send_sms_notification_async(sms_msg, normalize_ke_phone(owner_phone))
             except Exception as exc:
                 logger.error('Restock SMS failed: %s', exc)
 

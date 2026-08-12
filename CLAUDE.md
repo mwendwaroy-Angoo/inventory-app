@@ -6498,3 +6498,55 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   pass rather than a blanket same-incident sweep. 2 new tests
   (`NotificationTimeoutTest`) — mock-verify the shortened timeout is actually threaded
   through to each SDK call, not just documented in a comment. No migrations.
+- Same-incident, same-day escalation — the deeper fix (2026-08-12). The shortened-timeout
+  fix wasn't enough on its own: a health-check-timeout 502 recurred 7 minutes after a
+  stable deploy with the worker bump confirmed live (Roy screenshotted the dashboard
+  Start Command to prove it), meaning real customers were still hitting this during
+  active use. Roy: "just commence with the deeper fix." Built `send_sms_notification_
+  async()`/`send_email_notification_async()` in `core/notifications.py` — true
+  fire-and-forget wrappers (`threading.Thread(daemon=True).start()`) around the existing
+  sync functions. Re-examined the DB-threading-flakiness concern that made this feel
+  risky earlier the same day and found it doesn't actually apply here:
+  `notify_transaction_async()`'s own background worker is risky specifically because it
+  does `Transaction.objects.get(id=...)`/`Business.objects.get(id=...)` — real ORM
+  queries racing a test's own wrapping transaction — but `send_sms_notification()`/
+  `send_email_notification()` themselves make ZERO database calls, only a pure external
+  HTTP request; a background thread calling either is therefore no more DB-risky than
+  the SMS/email calls the test suite already runs synchronously and fails against on
+  every run (the recurring, already-benign "ProxyError" log noise). Audited every call
+  site with the return value in mind (81 SMS, 16 email): exactly 3 read it to shape an
+  immediate response (`debt_views.py`'s `send_debt_reminder`, `receipt_views.py`'s
+  SMS-share and email-share buttons on the public receipt page) — all three deliberate,
+  low-frequency, user-initiated "send now" taps, left calling the synchronous originals
+  unchanged. Every other call site (~94 total) converted to the `_async` sibling via a
+  scripted sweep, verified in two independent passes: a line-based check (correctly
+  skipped the 3 exceptions and 2 internal worker-thread calls that must stay sync) and,
+  after that missed two files, a proper AST-based scope checker (walks every `Call` node,
+  tracks `Import`/`ImportFrom`/`FunctionDef`/`Assign` bindings per scope) that caught
+  every remaining unbound reference precisely. **Real bug the AST checker caught, that a
+  regex/grep pass had missed**: `core/performer_views.py` and `core/stock_take_views.py`
+  both import from `core.notifications` using a **multi-line** parenthesized `from ...
+  import (` statement — the first line-based import-fixing pass only matched a line
+  containing the substring `"notifications import"`, which is on a DIFFERENT line than
+  `send_sms_notification` itself in a multi-line import, so those two files' call sites
+  were renamed to the `_async` variant but the import never brought the new name in,
+  causing `NameError: name 'send_sms_notification_async' is not defined` — first
+  surfaced by a genuine full-suite test failure (`StockTakeVarianceAttributionTest.
+  test_both_staff_notified_appropriately`), traced to the real root cause rather than
+  dismissed as one more instance of this file's own well-documented flaky-test class
+  (confirmed by re-running the test in isolation with a stack trace, not by assumption).
+  Both import statements fixed; `core/procurement_views.py`'s own multi-line import
+  turned out to be a false alarm — the file has TWO import statements in the same
+  function (an outer one lacking the async name, and a closer, already-correct one
+  actually in scope for the real call site) — verified by direct code reading, not
+  patched needlessly. 5 new tests (`NotificationAsyncDispatchTest`) — both wrappers
+  return well under a second even while the underlying send is artificially blocked
+  (proving the caller genuinely never waits), both actually dispatch the real function
+  from the background thread (polled with a short timeout, not a fixed sleep), and an
+  exception inside the background send is caught and logged, never raised into the
+  caller. 2 pre-existing tests (`DailySummaryIdempotencyTest`) updated to patch the
+  `_async` wrapper directly instead of the sync function it calls from inside its own
+  worker thread — patching the sync version raced the assertion against a background
+  thread that might not have run yet; patching the wrapper itself keeps the test
+  deterministic. Full 1810-test suite (plus these additions) run clean before push. No
+  migrations.

@@ -32,6 +32,7 @@ from .notifications import (
     create_in_app_notification,
     normalize_ke_phone,
     send_sms_notification,
+    send_sms_notification_async,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ def _fire_session_started_notification(session, started_by):
         for up in business.users.filter(role='owner').select_related('user'):
             if up.phone:
                 try:
-                    send_sms_notification(msg, normalize_ke_phone(up.phone))
+                    send_sms_notification_async(msg, normalize_ke_phone(up.phone))
                 except Exception:
                     logger.exception("DJ session start SMS failed (business=%s, user=%s)", business.id, up.user_id)
 
@@ -108,7 +109,7 @@ def _fire_unverified_alert(session, unconfirmed_names):
         for up in business.users.filter(role='owner').select_related('user'):
             if up.phone:
                 try:
-                    send_sms_notification(msg, normalize_ke_phone(up.phone))
+                    send_sms_notification_async(msg, normalize_ke_phone(up.phone))
                 except Exception:
                     logger.exception("DJ unverified alert SMS failed (business=%s, user=%s)", business.id, up.user_id)
 
@@ -142,7 +143,7 @@ def _fire_session_cancelled_notification(session, cancelled_by, reason):
                                    link_url='/bar/sessions/')
         if business.event_sms_enabled and up.phone:
             try:
-                send_sms_notification(msg, normalize_ke_phone(up.phone))
+                send_sms_notification_async(msg, normalize_ke_phone(up.phone))
             except Exception:
                 logger.exception("DJ cancel SMS failed (business=%s, user=%s)", business.id, up.user_id)
 
@@ -158,7 +159,7 @@ def _send_payment_sms(session):
                     f"la {date_label} @ {session.business.name} "
                     f"yamethibitishwa. Asante kwa kazi nzuri! \U0001f3a4"
                 )
-                send_sms_notification(msg, normalize_ke_phone(performer.phone))
+                send_sms_notification_async(msg, normalize_ke_phone(performer.phone))
             except Exception:
                 logger.exception(
                     "Payment SMS to performer %s failed", performer.id
@@ -1057,7 +1058,7 @@ def session_announce(request, session_id):
         try:
             phone = normalize_ke_phone(raw_phone)
             if phone:
-                send_sms_notification(message, phone)
+                send_sms_notification_async(message, phone)
                 sent += 1
         except Exception:
             logger.exception("Announce SMS failed for phone %s", raw_phone)

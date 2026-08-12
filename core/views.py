@@ -1566,8 +1566,8 @@ def add_transaction(request):
                     _owner_phone_r = getattr(_op, 'phone', '') or user_profile.business.phone or ''
                     if _owner_phone_r:
                         try:
-                            from core.notifications import send_sms_notification, normalize_ke_phone
-                            send_sms_notification(_sms_r, normalize_ke_phone(_owner_phone_r))
+                            from core.notifications import send_sms_notification, send_sms_notification_async, normalize_ke_phone
+                            send_sms_notification_async(_sms_r, normalize_ke_phone(_owner_phone_r))
                         except Exception as _exc_r:
                             logging.getLogger(__name__).error('Restock received SMS failed: %s', _exc_r)
         # ─────────────────────────────────────────────────────────────────
@@ -1704,21 +1704,21 @@ def add_transaction(request):
                 # SMS — suppressed when a restock request was resolved (owner already got stock-received SMS)
                 if not restock_resolved:
                     try:
-                        from core.notifications import send_sms_notification, normalize_ke_phone
+                        from core.notifications import send_sms_notification, send_sms_notification_async, normalize_ke_phone
                         owner_phone = getattr(op, 'phone', '') or user_profile.business.phone or ''
                         if owner_phone:
                             phone = normalize_ke_phone(owner_phone)
                             if phone:
-                                send_sms_notification(sms_msg, phone)
+                                send_sms_notification_async(sms_msg, phone)
                     except Exception as e:
                         import logging
                         logging.getLogger(__name__).error('Cost price SMS failed: %s', e)
 
                 # Email
                 try:
-                    from core.notifications import send_email_notification
+                    from core.notifications import send_email_notification, send_email_notification_async
                     if op.user.email:
-                        send_email_notification(op.user.email, email_subject, email_html)
+                        send_email_notification_async(op.user.email, email_subject, email_html)
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).error('Cost price email failed: %s', e)
@@ -3675,7 +3675,7 @@ def quick_sell(request):
                             _cust_partial.save(update_fields=['phone'])
                         if credit_phone:
                             try:
-                                from .notifications import normalize_ke_phone, send_sms_notification
+                                from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                                 _normalized_partial = normalize_ke_phone(credit_phone)
                                 if _normalized_partial:
                                     _amount_owed = round(float(partial_credit_amount_qs), 2)
@@ -3685,7 +3685,7 @@ def quick_sell(request):
                                         f"Umenunua KES {total:,.0f}, umelipa KES {_amount_now:,.0f}.\n"
                                         f"Deni lililobaki: KES {_amount_owed:,.0f}"
                                     )
-                                    send_sms_notification(_sms_partial, _normalized_partial)
+                                    send_sms_notification_async(_sms_partial, _normalized_partial)
                             except Exception:
                                 pass
                 except ValueError as _partial_credit_err:
@@ -3813,7 +3813,7 @@ def quick_sell(request):
                     _sms_phone_raw = credit_phone or (_cust.phone if _cust else '')
                     if _sms_phone_raw:
                         try:
-                            from .notifications import normalize_ke_phone, send_sms_notification
+                            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                             _sms_phone_qs = normalize_ke_phone(_sms_phone_raw)
                             if _sms_phone_qs:
                                 if _tab_freshly_linked:
@@ -3829,7 +3829,7 @@ def quick_sell(request):
                                         f"KES {total:,.0f}.\n"
                                         f"Angalia risiti yako: {_tab_receipt_url}"
                                     )
-                                send_sms_notification(_sms_qs, _sms_phone_qs)
+                                send_sms_notification_async(_sms_qs, _sms_phone_qs)
                         except Exception:
                             pass
 
@@ -3934,7 +3934,7 @@ def quick_sell(request):
                 # SMS confirmation: only for brand-new receipts (not when appended to existing)
                 if payment_method_qs == "credit" and credit_phone and receipt_token and not _qs_rcpt_reused:
                     try:
-                        from .notifications import normalize_ke_phone, send_sms_notification
+                        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                         from django.utils import timezone as _tz
                         normalized = normalize_ke_phone(credit_phone)
                         if normalized:
@@ -3947,7 +3947,7 @@ def quick_sell(request):
                                 f"Tarehe ya malipo: {due_date}\n"
                                 f"Risiti: {receipt_url_sms}"
                             )
-                            send_sms_notification(sms_msg, normalized)
+                            send_sms_notification_async(sms_msg, normalized)
                     except Exception:
                         pass
 

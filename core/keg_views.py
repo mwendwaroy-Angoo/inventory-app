@@ -755,7 +755,7 @@ def bar_board(request):
                 and master_rcpt is None and receipt_url and active_tab
             ):
                 try:
-                    from .notifications import normalize_ke_phone, send_sms_notification
+                    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                     _sms_phone_raw = tab_phone or (linked_customer.phone if linked_customer else '')
                     _sms_phone = normalize_ke_phone(_sms_phone_raw) if _sms_phone_raw else ''
                     if _sms_phone:
@@ -766,7 +766,7 @@ def bar_board(request):
                             f"KES {_tab_total:,.0f}.\n"
                             f"Angalia risiti yako: {receipt_url}"
                         )
-                        send_sms_notification(_sms, _sms_phone)
+                        send_sms_notification_async(_sms, _sms_phone)
                 except Exception:
                     logger.exception(
                         "Tab open SMS failed in bar_board (business=%s)", business.id
@@ -780,7 +780,7 @@ def bar_board(request):
                 and _is_freshly_linked and receipt_url and active_tab
             ):
                 try:
-                    from .notifications import normalize_ke_phone, send_sms_notification
+                    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                     _sms_phone_link = normalize_ke_phone(
                         tab_phone or (linked_customer.phone if linked_customer else '') or ''
                     ) if (tab_phone or linked_customer) else ''
@@ -790,7 +790,7 @@ def bar_board(request):
                             f"{business.name}: Kinywaji kimeongezwa kwenye tab yako.\n"
                             f"Angalia risiti iliyosasishwa: {receipt_url}"
                         )
-                        send_sms_notification(_sms_link, _sms_phone_link)
+                        send_sms_notification_async(_sms_link, _sms_phone_link)
                 except Exception:
                     logger.exception(
                         "Tab cross-link SMS failed in bar_board (business=%s)", business.id
@@ -799,7 +799,7 @@ def bar_board(request):
             # SMS notification when bar items are merged into an existing kitchen food tab
             if merge_tab_id and active_tab:
                 try:
-                    from .notifications import normalize_ke_phone, send_sms_notification
+                    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                     phone = None
                     if active_tab.customer:
                         phone = normalize_ke_phone(active_tab.customer.phone or '')
@@ -813,7 +813,7 @@ def bar_board(request):
                             f"kwenye tab yako ({counter_label}).\n"
                             f"Jumla sasa: KES {new_total:,.0f}"
                         )
-                        send_sms_notification(sms_msg, phone)
+                        send_sms_notification_async(sms_msg, phone)
                 except Exception:
                     logger.exception(
                         "Tab merge SMS failed in bar_board (business=%s)", business.id
@@ -1043,7 +1043,7 @@ def _fire_owner_alert_msg(business, title, msg, link_url=''):
     """Send in-app Notification + SMS (rate-limited) to all owners."""
     from accounts.models import UserProfile
     from .models import Notification
-    from .notifications import normalize_ke_phone, send_sms_notification
+    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
     now = timezone.now()
     can_sms = (
@@ -1059,7 +1059,7 @@ def _fire_owner_alert_msg(business, title, msg, link_url=''):
         if can_sms and op.phone:
             normalized = normalize_ke_phone(op.phone)
             if normalized:
-                send_sms_notification(msg, normalized)
+                send_sms_notification_async(msg, normalized)
     if can_sms:
         business.last_txn_sms_at = now
         business.save(update_fields=['last_txn_sms_at'])
@@ -1072,7 +1072,7 @@ def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pc
     bundling window)."""
     from accounts.models import UserProfile
     from .models import Notification
-    from .notifications import normalize_ke_phone, send_sms_notification
+    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
     msg = (
         f"⚠️ {barrel_name}: variance {variance_pct:.0f}%"
@@ -1093,7 +1093,7 @@ def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pc
         if can_sms and op.phone:
             normalized = normalize_ke_phone(op.phone)
             if normalized:
-                send_sms_notification(msg, normalized)
+                send_sms_notification_async(msg, normalized)
     if can_sms:
         business.last_txn_sms_at = now
         business.save(update_fields=['last_txn_sms_at'])
@@ -1978,7 +1978,7 @@ def split_transaction_payment_method(request, txn_id):
             )
         if customer.phone:
             try:
-                from .notifications import normalize_ke_phone, send_sms_notification
+                from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                 _norm = normalize_ke_phone(customer.phone)
                 if _norm:
                     _sms = (
@@ -1987,7 +1987,7 @@ def split_transaction_payment_method(request, txn_id):
                         f"kwa \"{txn.item.description}\" (tarehe {sale_when}) limeandikwa.\n"
                         f"Tafadhali lipa ndani ya siku {up.business.credit_window_days}."
                     )
-                    send_sms_notification(_sms, _norm)
+                    send_sms_notification_async(_sms, _norm)
             except Exception:
                 logger.exception(
                     'split_transaction_payment_method: debt SMS failed (business=%s customer=%s)',
@@ -2548,7 +2548,7 @@ def _notify_tab_correction(tab, title, message, actor):
     (core/receipt_views.py)."""
     from .models import Notification as _Notif
     from accounts.models import UserProfile as _UP
-    from .notifications import normalize_ke_phone, send_sms_notification
+    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     from .views import scoped_on_shift_targets
 
     notify_targets = dict(scoped_on_shift_targets(tab.business, {tab.source}))
@@ -2566,7 +2566,7 @@ def _notify_tab_correction(tab, title, message, actor):
         if _phone:
             _n = normalize_ke_phone(_phone)
             if _n:
-                send_sms_notification(message, _n)
+                send_sms_notification_async(message, _n)
 
 
 def _notify_direct_correction(business, message, actor, source=None):
@@ -2579,7 +2579,7 @@ def _notify_direct_correction(business, message, actor, source=None):
     this fix."""
     from .models import Notification as _Notif
     from accounts.models import UserProfile as _UP
-    from .notifications import normalize_ke_phone, send_sms_notification
+    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     from .views import scoped_on_shift_targets
 
     notify_targets = dict(scoped_on_shift_targets(business, {source} if source else None))
@@ -2595,7 +2595,7 @@ def _notify_direct_correction(business, message, actor, source=None):
         if _phone:
             _n = normalize_ke_phone(_phone)
             if _n:
-                send_sms_notification(message, _n)
+                send_sms_notification_async(message, _n)
 
 
 @login_required
@@ -2860,7 +2860,7 @@ def split_and_transfer_entry(request, entry_id):
     try:
         phone = dest_tab.customer.phone if dest_tab.customer else ''
         if phone:
-            from .notifications import normalize_ke_phone, send_sms_notification
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             from core.tab_receipts import resolve_master_receipt
             normalized = normalize_ke_phone(phone)
             if normalized:
@@ -2877,7 +2877,7 @@ def split_and_transfer_entry(request, entry_id):
                     + (f"Kubali au kataa kwenye risiti yako: {link}" if link else
                        "Muulize mhudumu kukubali au kukataa.")
                 )
-                send_sms_notification(msg, normalized)
+                send_sms_notification_async(msg, normalized)
     except Exception:
         logger.exception('split_and_transfer_entry SMS failed (business=%s)', up.business.id)
 
@@ -2948,7 +2948,7 @@ def transfer_whole_tab(request, tab_id):
     try:
         phone = dest_tab.customer.phone if dest_tab.customer else ''
         if phone:
-            from .notifications import normalize_ke_phone, send_sms_notification
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             from core.tab_receipts import resolve_master_receipt
             normalized = normalize_ke_phone(phone)
             if normalized:
@@ -2961,7 +2961,7 @@ def transfer_whole_tab(request, tab_id):
                     + (f"Kubali au kataa kwenye risiti yako: {link}" if link else
                        "Muulize mhudumu kukubali au kukataa.")
                 )
-                send_sms_notification(msg, normalized)
+                send_sms_notification_async(msg, normalized)
     except Exception:
         logger.exception('transfer_whole_tab SMS failed (business=%s)', up.business.id)
 
@@ -3114,7 +3114,7 @@ def _finish_settle_tab(request, up, tab, pay, entries_to_settle, now):
         receipt_url = request.build_absolute_uri(f'/r/{rcpt.token}/')
         receipt_id = rcpt.id
         if customer_phone and receipt_url:
-            from .notifications import normalize_ke_phone, send_sms_notification
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             normalized = normalize_ke_phone(customer_phone)
             if normalized:
                 sms_msg = (
@@ -3122,7 +3122,7 @@ def _finish_settle_tab(request, up, tab, pay, entries_to_settle, now):
                     f"Umelipa: KES {settled_amount:,.0f}\n"
                     f"Risiti: {receipt_url}"
                 )
-                send_sms_notification(sms_msg, normalized)
+                send_sms_notification_async(sms_msg, normalized)
     except Exception:
         pass
 
@@ -3466,7 +3466,7 @@ def _convert_tab_to_debt_core(tab, business, customer_name, phone=''):
     # SMS to customer confirming the debt (mirrors Quick Sell credit flow)
     if customer.phone:
         try:
-            from .notifications import normalize_ke_phone, send_sms_notification
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             _norm = normalize_ke_phone(customer.phone)
             if _norm:
                 _source_label = 'Kitchen' if tab.source == 'kitchen' else 'Bar'
@@ -3476,7 +3476,7 @@ def _convert_tab_to_debt_core(tab, business, customer_name, phone=''):
                     f"limeandikwa ({_source_label}).\n"
                     f"Tafadhali lipa ndani ya siku {business.credit_window_days}."
                 )
-                send_sms_notification(_sms, _norm)
+                send_sms_notification_async(_sms, _norm)
         except Exception:
             logger.exception(
                 '_convert_tab_to_debt_core SMS failed (business=%s customer=%s)',
@@ -3706,7 +3706,7 @@ def revert_tab_from_debt(request, tab_id):
     try:
         from .models import Notification as _Notif
         from accounts.models import UserProfile as _UP
-        from .notifications import normalize_ke_phone, send_sms_notification
+        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
         from .views import scoped_on_shift_targets
 
         notify_targets = scoped_on_shift_targets(up.business, {tab.source})
@@ -3723,7 +3723,7 @@ def revert_tab_from_debt(request, tab_id):
             if phone:
                 normalized = normalize_ke_phone(phone)
                 if normalized:
-                    send_sms_notification(msg, normalized)
+                    send_sms_notification_async(msg, normalized)
     except Exception:
         logger.exception('revert_tab_from_debt: notify failed tab=%s', tab.id)
 
@@ -3900,7 +3900,7 @@ def add_cups(request):
         business.refresh_from_db(fields=['cup_low_notified_at'])
         if business.cup_low_notified_at is None:
             from .models import Notification
-            from .notifications import normalize_ke_phone as _norm_phone, send_sms_notification as _send_sms
+            from .notifications import normalize_ke_phone as _norm_phone, send_sms_notification_async as _send_sms
             from accounts.models import UserProfile as _UP
             _cup_msg = (
                 f"⚠️ Vikombe vimekwisha! Bado {pool['remaining']} vikombe — "
@@ -4547,7 +4547,7 @@ def record_breakage(request):
 
     from .models import Notification
     from accounts.models import UserProfile as _UP
-    from core.notifications import normalize_ke_phone, send_sms_notification
+    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     for om in _UP.objects.filter(
         business=business, role__in=['owner', 'manager']
     ).exclude(user=request.user).select_related('user'):
@@ -4561,7 +4561,7 @@ def record_breakage(request):
         if om.phone:
             normalized = normalize_ke_phone(om.phone)
             if normalized:
-                send_sms_notification(f"{business.name}: {message}", normalized)
+                send_sms_notification_async(f"{business.name}: {message}", normalized)
 
     return JsonResponse({"ok": True, "message": message})
 
@@ -4883,7 +4883,7 @@ def bar_z_report(request):
 @require_POST
 def bar_z_report_share(request):
     """Send the day's Z-report summary SMS to the owner's phone."""
-    from .notifications import normalize_ke_phone, send_sms_notification
+    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     from accounts.models import UserProfile
 
     up = _get_up(request)
@@ -4934,7 +4934,7 @@ def bar_z_report_share(request):
         return JsonResponse({'ok': False, 'error': 'Hakuna nambari ya simu ya mmiliki.'})
 
     try:
-        send_sms_notification(msg, phone)
+        send_sms_notification_async(msg, phone)
         return JsonResponse({'ok': True})
     except Exception as exc:
         return JsonResponse({'ok': False, 'error': str(exc)})

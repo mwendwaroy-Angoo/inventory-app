@@ -100,8 +100,8 @@ def pay_payment_plan(request, plan_id):
     msg = f"Umelipa KES {amount:,.0f}. Salio linalobaki: KES {plan.balance:,.0f}."
     if plan.customer.phone:
         try:
-            from .notifications import normalize_ke_phone, send_sms_notification
-            send_sms_notification(msg, normalize_ke_phone(plan.customer.phone))
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
+            send_sms_notification_async(msg, normalize_ke_phone(plan.customer.phone))
         except Exception:
             pass
     return JsonResponse({'ok': True, 'balance': float(plan.balance), 'message': msg})
@@ -183,7 +183,7 @@ def send_hold_expiry_reminders(business, days_ahead=3):
 
     from accounts.models import UserProfile
 
-    from .notifications import create_in_app_notification, normalize_ke_phone, send_sms_notification
+    from .notifications import create_in_app_notification, normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
     today = timezone.localdate()
     cutoff = today + timedelta(days=days_ahead)
@@ -199,7 +199,7 @@ def send_hold_expiry_reminders(business, days_ahead=3):
         create_in_app_notification(op.user, '⏰ Amana Zinazokaribia Mwisho', msg, notification_type='warning')
         if op.phone:
             try:
-                send_sms_notification(msg, normalize_ke_phone(op.phone))
+                send_sms_notification_async(msg, normalize_ke_phone(op.phone))
             except Exception:
                 pass
     return plans.count()

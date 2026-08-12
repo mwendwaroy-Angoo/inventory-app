@@ -266,7 +266,7 @@ def notify_owners_of_conversion_risk(business, customer, scope, unpaid_total, co
 
     from core.models import Notification
     from accounts.models import UserProfile as _UP
-    from core.notifications import normalize_ke_phone, send_sms_notification
+    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
     icon = '🚫' if decision.tier == 'blocked' else '⚠️'
     msg = (
@@ -285,7 +285,7 @@ def notify_owners_of_conversion_risk(business, customer, scope, unpaid_total, co
             if up.phone:
                 normalized = normalize_ke_phone(up.phone)
                 if normalized:
-                    send_sms_notification(msg, normalized)
+                    send_sms_notification_async(msg, normalized)
         except Exception:
             pass
 

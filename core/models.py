@@ -6493,7 +6493,7 @@ class StockTransfer(models.Model):
                         staff=transfer.dispatched_by, amount_kes=shortfall_kes,
                         link_url='/maduka/',
                     )
-                    from .notifications import normalize_ke_phone as _nkp, send_sms_notification as _ssms
+                    from .notifications import normalize_ke_phone as _nkp, send_sms_notification_async as _ssms
                     from accounts.models import UserProfile as _UP
                     msg = (
                         f"⚠️ Uhamisho {transfer.reference} una utata — {detail}. "

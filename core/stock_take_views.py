@@ -24,6 +24,7 @@ from core.models import (
 )
 from core.notifications import (
     create_in_app_notification, normalize_ke_phone, send_sms_notification,
+    send_sms_notification_async,
 )
 from core.views import get_user_profile, owner_or_manager_required
 
@@ -39,7 +40,7 @@ def _notify_owner(business, title, message):
     for op in owners:
         create_in_app_notification(op.user, title, message, notification_type='warning', link_url='/stock/variances/')
         if op.phone:
-            send_sms_notification(message, normalize_ke_phone(op.phone))
+            send_sms_notification_async(message, normalize_ke_phone(op.phone))
 
 
 def item_has_pending_variance(item_id):
@@ -252,7 +253,7 @@ def start_stock_take(request):
                         link_url='/stock/variances/',
                     )
                     if qs_profile.phone:
-                        send_sms_notification(staff_msg, normalize_ke_phone(qs_profile.phone))
+                        send_sms_notification_async(staff_msg, normalize_ke_phone(qs_profile.phone))
 
                 # Clear the current on-duty staff by name for anything redirected away
                 # from them — otherwise a stock take that flags nothing about their own

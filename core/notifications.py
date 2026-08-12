@@ -78,7 +78,7 @@ def route_notification(event_type, business, owner_phone, owner_email,
             if allowed:
                 phone = normalize_ke_phone(owner_phone)
                 if phone:
-                    send_sms_notification(sms_message, phone)
+                    send_sms_notification_async(sms_message, phone)
                     sms_sent = True
             else:
                 logger.info(
@@ -91,7 +91,7 @@ def route_notification(event_type, business, owner_phone, owner_email,
     # Email
     if should_email and owner_email:
         try:
-            send_email_notification(owner_email, email_subject, email_html, text_message)
+            send_email_notification_async(owner_email, email_subject, email_html, text_message)
             email_sent = True
         except Exception as e:
             logger.error('Router email failed [%s]: %s', event_type, e)
@@ -187,6 +187,22 @@ def send_email_notification(to_email, subject, html_message, text_message=None):
         return False
 
 
+def send_email_notification_async(to_email, subject, html_message, text_message=None):
+    """Fire-and-forget sibling of send_email_notification() — same reasoning
+    as send_sms_notification_async(): the function makes no ORM calls, only
+    a pure external HTTP request, so a background daemon thread is safe with
+    no DB-connection-per-thread concern. Returns nothing. The one call site
+    that reads the return value (receipt_views.py's "send receipt by email"
+    button — a deliberate user-initiated tap, not an automatic side-effect)
+    keeps calling send_email_notification() directly, unchanged."""
+    def _worker():
+        try:
+            send_email_notification(to_email, subject, html_message, text_message)
+        except Exception:
+            logger.exception('send_email_notification_async: background send failed')
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def send_sms_notification(message, phone_number):
     """Returns (success: bool, detail: str). detail is the AT error on failure, '' on success.
 
@@ -231,6 +247,33 @@ def send_sms_notification(message, phone_number):
         detail = f"{type(e).__name__}: {e}"
         logger.error(f"SMS failed to {phone_number}: {detail}")
         return False, detail
+
+
+def send_sms_notification_async(message, phone_number):
+    """Fire-and-forget sibling of send_sms_notification() (2026-08-12 live
+    incident, second pass) — dispatches the actual Africa's Talking network
+    call to a background daemon thread so the calling request thread is
+    NEVER blocked by it, closing the health-check-timeout gap the shortened
+    timeout alone only reduced. Safe to use unconditionally here (unlike
+    notify_transaction_async(), whose worker thread queries the DB by id —
+    a real, documented source of test-suite "database is locked" flakiness
+    when it races a test's own wrapping transaction): send_sms_notification()
+    itself makes no ORM calls at all, only a pure external HTTP request, so
+    there is no DB-connection-per-thread concern here.
+
+    Returns nothing — by design, the caller cannot know success/failure
+    before the request returns. Every genuinely fire-and-forget call site
+    (the overwhelming majority — see the audit note in this file's own
+    CLAUDE.md sprint log) already discarded that boolean anyway. The two
+    call sites that DO read it to shape an immediate user-facing response
+    (a deliberate "send now" button tap, not an automatic side-effect)
+    correctly keep calling send_sms_notification() directly, unchanged."""
+    def _worker():
+        try:
+            send_sms_notification(message, phone_number)
+        except Exception:
+            logger.exception('send_sms_notification_async: background send failed')
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def send_whatsapp_notification(phone, message, business=None):
@@ -597,7 +640,7 @@ def send_daily_summary(business):
     )
     message += "— Duka Mwecheche"
 
-    send_email_notification(owner_email, subject, None, text_message=message)
+    send_email_notification_async(owner_email, subject, None, text_message=message)
 
     business.last_daily_summary_sent_at = now
     business.save(update_fields=['last_daily_summary_sent_at'])
@@ -611,7 +654,7 @@ def send_daily_summary(business):
                     f'Duka Mwecheche: Your daily summary for {business.name} '
                     f'is ready. Check your email for the full report.'
                 )
-                send_sms_notification(nudge, phone)
+                send_sms_notification_async(nudge, phone)
     except Exception as e:
         logger.error('Daily summary SMS nudge failed: %s', e)
 
@@ -775,7 +818,7 @@ def notify_new_bid_opportunity(procurement_request):
         )
 
         # Email notification
-        send_email_notification(
+        send_email_notification_async(
             supplier_email, subject_line, None, text_message=message_body
         )
 
@@ -785,7 +828,7 @@ def notify_new_bid_opportunity(procurement_request):
             f"{procurement_request.title}. Budget: {budget_text}. "
             f"Submit your bid now!"
         )
-        send_sms_notification(sms_msg, supplier_phone)
+        send_sms_notification_async(sms_msg, supplier_phone)
 
 
 def notify_supplier_bid_received(bid):
@@ -832,14 +875,14 @@ def notify_supplier_bid_received(bid):
     )
 
     # Email to owner
-    send_email_notification(owner_email, subject, None, text_message=message)
+    send_email_notification_async(owner_email, subject, None, text_message=message)
 
     # SMS to owner
     sms_msg = (
         f"[Duka Mwecheche] New Bid: {supplier_name} bid KES {bid.amount:,.0f} "
         f"for {bid.procurement.title}. Review on the platform."
     )
-    send_sms_notification(sms_msg, owner_phone)
+    send_sms_notification_async(sms_msg, owner_phone)
 
 
 def notify_supplier_bid_awarded(bid):
@@ -883,14 +926,14 @@ def notify_supplier_bid_awarded(bid):
     )
 
     # Email to supplier owner
-    send_email_notification(owner_email, subject, None, text_message=message)
+    send_email_notification_async(owner_email, subject, None, text_message=message)
 
     # SMS to supplier owner
     sms_msg = (
         f"[Duka Mwecheche] 🎉 Bid Awarded! {requesting_business.name} accepted your bid "
         f"for KES {bid.amount:,.0f}. Check your account for purchase order details."
     )
-    send_sms_notification(sms_msg, owner_phone)
+    send_sms_notification_async(sms_msg, owner_phone)
 
 
 def notify_rider_delivery_assigned(rider_profile, order):
@@ -926,14 +969,14 @@ def notify_rider_delivery_assigned(rider_profile, order):
     )
 
     # Email to rider
-    send_email_notification(rider_email, subject, None, text_message=message)
+    send_email_notification_async(rider_email, subject, None, text_message=message)
 
     # SMS to rider
     sms_msg = (
         f"[Duka Mwecheche] New Delivery: Order #{order.order_number} from {business.name} "
         f"to {order.customer_name}. Fee: KES {order.delivery_fee:,.0f}. Accept in app."
     )
-    send_sms_notification(sms_msg, rider_phone)
+    send_sms_notification_async(sms_msg, rider_phone)
 
 
 def notify_business_rider_assigned(order, rider_profile):
@@ -981,11 +1024,11 @@ def notify_business_rider_assigned(order, rider_profile):
     )
 
     # Email to owner
-    send_email_notification(owner_email, subject, None, text_message=message)
+    send_email_notification_async(owner_email, subject, None, text_message=message)
 
     # SMS to owner
     sms_msg = (
         f"[Duka Mwecheche] Rider Assigned: Order #{order.order_number} "
         f"— {rider_name} ({rider_phone}) will collect from your store."
     )
-    send_sms_notification(sms_msg, owner_phone)
+    send_sms_notification_async(sms_msg, owner_phone)

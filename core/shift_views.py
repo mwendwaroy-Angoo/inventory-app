@@ -994,7 +994,7 @@ def confirm_till_count(request):
     try:
         from .models import Notification as _Notif
         from accounts.models import UserProfile as _UP
-        from .notifications import normalize_ke_phone, send_sms_notification
+        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
         from .views import scoped_on_shift_targets
 
         notify_targets = scoped_on_shift_targets(up.business, {station})
@@ -1011,7 +1011,7 @@ def confirm_till_count(request):
             if phone:
                 normalized = normalize_ke_phone(phone)
                 if normalized:
-                    send_sms_notification(msg, normalized)
+                    send_sms_notification_async(msg, normalized)
     except Exception:
         logger.exception('confirm_till_count: notify failed business=%s station=%s', up.business_id, station)
 
@@ -1710,7 +1710,7 @@ def open_shift(request):
     # established anchor yet — nothing to compare against, so no alert.
     if opening_variance is not None and abs(opening_variance) > 500:
         try:
-            from .notifications import normalize_ke_phone as _nkp, send_sms_notification as _ssms
+            from .notifications import normalize_ke_phone as _nkp, send_sms_notification_async as _ssms
             from .models import Notification as _Notif
             from accounts.models import UserProfile as _UP
             _staff_name = request.user.get_full_name() or request.user.username
@@ -1837,7 +1837,7 @@ def close_shift(request, shift_id):
     # only discover later on Shift History.
     if _on_behalf:
         try:
-            from .notifications import normalize_ke_phone as _nkp2, send_sms_notification as _ssms2
+            from .notifications import normalize_ke_phone as _nkp2, send_sms_notification_async as _ssms2
             from .models import Notification as _Notif2
             _closer_name = request.user.get_full_name() or request.user.username
             _when = timezone.localtime(shift.ended_at).strftime('%d %b, %H:%M')
@@ -1942,7 +1942,7 @@ def close_shift(request, shift_id):
     _variance = rec.get('variance')
     if _variance is not None and abs(_variance) > 500:
         try:
-            from .notifications import normalize_ke_phone as _nkp, send_sms_notification as _ssms
+            from .notifications import normalize_ke_phone as _nkp, send_sms_notification_async as _ssms
             from .models import Notification as _Notif
             from accounts.models import UserProfile as _UP
             _staff_name = shift.staff.get_full_name() or shift.staff.username
@@ -2080,7 +2080,7 @@ def add_shift_variance_note(request, shift_id):
             msg += f" — M-Pesa ref: {mpesa_ref}"
         from .models import Notification
         from accounts.models import UserProfile as _UP
-        from .notifications import normalize_ke_phone, send_sms_notification
+        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
         for op in _UP.objects.filter(business=up.business, role__in=['owner', 'manager']).select_related('user'):
             Notification.objects.create(
                 user=op.user, title='💬 Maelezo ya Tofauti ya Fedha', message=msg,
@@ -2088,7 +2088,7 @@ def add_shift_variance_note(request, shift_id):
             )
             if op.phone:
                 try:
-                    send_sms_notification(msg, normalize_ke_phone(op.phone))
+                    send_sms_notification_async(msg, normalize_ke_phone(op.phone))
                 except Exception:
                     pass
 
@@ -2144,8 +2144,8 @@ def review_shift_variance(request, shift_id):
         from accounts.models import UserProfile as _UP
         staff_profile = _UP.objects.filter(user=shift.staff, business=up.business).first()
         if staff_profile and staff_profile.phone:
-            from .notifications import normalize_ke_phone, send_sms_notification
-            send_sms_notification(msg, normalize_ke_phone(staff_profile.phone))
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
+            send_sms_notification_async(msg, normalize_ke_phone(staff_profile.phone))
     except Exception:
         logger.exception('review_shift_variance: notify failed for shift %s', shift.id)
 
@@ -2183,7 +2183,7 @@ def add_opening_variance_note(request, shift_id):
             msg += f" — M-Pesa ref: {mpesa_ref}"
         from .models import Notification
         from accounts.models import UserProfile as _UP
-        from .notifications import normalize_ke_phone, send_sms_notification
+        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
         for op in _UP.objects.filter(business=up.business, role__in=['owner', 'manager']).select_related('user'):
             Notification.objects.create(
                 user=op.user, title='💬 Maelezo ya Tofauti — Ufunguzi', message=msg,
@@ -2191,7 +2191,7 @@ def add_opening_variance_note(request, shift_id):
             )
             if op.phone:
                 try:
-                    send_sms_notification(msg, normalize_ke_phone(op.phone))
+                    send_sms_notification_async(msg, normalize_ke_phone(op.phone))
                 except Exception:
                     pass
 
@@ -2270,8 +2270,8 @@ def review_opening_variance(request, shift_id):
         from accounts.models import UserProfile as _UP
         staff_profile = _UP.objects.filter(user=shift.staff, business=up.business).first()
         if staff_profile and staff_profile.phone:
-            from .notifications import normalize_ke_phone, send_sms_notification
-            send_sms_notification(msg, normalize_ke_phone(staff_profile.phone))
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
+            send_sms_notification_async(msg, normalize_ke_phone(staff_profile.phone))
     except Exception:
         logger.exception('review_opening_variance: notify failed for shift %s', shift.id)
 
@@ -2470,7 +2470,7 @@ def edit_shift_opening_float(request, shift_id):
         from django.contrib.auth.models import User as _User
         from .models import Notification
         from accounts.models import UserProfile as _UP
-        from .notifications import normalize_ke_phone, send_sms_notification
+        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
         recipient_ids = set()
         if shift.staff_id != request.user.id:
             recipient_ids.add(shift.staff_id)
@@ -2485,7 +2485,7 @@ def edit_shift_opening_float(request, shift_id):
         if shift.staff_id != request.user.id:
             staff_profile = _UP.objects.filter(user=shift.staff, business=up.business).first()
             if staff_profile and staff_profile.phone:
-                send_sms_notification(audit_line, normalize_ke_phone(staff_profile.phone))
+                send_sms_notification_async(audit_line, normalize_ke_phone(staff_profile.phone))
     except Exception:
         logger.exception('edit_shift_opening_float: notify failed for shift %s', shift.id)
 
@@ -2550,7 +2550,7 @@ def confirm_barrel_weights(request):
                     try:
                         from accounts.models import UserProfile
                         from .models import Notification
-                        from .notifications import normalize_ke_phone, send_sms_notification
+                        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                         from django.utils import timezone as _tz
                         msg = (
                             f"⚠️ Barrel {barrel.item.description}: imepoteza"
@@ -2574,7 +2574,7 @@ def confirm_barrel_weights(request):
                             if can_sms and op.phone:
                                 normalized = normalize_ke_phone(op.phone)
                                 if normalized:
-                                    send_sms_notification(msg, normalized)
+                                    send_sms_notification_async(msg, normalized)
                         if can_sms:
                             up.business.last_txn_sms_at = now
                             up.business.save(update_fields=['last_txn_sms_at'])

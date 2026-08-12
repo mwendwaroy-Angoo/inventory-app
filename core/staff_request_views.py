@@ -28,7 +28,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .models import Item, Notification, StaffRequest
-from .notifications import normalize_ke_phone, send_sms_notification
+from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def submit_staff_request(request):
         )
         if op.phone:
             try:
-                send_sms_notification(
+                send_sms_notification_async(
                     f'{business.name}: {who} ameomba ({sr.get_category_display()}): {subject}',
                     normalize_ke_phone(op.phone),
                 )
@@ -179,7 +179,7 @@ def create_instruction(request):
         )
         if profile.phone:
             try:
-                send_sms_notification(
+                send_sms_notification_async(
                     f'{business.name}: {who} amekuagiza — {subject}',
                     normalize_ke_phone(profile.phone),
                 )

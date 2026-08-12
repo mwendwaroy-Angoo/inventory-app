@@ -76,18 +76,18 @@ def _create_approval_request(request, item, user_profile, quantity, recipient, i
     for op in owner_profiles:
         # SMS
         try:
-            from core.notifications import send_sms_notification
+            from core.notifications import send_sms_notification, send_sms_notification_async
             owner_phone = op.phone or user_profile.business.phone or ''
             if owner_phone:
-                send_sms_notification(sms_msg, owner_phone)
+                send_sms_notification_async(sms_msg, owner_phone)
         except Exception as e:
             _logger.error('Approval SMS failed: %s', e)
 
         # Email
         try:
-            from core.notifications import send_email_notification
+            from core.notifications import send_email_notification, send_email_notification_async
             if op.user.email:
-                send_email_notification(op.user.email, email_subject, email_html)
+                send_email_notification_async(op.user.email, email_subject, email_html)
         except Exception as e:
             _logger.error('Approval email failed to %s: %s', op.user.email, e)
 

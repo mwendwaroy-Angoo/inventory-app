@@ -14,7 +14,7 @@ from django.views.decorators.http import require_POST
 from accounts.models import UserProfile
 
 from .models import SupplierInvoice
-from .notifications import normalize_ke_phone, send_sms_notification, create_in_app_notification
+from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async, create_in_app_notification
 from .payables import invoices_due_for_reminder, payables_aging_summary
 from .views import owner_or_manager_required
 
@@ -105,7 +105,7 @@ def send_payables_due_reminders(business, days_ahead=3):
         create_in_app_notification(op.user, '💰 Malipo ya Wauzaji', msg, notification_type='warning')
         if op.phone:
             try:
-                send_sms_notification(msg, normalize_ke_phone(op.phone))
+                send_sms_notification_async(msg, normalize_ke_phone(op.phone))
             except Exception:
                 pass
     return invoices.count()

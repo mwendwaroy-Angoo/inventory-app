@@ -406,7 +406,7 @@ def record_salary_payment(request, profile_id):
 
     if phone:
         try:
-            from core.notifications import normalize_ke_phone, send_sms_notification
+            from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             normalized = normalize_ke_phone(phone)
             if normalized:
                 if payment_type == 'partial':
@@ -422,7 +422,7 @@ def record_salary_payment(request, profile_id):
                         f"KES {amount_dec:,.0f} umelipwa. Asante kwa kazi nzuri. 🙏"
                         + (f"\n{staff_note}" if staff_note else "")
                     )
-                send_sms_notification(msg, normalized)
+                send_sms_notification_async(msg, normalized)
         except Exception:
             pass
 
@@ -651,14 +651,14 @@ def run_payroll(request):
             phone = staff_profile.phone
             if phone:
                 try:
-                    from core.notifications import normalize_ke_phone, send_sms_notification
+                    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                     normalized = normalize_ke_phone(phone)
                     if normalized:
                         msg = (
                             f"{business.name}: Mshahara wako wa {period_label} "
                             f"KES {amount_dec:,.0f} umelipwa. Asante kwa kazi nzuri. 🙏"
                         )
-                        send_sms_notification(msg, normalized)
+                        send_sms_notification_async(msg, normalized)
                 except Exception:
                     pass
 
@@ -843,7 +843,7 @@ def haki_recognition_statement(request, profile_id):
         phone = staff_profile.phone
         if phone:
             try:
-                from core.notifications import normalize_ke_phone, send_sms_notification
+                from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
                 normalized = normalize_ke_phone(phone)
                 if normalized:
                     period_label = date_from.strftime('%B %Y')
@@ -859,7 +859,7 @@ def haki_recognition_statement(request, profile_id):
                         f"{contrib_line}\n{shifts_line}\n{salary_line}"
                         + (f"\n{badges}" if badges else '')
                     )
-                    send_sms_notification(msg, normalized)
+                    send_sms_notification_async(msg, normalized)
                     sms_sent = True
                     messages.success(request, _('Statement sent to %(phone)s.') % {'phone': phone})
             except Exception:

@@ -569,7 +569,7 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
     (every existing caller) keeps the model's own default of "now".
     """
     from .models import BarTabEntry, BarTab, Receipt
-    from .notifications import normalize_ke_phone, send_sms_notification
+    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
     amount = Decimal(str(amount))
     data = _get_customer_debt_data(customer, business, source)
@@ -692,7 +692,7 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
                     f"Alama ya mikopo: {score_label}\n"
                     f"Risiti: {receipt_url}"
                 )
-                send_sms_notification(sms_msg, normalized)
+                send_sms_notification_async(sms_msg, normalized)
     except Exception:
         pass
 
@@ -710,7 +710,7 @@ def _flag_possible_duplicate_debt_payment(business, customer, amount, earlier_pa
     try:
         from .models import Notification
         from accounts.models import UserProfile as _UP
-        from .notifications import normalize_ke_phone, send_sms_notification
+        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
         when = timezone.localtime(earlier_payment.paid_at).strftime('%d %b, %H:%M')
         msg = (
             f"⚠️ {customer.name}: malipo mapya ya KES {amount:,.0f} yanafanana na malipo "
@@ -727,7 +727,7 @@ def _flag_possible_duplicate_debt_payment(business, customer, amount, earlier_pa
             if op.phone:
                 normalized = normalize_ke_phone(op.phone)
                 if normalized:
-                    send_sms_notification(msg, normalized)
+                    send_sms_notification_async(msg, normalized)
     except Exception:
         logger.exception('_flag_possible_duplicate_debt_payment failed customer=%s', customer.id)
 
@@ -741,7 +741,7 @@ def _notify_confirmed_duplicate_debt_payment(business, customer, amount, confirm
     try:
         from .models import Notification
         from accounts.models import UserProfile as _UP
-        from .notifications import normalize_ke_phone, send_sms_notification
+        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
         who = confirmed_by.get_full_name() or confirmed_by.username
         when = timezone.localtime(timezone.now()).strftime('%d %b, %H:%M')
         msg = (
@@ -759,7 +759,7 @@ def _notify_confirmed_duplicate_debt_payment(business, customer, amount, confirm
             if op.phone:
                 normalized = normalize_ke_phone(op.phone)
                 if normalized:
-                    send_sms_notification(msg, normalized)
+                    send_sms_notification_async(msg, normalized)
     except Exception:
         logger.exception('_notify_confirmed_duplicate_debt_payment failed customer=%s', customer.id)
 
@@ -1098,7 +1098,7 @@ def send_debt_reminder(request, customer_id):
         messages.error(request, _('%(customer)s does not have a phone number on file.') % {'customer': customer.name})
         return redirect('customer_debt_profile', customer_id=customer_id)
 
-    from core.notifications import normalize_ke_phone, send_sms_notification
+    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     normalized_phone = normalize_ke_phone(customer.phone)
     if not normalized_phone:
         messages.error(request, _('Could not send reminder — invalid phone number format: %(phone)s') % {'phone': customer.phone})
@@ -1652,7 +1652,7 @@ def request_write_off(request, txn_id):
     # Notify all owners and managers (not the requester themselves)
     from .models import Notification
     from accounts.models import UserProfile as _UP
-    from core.notifications import normalize_ke_phone, send_sms_notification
+    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
     targets = _UP.objects.filter(
         business=up.business, role__in=['owner', 'manager'],
@@ -1678,7 +1678,7 @@ def request_write_off(request, txn_id):
                     f"{type_label}: {item_name} KES {amount:,.0f} ({customer_name}). "
                     f"Sababu: {reason}. Angalia app kuidhinisha au kukataa."
                 )
-                send_sms_notification(sms, normalized)
+                send_sms_notification_async(sms, normalized)
 
     return JsonResponse({
         'ok': True,
@@ -1723,7 +1723,7 @@ def manager_review_write_off(request, req_id):
     # Notify all owners of the manager's recommendation
     from .models import Notification
     from accounts.models import UserProfile as _UP
-    from core.notifications import normalize_ke_phone, send_sms_notification
+    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
     owners = _UP.objects.filter(business=up.business, role='owner').select_related('user')
     for ow in owners:
@@ -1741,7 +1741,7 @@ def manager_review_write_off(request, req_id):
         if ow.phone:
             normalized = normalize_ke_phone(ow.phone)
             if normalized:
-                send_sms_notification(
+                send_sms_notification_async(
                     f"{up.business.name}: Meneja {manager_name} {verdict_sw} write-off "
                     f"{item_name} KES {amount:,.0f}. Angalia app kufanya uamuzi wa mwisho.",
                     normalized,
@@ -1821,7 +1821,7 @@ def _execute_write_off_approval(wo, approver, self_service=False):
     _mark_receipt_write_off(wo.transaction.business, customer_name, item_name, amount, when=wo.reviewed_at)
 
     from .models import Notification
-    from core.notifications import normalize_ke_phone, send_sms_notification
+    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
     verb = 'amefuta (kosa — stock imerejeshwa)' if is_mistake else 'amefuta'
     if self_service:
@@ -1851,7 +1851,7 @@ def _execute_write_off_approval(wo, approver, self_service=False):
             if sp and sp.phone:
                 normalized = normalize_ke_phone(sp.phone)
                 if normalized:
-                    send_sms_notification(
+                    send_sms_notification_async(
                         f"{wo.transaction.business.name}: {reviewer_name} ameidhinisha ombi lako — "
                         f"{item_name} KES {amount:,.0f} imefutwa kutoka kwa deni."
                         + (' Stock imerejeshwa.' if is_mistake else ''),
@@ -1953,7 +1953,7 @@ def reject_write_off(request, req_id):
     wo.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
 
     from accounts.models import UserProfile as _UP
-    from core.notifications import normalize_ke_phone, send_sms_notification
+    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     from .models import Notification
 
     deducted_from = ''
@@ -1975,7 +1975,7 @@ def reject_write_off(request, req_id):
             if staff_profile and staff_profile.phone:
                 normalized = normalize_ke_phone(staff_profile.phone)
                 if normalized:
-                    send_sms_notification(
+                    send_sms_notification_async(
                         f"{up.business.name}: Ombi lako la 'ilikuwa kosa' kwa {item_name} "
                         f"KES {amount:,.0f} limekataliwa — inabaki kwenye deni.",
                         normalized,
@@ -2013,7 +2013,7 @@ def reject_write_off(request, req_id):
             if staff_profile.phone:
                 normalized = normalize_ke_phone(staff_profile.phone)
                 if normalized:
-                    send_sms_notification(
+                    send_sms_notification_async(
                         f"{up.business.name}: Ombi lako la kufuta {item_name} "
                         f"KES {amount:,.0f} limekataliwa. KES {amount:,.0f} "
                         f"itaondolewa kwenye mshahara wako wa {period}.",

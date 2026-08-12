@@ -8,7 +8,7 @@ from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
 
 from .models import Receipt
-from .notifications import normalize_ke_phone, send_email_notification, send_sms_notification
+from .notifications import normalize_ke_phone, send_email_notification, send_email_notification_async, send_sms_notification, send_sms_notification_async
 from .views import get_user_profile, owner_required
 
 logger = logging.getLogger(__name__)
@@ -668,7 +668,7 @@ def _fire_cash_payment_request(business, tab_ids, customer_name, amount, sources
     empty sources are left unscoped (Quick Sell tabs aren't station-specific).
     """
     from .models import BarTab as _BarTab, Notification as _Notif
-    from .notifications import normalize_ke_phone, send_sms_notification
+    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     from accounts.models import UserProfile as _UP
     from .views import scoped_on_shift_targets
 
@@ -702,7 +702,7 @@ def _fire_cash_payment_request(business, tab_ids, customer_name, amount, sources
         if phone:
             phone_n = normalize_ke_phone(phone)
             if phone_n:
-                send_sms_notification(msg, phone_n)
+                send_sms_notification_async(msg, phone_n)
 
 
 def _notify_tab_transfer_resolved(transfer):
@@ -773,7 +773,7 @@ def _notify_tab_transfer_resolved(transfer):
         if phone:
             phone_n = normalize_ke_phone(phone)
             if phone_n:
-                send_sms_notification(msg, phone_n)
+                send_sms_notification_async(msg, phone_n)
 
 
 @csrf_exempt

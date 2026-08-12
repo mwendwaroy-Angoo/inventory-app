@@ -38,7 +38,7 @@ def _expenses_due_for_review(business):
 
 def _send_expense_notifications(business, owner, total_kes, period_label):
     """SMS + email when owner confirms recurring expenses."""
-    from .notifications import send_sms_notification, send_email_notification
+    from .notifications import send_sms_notification, send_sms_notification_async, send_email_notification, send_email_notification_async
     from accounts.models import normalize_ke_phone
 
     owner_phone = getattr(business, 'phone', '') or ''
@@ -63,16 +63,16 @@ def _send_expense_notifications(business, owner, total_kes, period_label):
     subject = f"Duka Mwecheche — {business.name}: Matumizi ya {period_label} Yamethibitishwa"
 
     if owner_email:
-        send_email_notification(owner_email, subject, html, text_message=sms)
+        send_email_notification_async(owner_email, subject, html, text_message=sms)
     if owner_phone:
         phone = normalize_ke_phone(owner_phone)
         if phone:
-            send_sms_notification(sms, phone)
+            send_sms_notification_async(sms, phone)
 
 
 def _send_investment_nudge(business):
     """Monthly SMS + email nudge: did you acquire any new assets?"""
-    from .notifications import send_sms_notification, send_email_notification
+    from .notifications import send_sms_notification, send_sms_notification_async, send_email_notification, send_email_notification_async
     from accounts.models import normalize_ke_phone
 
     owner_email = getattr(business, 'email', '') or ''
@@ -97,11 +97,11 @@ def _send_investment_nudge(business):
 """
     subject = f"Duka Mwecheche — Ukumbusho wa Uwekezaji: {month}"
     if owner_email:
-        send_email_notification(owner_email, subject, html, text_message=sms)
+        send_email_notification_async(owner_email, subject, html, text_message=sms)
     if owner_phone:
         phone = normalize_ke_phone(owner_phone)
         if phone:
-            send_sms_notification(sms, phone)
+            send_sms_notification_async(sms, phone)
 
 
 # ── Manage recurring expenses (CRUD) ─────────────────────────────────────────

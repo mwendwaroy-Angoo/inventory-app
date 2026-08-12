@@ -11,7 +11,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .models import BarTab, Customer, PromoMessage, Transaction
-from .notifications import normalize_ke_phone, send_sms_notification
+from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
 
 
 def _get_up(request):
@@ -169,7 +169,7 @@ def promo_compose(request):
                 normalized = normalize_ke_phone(phone) if phone else None
                 if normalized:
                     try:
-                        send_sms_notification(personalised, normalized)
+                        send_sms_notification_async(personalised, normalized)
                         sent += 1
                     except Exception:
                         pass

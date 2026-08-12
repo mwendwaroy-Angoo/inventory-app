@@ -314,7 +314,7 @@ class VoidTabClearsDebtTest(TestCase):
 
         # Simulate void_tab() logic directly (we test the model-layer effect, not the view)
         from django.utils import timezone as _tz
-        now = _tz.now()
+        now = timezone.now()
         for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
             entry.is_paid = True
             entry.paid_at = now
@@ -11144,16 +11144,23 @@ class DailySummaryIdempotencyTest(TestCase):
         self.owner = User.objects.create_user(username='dsidem_owner', password='x')
         UserProfile.objects.create(user=self.owner, business=self.biz, role='owner', phone='0712345678')
 
-    @patch('core.notifications.send_email_notification')
-    @patch('core.notifications.send_sms_notification')
+    # 2026-08-12 — send_daily_summary() now dispatches via
+    # send_email_notification_async()/send_sms_notification_async()
+    # (fire-and-forget background thread, see the same-day notification-
+    # timeout incident) — patch the async wrapper itself, not the sync
+    # function it calls from inside its own worker thread, so the mock
+    # call is recorded synchronously and the assertion isn't racing a
+    # background thread that may not have run yet.
+    @patch('core.notifications.send_email_notification_async')
+    @patch('core.notifications.send_sms_notification_async')
     def test_second_call_same_day_does_not_resend(self, mock_sms, mock_email):
         from core.notifications import send_daily_summary
         send_daily_summary(self.biz)
         send_daily_summary(self.biz)
         self.assertEqual(mock_email.call_count, 1)
 
-    @patch('core.notifications.send_email_notification')
-    @patch('core.notifications.send_sms_notification')
+    @patch('core.notifications.send_email_notification_async')
+    @patch('core.notifications.send_sms_notification_async')
     def test_sets_last_daily_summary_sent_at(self, mock_sms, mock_email):
         from core.notifications import send_daily_summary
         send_daily_summary(self.biz)
@@ -32029,3 +32036,82 @@ class NotificationTimeoutTest(TestCase):
         self.assertTrue(ok)
         import resend
         self.assertEqual(resend.default_http_client._timeout, 8)
+
+
+class NotificationAsyncDispatchTest(TestCase):
+    """2026-08-12 same-day follow-up — the deeper fix: make every SMS/email
+    send genuinely non-blocking (fire-and-forget via a background daemon
+    thread) rather than only shortening the network timeout, since even a
+    shortened worst-case call can still tie up a request thread the health
+    check needs. send_sms_notification()/send_email_notification() make no
+    ORM calls at all, so unlike notify_transaction_async()'s own worker
+    thread, there is no DB-connection-per-thread risk here."""
+
+    def test_sms_async_returns_immediately_and_dispatches_in_background(self):
+        from core import notifications
+        import threading
+
+        call_event = threading.Event()
+
+        def slow_send(message, phone_number):
+            call_event.wait(timeout=2)
+            return True, ''
+
+        with patch('core.notifications.send_sms_notification', side_effect=slow_send):
+            start = timezone.now()
+            notifications.send_sms_notification_async('hi', '0712345678')
+            elapsed = (timezone.now() - start).total_seconds()
+        # The caller must not have waited for the (still-blocked) send.
+        self.assertLess(elapsed, 1.0)
+        call_event.set()
+
+    def test_email_async_returns_immediately_and_dispatches_in_background(self):
+        from core import notifications
+        import threading
+
+        call_event = threading.Event()
+
+        def slow_send(to_email, subject, html_message, text_message=None):
+            call_event.wait(timeout=2)
+            return True
+
+        with patch('core.notifications.send_email_notification', side_effect=slow_send):
+            start = timezone.now()
+            notifications.send_email_notification_async('x@example.com', 'Subj', '<p>hi</p>')
+            elapsed = (timezone.now() - start).total_seconds()
+        self.assertLess(elapsed, 1.0)
+        call_event.set()
+
+    def test_sms_async_actually_dispatches_the_real_function(self):
+        from core import notifications
+        import time
+        with patch('core.notifications.send_sms_notification') as mock_send:
+            mock_send.return_value = (True, '')
+            notifications.send_sms_notification_async('hi', '0712345678')
+            # Background daemon thread — give it a moment to actually run.
+            for _ in range(20):
+                if mock_send.called:
+                    break
+                time.sleep(0.05)
+        mock_send.assert_called_once_with('hi', '0712345678')
+
+    def test_email_async_actually_dispatches_the_real_function(self):
+        from core import notifications
+        import time
+        with patch('core.notifications.send_email_notification') as mock_send:
+            mock_send.return_value = True
+            notifications.send_email_notification_async('x@example.com', 'Subj', '<p>hi</p>')
+            for _ in range(20):
+                if mock_send.called:
+                    break
+                time.sleep(0.05)
+        mock_send.assert_called_once_with('x@example.com', 'Subj', '<p>hi</p>', None)
+
+    def test_sms_async_swallows_exceptions_without_crashing(self):
+        from core import notifications
+        import time
+        with patch('core.notifications.send_sms_notification', side_effect=RuntimeError('boom')):
+            # Must not raise — the whole point is the caller never blocks on
+            # or is affected by the background send's own failure.
+            notifications.send_sms_notification_async('hi', '0712345678')
+            time.sleep(0.1)

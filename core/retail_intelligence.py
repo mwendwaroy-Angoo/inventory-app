@@ -38,7 +38,7 @@ def check_margin_guard(item, old_cost, new_cost, business):
     )
 
     from accounts.models import UserProfile
-    from .notifications import normalize_ke_phone, send_sms_notification
+    from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     for op in UserProfile.objects.filter(business=business, role__in=['owner', 'manager']).select_related('user'):
         try:
             Notification.objects.create(
@@ -49,7 +49,7 @@ def check_margin_guard(item, old_cost, new_cost, business):
             pass
         if op.phone:
             try:
-                send_sms_notification(detail, normalize_ke_phone(op.phone))
+                send_sms_notification_async(detail, normalize_ke_phone(op.phone))
             except Exception:
                 pass
     return exc, suggested_price

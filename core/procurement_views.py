@@ -544,9 +544,9 @@ def award_bid(request, bid_id):
                             supplier_owner_profile.user.email or bid.supplier.email
                         )
                         if recipient_email:
-                            from core.notifications import send_email_notification
+                            from core.notifications import send_email_notification, send_email_notification_async
 
-                            send_email_notification(
+                            send_email_notification_async(
                                 recipient_email,
                                 subject,
                                 html_message,

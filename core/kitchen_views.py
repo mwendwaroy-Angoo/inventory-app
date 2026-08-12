@@ -182,7 +182,7 @@ def kitchen_wastage(request):
 
     from .models import Notification
     from accounts.models import UserProfile as _UP
-    from core.notifications import normalize_ke_phone, send_sms_notification
+    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     for om in _UP.objects.filter(
         business=business, role__in=['owner', 'manager']
     ).exclude(user=request.user).select_related('user'):
@@ -196,7 +196,7 @@ def kitchen_wastage(request):
         if om.phone:
             normalized = normalize_ke_phone(om.phone)
             if normalized:
-                send_sms_notification(f"{business.name}: {message}", normalized)
+                send_sms_notification_async(f"{business.name}: {message}", normalized)
 
     return JsonResponse({"ok": True, "message": message})
 
@@ -1138,7 +1138,7 @@ def _kitchen_checkout(request, up, business, is_owner):
     # For direct credit: auto-create Customer record
     if payment_method == 'credit' and credit_name:
         from .models import Customer as _Customer
-        from .notifications import normalize_ke_phone, send_sms_notification
+        from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
         cust = _Customer.objects.filter(business=business, name__iexact=credit_name).first()
         if not cust:
             cust = _Customer.objects.create(business=business, name=credit_name, phone=credit_phone, credit_approved=True)
@@ -1230,7 +1230,7 @@ def _kitchen_checkout(request, up, business, is_owner):
     #  Otherwise        → subsequent round on existing receipt, no SMS
     if payment_method == 'food_tab' and not is_partial_debt_checkout and active_tab and receipt_url:
         try:
-            from .notifications import normalize_ke_phone, send_sms_notification
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             _sms_phone_raw = tab_phone or (active_tab.customer.phone if active_tab.customer else '')
             _sms_phone_k = normalize_ke_phone(_sms_phone_raw) if _sms_phone_raw else ''
             if _sms_phone_k:
@@ -1240,7 +1240,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                         f"{business.name}: Chakula kimeongezwa kwenye tab yako.\n"
                         f"Angalia risiti iliyosasishwa: {receipt_url}"
                     )
-                    send_sms_notification(_sms_k, _sms_phone_k)
+                    send_sms_notification_async(_sms_k, _sms_phone_k)
                 elif master_rcpt is None:
                     _tab_total_k = float(active_tab.total()) if active_tab else float(total)
                     _sms_k = (
@@ -1249,7 +1249,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                         f"KES {_tab_total_k:,.0f}.\n"
                         f"Angalia risiti yako: {receipt_url}"
                     )
-                    send_sms_notification(_sms_k, _sms_phone_k)
+                    send_sms_notification_async(_sms_k, _sms_phone_k)
         except Exception:
             logger.exception('Food tab open SMS failed business=%s', business.id)
 
@@ -1257,7 +1257,7 @@ def _kitchen_checkout(request, up, business, is_owner):
     if payment_method == 'mpesa' and stk_payment_id_raw.isdigit() and rcpt:
         try:
             from core.models import Payment as _PmtSms
-            from .notifications import normalize_ke_phone, send_sms_notification
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             _pmt_for_sms = _PmtSms.objects.filter(
                 id=int(stk_payment_id_raw), business=business
             ).first()
@@ -1269,14 +1269,14 @@ def _kitchen_checkout(request, up, business, is_owner):
                         f"Asante! KES {int(float(total))} kwa "
                         f"{business.name}. Risiti: {_sms_url}"
                     )
-                    send_sms_notification(_sms_msg, _normalized)
+                    send_sms_notification_async(_sms_msg, _normalized)
         except Exception:
             logger.exception('Kitchen STK receipt SMS failed business=%s', business.id)
 
     # SMS to customer on direct credit sale (suppress when appending to existing receipt)
     if payment_method == 'credit' and credit_phone and receipt_url and not _kitchen_rcpt_reused:
         try:
-            from .notifications import normalize_ke_phone, send_sms_notification
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             import datetime as _dt
             normalized = normalize_ke_phone(credit_phone)
             if normalized:
@@ -1288,7 +1288,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                     f"Tarehe ya malipo: {due_date}\n"
                     f"Risiti: {receipt_url}"
                 )
-                send_sms_notification(sms_msg, normalized)
+                send_sms_notification_async(sms_msg, normalized)
         except Exception:
             logger.exception('Kitchen credit SMS failed business=%s', business.id)
 
@@ -1297,7 +1297,7 @@ def _kitchen_checkout(request, up, business, is_owner):
     # SMS to customer when kitchen items are merged into an existing cross-counter tab
     if merge_tab_id and active_tab:
         try:
-            from .notifications import normalize_ke_phone, send_sms_notification
+            from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
             phone = None
             if active_tab.customer:
                 phone = normalize_ke_phone(active_tab.customer.phone or '')
@@ -1313,7 +1313,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                     f"({counter_label}).\n"
                     f"Jumla sasa: KES {new_total:,.0f}"
                 )
-                send_sms_notification(sms_msg, phone)
+                send_sms_notification_async(sms_msg, phone)
         except Exception:
             logger.exception('Tab merge SMS failed business=%s', business.id)
 
