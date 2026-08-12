@@ -6328,3 +6328,34 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`KitchenStockReceiptRawMaterialForTest`) — empty when no open batch exists, correct
   cost/revenue/profit surfaced for a linked open batch, a depleted batch correctly
   excluded, and an unrelated item's receipt never shows the block. No migrations.
+- Kitchen Board tile silently hid a second open batch (2026-08-12, same-day follow-up).
+  Roy caught a real mismatch: the new "→ Chipo" line on the Raw Potatoes receipt showed
+  Mapato KES 0 for a batch, while the Chipo tile right below it showed a Faida implying
+  KES 100 had already been sold. Traced to a genuine, previously-invisible bug:
+  `buildKitchenBatchGrid()` (`kitchen_board.html`) has always read only `open_batches[0]`
+  (the newest) — any OTHER simultaneously-open batch for the same item was silently
+  dropped from the tile entirely, its own cost/revenue never shown anywhere. Since Roy
+  had tapped "+Pata Stok" for Chipo more than once while troubleshooting earlier in this
+  session, two batches ended up genuinely OPEN at once; the tile showed one, my new
+  `raw_material_for` aggregate (which correctly sums every OPEN batch matching a raw
+  item, not just the newest) surfaced the OTHER one — both numbers were individually
+  correct, just for two different rows, with no way to see that from the tile alone.
+  **First attempt, reverted same session**: added a KegBarrel-style "only one open batch
+  per item" guard to `KitchenBatch.open_batch()` — wrong call, caught immediately by the
+  pre-existing `KitchenBatchOpenBatchDrawTest.test_sequential_draws_deduct_balance_
+  correctly`, whose own docstring says the multi-pot case (more than one pot of chips
+  genuinely cooking at once on a busy day) is a **deliberate, already-tested, allowed**
+  scenario — unlike KegBarrel, where only one barrel is ever physically tapped at a time.
+  Reverted the guard; the real fix belongs entirely in the tile, not in blocking a
+  legitimate business scenario. **Real fix**: `buildKitchenBatchGrid()` now shows an
+  owner-only warning block for any batch beyond the first — "⚠️ N batch nyingine iko/ziko
+  wazi, haionekani/hazionekani hapo juu" — listing each one's own Gharama/Mapato/Faida with
+  direct "✓ Imekwisha"/"🗑 Tupa" buttons (reusing the existing `kbDepleteBatch`/
+  `kbDiscardBatch` functions unchanged, just given the extra batch's id instead of
+  `ob[0]`'s). The backend already sent the full `open_batches` array all along — this was a
+  frontend-only fix, no new endpoint or field needed. 1 new test
+  (`test_multiple_open_batches_summed_correctly`, on `KitchenStockReceiptRawMaterialForTest`)
+  locking in that `raw_material_for` correctly sums cost/revenue across multiple open
+  batches rather than only the first — plus the full pre-existing `KitchenBatchOpenBatchDrawTest`
+  suite re-run and confirmed passing unmodified, proving the multi-pot scenario is still
+  fully supported. No migrations.

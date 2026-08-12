@@ -5874,6 +5874,19 @@ class KitchenBatch(models.Model):
 
         Raises ValueError (caller renders as a JSON error) on any validation
         failure — insufficient raw balance, non-positive cost/qty, etc.
+
+        Multiple simultaneously OPEN batches for the same item are a
+        deliberate, tested, ALLOWED scenario (the "multi-pot" case — she may
+        genuinely have more than one pot of chips going on a busy day; see
+        KitchenBatchOpenBatchDrawTest.test_sequential_draws_deduct_balance_
+        correctly, which locks this in on purpose) — NOT something this
+        method should guard against. 2026-08-12 live report (Roy): the real
+        bug this uncovered lives in kitchen_board()'s TILE, which only ever
+        reads the newest open_batches[0], silently hiding any OTHER
+        still-open batch's own cost/revenue — fixed there (kitchen_board.html)
+        instead, by surfacing every open batch beyond the first with its own
+        real numbers and a direct close/discard action, rather than blocking
+        a legitimate multi-pot day here.
         """
         from django.db import transaction as _txn
         source_item = None

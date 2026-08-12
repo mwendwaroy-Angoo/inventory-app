@@ -2094,6 +2094,37 @@
         ? '<span style="color:#4caf50; font-size:.7rem;">● Iko wazi (LEO)</span>'
         : '<span style="color:#b0b0b0; font-size:.7rem;">Hakuna batch ya leo — bonyeza + Pata Stok</span>';
 
+      // 2026-08-12 live report (Roy): a Raw Potatoes receipt's linked-Chipo
+      // revenue didn't match the tile — traced to the tile ALWAYS silently
+      // showing only the NEWEST open batch (ob[0]), hiding any OTHER
+      // still-open batch's own cost/revenue entirely (open_batch() had no
+      // guard against opening a second one while one was already open —
+      // now fixed going forward, see KitchenBatch.open_batch()). This
+      // owner-only warning surfaces any batch left over from BEFORE that
+      // fix, with its own real numbers and a direct way to close each one.
+      var extraBatchesHtml = '';
+      if (IS_OWNER && ob.length > 1) {
+        var extras = ob.slice(1);
+        extraBatchesHtml = '<div style="background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.3);' +
+          'border-radius:6px;padding:.4rem .5rem;margin-top:.4rem;font-size:.7rem;color:#e29aab;">' +
+          '⚠️ ' + extras.length + ' batch nyingine iko/ziko wazi, haionekani/hazionekani hapo juu:' +
+          extras.map(function(eb){
+            var epft = eb.profit || 0;
+            var epCls = epft >= 0 ? '#4caf50' : '#c0395a';
+            return '<div style="margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(192,57,90,.2);">' +
+              'Gharama KES ' + fmt(eb.cost_total) + ' · Mapato KES ' + fmt(eb.revenue_collected) +
+              ' · Faida <strong style="color:' + epCls + ';">KES ' + fmt(epft) + '</strong>' +
+              '<div style="display:flex;gap:.3rem;margin-top:.3rem;">' +
+                '<button onclick="kbDepleteBatch(' + eb.id + ',\'' + item.name.replace(/'/g,'') + '\'); event.stopPropagation();" ' +
+                'style="font-size:.66rem;padding:.15rem .4rem;background:rgba(255,255,255,.04);border:1px solid #555;border-radius:5px;color:#b0b0b0;cursor:pointer;">✓ Imekwisha</button>' +
+                '<button onclick="kbDiscardBatch(' + eb.id + ',\'' + item.name.replace(/'/g,'') + '\', this); event.stopPropagation();" ' +
+                'style="font-size:.66rem;padding:.15rem .4rem;background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;cursor:pointer;">🗑 Tupa</button>' +
+              '</div>' +
+            '</div>';
+          }).join('') +
+        '</div>';
+      }
+
       // Raw-material sack balance — separate from whether TODAY's batch is
       // open/done. Shown on every batch tile that has a raw_material_source
       // configured, regardless of hasOpen, so "sack empty" is never confused
@@ -2112,7 +2143,8 @@
         statusHtml +
         sackHtml +
         (hasOpen ? '<div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.4rem;">' + priceTiles + '</div>' : '') +
-        plHtml;
+        plHtml +
+        extraBatchesHtml;
 
       if (hasOpen) {
         html += '<div style="display:flex;gap:.3rem;margin-top:.4rem;flex-wrap:wrap;">' +

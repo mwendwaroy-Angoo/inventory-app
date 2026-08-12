@@ -30818,6 +30818,32 @@ class KitchenStockReceiptRawMaterialForTest(TestCase):
         r = listing['open'][0]
         self.assertEqual(r['raw_material_for'], [], 'Only OPEN batches count — a depleted one is not "current"')
 
+    def test_multiple_open_batches_summed_correctly(self):
+        """2026-08-12 live report (Roy): the Chipo tile only ever displays
+        the NEWEST open batch (open_batches[0]) — the multi-pot case is a
+        deliberate, allowed scenario (see KitchenBatchOpenBatchDrawTest), so
+        this must never be blocked, but a second still-open batch's own
+        cost/revenue was invisible on the tile. raw_material_for must SUM
+        across every open batch, not just the newest, so the receipt view
+        never silently drops one."""
+        self._create_raw_receipt(qty='10', cost='1000')
+        batch1 = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.chipo,
+            recorded_by=self.owner, draw_qty=Decimal('5'),
+        )
+        batch1.record_sale(Decimal('100'), payment_method='cash')
+        batch2 = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.chipo,
+            recorded_by=self.owner, draw_qty=Decimal('3'),
+        )
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        r = listing['open'][0]
+        linked = r['raw_material_for'][0]
+        self.assertEqual(linked['open_batch_count'], 2)
+        self.assertEqual(linked['cost'], float(batch1.cost_total + batch2.cost_total))
+        self.assertEqual(linked['revenue'], 100.0, 'Only batch1 has a sale so far')
+        self.assertEqual(linked['profit'], 100.0 - float(batch1.cost_total + batch2.cost_total))
+
     def test_unrelated_item_never_shows_raw_material_for(self):
         soda = Item.objects.create(
             business=self.biz, store=self.store, description='Soda',
