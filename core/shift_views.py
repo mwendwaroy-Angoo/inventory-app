@@ -286,54 +286,34 @@ def _station_q(is_kitchen):
 
 
 def station_revenue_window_start(business, is_kitchen, now=None):
-    """Start of the "today's revenue" tile window for one station.
+    """Start of the "today's revenue" tile window for one station — a
+    plain calendar-day boundary (local midnight), matching how a real
+    till / M-Pesa portal reports daily revenue.
 
-    2026-08-01, same-day follow-up to the original midnight-extension fix
-    below — Roy clarified the actual rule: "regardless of continuity of
-    sales and business closing time setting, once either section is
-    confirmed in the shift closing modal the revenue resets to 0 in
-    regards to that section." The first version reset the window the
-    moment a NEW shift opened, even if the PRIOR shift for that station had
-    never been signed off (Thibitisha/confirm) — exactly the live
-    situation he flagged: kitchen staff had already CLOSED their shift but
-    the owner/manager had not yet CONFIRMED it, and the window must keep
-    including that unconfirmed shift's revenue regardless of midnight, the
-    business's configured closing time, or whether a newer shift has since
-    opened.
+    2026-08-12 live request (Roy), reversing the confirm-anchored design
+    documented below: "regardless of monsoon being 24hrs, the revenue
+    specifically should go by day regardless of shift presence... let us
+    make revenue realistic since it says today's revenue... it goes hand
+    in hand with the way Safaricom's till mpesa portal usually is —
+    revenue per day." The confirm-anchored version (2026-08-01/02) had
+    already caused real confusion twice — a confirmed, days-old shift's
+    revenue still showing on "Tonight" hours after being confirmed — and
+    Roy decided a strict daily reset is the more honest, expected
+    behaviour, even for a business that never closes. Deliberately does
+    NOT touch till_expected_cash()/shift close-close mechanics — Roy was
+    explicit those stay exactly as they are ("shifts and counter cash
+    modals are very fine as they are"); only the REVENUE tiles reset to
+    plain daily reporting.
 
-    New rule: the window starts right after this station's most recently
-    CONFIRMED shift (`Shift.confirmed_at`) — everything sold since that
-    actual sign-off moment counts, no matter how many calendar days or
-    shift-open/close cycles have passed since. The tile only ever resets
-    to 0 at the instant someone actually taps Thibitisha for that station.
-
-    If this station has never had a shift confirmed at all, falls back to
-    the station's very first shift ever (so an owner who has simply never
-    used the confirm feature yet still sees their full accrued, unreviewed
-    total — deliberately not silently capped, since the whole point is
-    "nothing has been signed off yet"). If the station has no shift record
-    at all — pure owner-only selling with no shift ever opened — falls
-    back to plain local midnight, the same documented scope limit as
-    before: there's no shift to anchor a real accountability window on,
-    and opening even a nominal shift for that station is what unlocks this
-    behaviour.
+    History, kept for context: this used to anchor on the station's most
+    recently CONFIRMED shift (`Shift.confirmed_at`), or — before that
+    (2026-07-31/08-01) — extend backward through an open/auto-closed shift
+    spanning midnight so a still-open counter's sales wouldn't vanish at
+    00:00. Both were real, deliberate designs Roy asked for at the time;
+    superseded by this simpler daily-reset rule now that it's caused
+    confusion more than once.
     """
-    from .models import Shift
     now = now or timezone.now()
-
-    anchor_dt, _kind, _shift = _station_reset_anchor(business, is_kitchen)
-    if anchor_dt:
-        return anchor_dt
-
-    earliest = (
-        Shift.objects.filter(business=business)
-        .filter(_station_q(is_kitchen))
-        .order_by('started_at')
-        .first()
-    )
-    if earliest:
-        return earliest.started_at
-
     return timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
@@ -406,68 +386,31 @@ def station_revenue_window_info(business, is_kitchen, now=None):
     ilipatikana?" transparency this app already gives the continuous-till
     tile (see till_expected_cash()).
 
-    2026-08-01, same-day live report: Roy saw the Bar revenue tile at
-    KES 7300+ with the bar counter fully closed and "no sales that side"
-    happening right now, and said he "could not trace the cause." The
-    figure was correct — an auto-closed, still-unconfirmed shift's whole
-    12-hour total, exactly the behaviour just requested and shipped a few
-    minutes earlier — but nothing on the dashboard explained where it came
-    from, so a legitimate, working number looked alarming. This gives the
-    owner/manager the same self-service answer the till tile already has:
-    the anchor point, and exactly which shift(s) are still holding the
-    total open (haven't been Thibitisha'd yet).
+    2026-08-12 — simplified alongside station_revenue_window_start()'s own
+    reversion to a plain daily (local-midnight) window: the anchor is now
+    always "tangu usiku wa manane wa leo" (since today's midnight), full
+    stop — no more confirm/auto-close anchor-hunting. `pending_shifts` is
+    kept (still genuinely useful — "which shift contributed how much
+    today," checkable against Shift History) but now lists every shift
+    for this station that overlaps ANY part of today's window, regardless
+    of confirm status, since confirm state no longer affects the window
+    boundary at all.
 
-    2026-08-01, same-day second follow-up: listing the pending shifts by
-    name wasn't enough — Roy compared the tile (KES 1770) against one
-    listed shift's own Shift History card (cash 100 + mpesa 770 = 870) and
-    couldn't account for the missing 900. Every pending shift now carries
-    its own `revenue` figure (computed the identical way, over its own
-    [started_at, ended_at-or-now] window, clipped to the overall anchor
-    window) so it can be checked directly against Shift History, and a new
-    `other_revenue` bucket captures whatever's left over — cash/mpesa sales
-    that happened in the window but weren't covered by any of the listed
-    shifts at all (the most common cause: the owner or an exempt manager
-    selling directly with no shift open, or a genuine gap between two
-    shifts) — so every shilling in the tile is now accounted for somewhere.
+    History, kept for context: this used to explain a confirm/auto-close
+    anchor that could span multiple days — see station_revenue_window_
+    start()'s own docstring for why that was reversed.
     """
     from .models import Shift
     now = now or timezone.now()
 
-    anchor_dt, anchor_kind, anchor_shift = _station_reset_anchor(business, is_kitchen)
-    if anchor_dt:
-        window_start = anchor_dt
-        who = anchor_shift.staff.get_full_name() or anchor_shift.staff.username
-        if anchor_kind == 'confirmed':
-            anchor_label = (
-                f"Tangu shift ya {who} ilivyothibitishwa "
-                f"{timezone.localtime(window_start).strftime('%d %b, %H:%M')}"
-            )
-        else:
-            anchor_label = (
-                f"Tangu counter hii ilivyokaa kimya kwa masaa {_SHIFT_AUTO_CLOSE_INACTIVITY_HOURS}+ "
-                f"baada ya shift ya {who} — {timezone.localtime(window_start).strftime('%d %b, %H:%M')}"
-            )
-    else:
-        earliest = (
-            Shift.objects.filter(business=business)
-            .filter(_station_q(is_kitchen))
-            .order_by('started_at')
-            .first()
-        )
-        if earliest:
-            window_start = earliest.started_at
-            anchor_label = (
-                "Bado hakuna shift iliyothibitishwa kwenye counter hii — tangu shift "
-                f"ya kwanza kabisa ({timezone.localtime(window_start).strftime('%d %b, %H:%M')})"
-            )
-        else:
-            window_start = timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
-            anchor_label = "Tangu usiku wa manane wa leo (hakuna shift bado kwenye counter hii)"
+    window_start = timezone.localtime(now).replace(hour=0, minute=0, second=0, microsecond=0)
+    anchor_label = "Tangu usiku wa manane wa leo"
 
-    pending_qs = list(
-        Shift.objects.filter(business=business, started_at__gte=window_start)
+    shifts_qs = list(
+        Shift.objects.filter(business=business)
         .filter(_station_q(is_kitchen))
-        .exclude(status='CONFIRMED')
+        .filter(Q(ended_at__isnull=True) | Q(ended_at__gte=window_start))
+        .filter(started_at__lt=now)
         .select_related('staff')
         .order_by('started_at')
     )
@@ -476,7 +419,7 @@ def station_revenue_window_info(business, is_kitchen, now=None):
 
     pending_shifts = []
     shifts_revenue_sum = 0
-    for s in pending_qs:
+    for s in shifts_qs:
         s_start = max(s.started_at, window_start)
         s_end = s.ended_at or now
         s_revenue = _window_revenue(business, is_kitchen, s_start, s_end) if s_end > s_start else 0

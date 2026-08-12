@@ -6596,3 +6596,50 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   literal reported bug reproduced end to end plus a regression lock that a genuinely-
   today sale still counts; `TransactionDateBackfillCommandTest` — dry-run, correction,
   idempotent re-run). One new migration-free management command file; no model changes.
+- Revert: "today's revenue" dashboard tiles back to a plain daily reset, matching a real
+  Till statement (2026-08-12, live design-reversal request). Immediately after confirming
+  the `Transaction.date`/`created_at` backfill had worked, Roy reported Kitchen's own tile
+  STILL showed a stale KES 600 with zero real same-day sales — traced this time to a
+  SEPARATE, correctly-working mechanism: `station_revenue_window_start()`'s confirm-
+  anchored design (built 2026-08-01/02, specifically at Roy's own earlier request, to stop
+  a station's revenue from resetting before anyone had actually signed off on the shift
+  behind it) was showing a shift confirmed hours earlier that day — working exactly as
+  designed, evidenced by his own Shift History screenshot ("Shavel Atis... CONFIRMED...
+  Imethibitishwa na Bosco — 12 Aug, 14:52"), just no longer matching what he actually
+  wanted from the number. His own words, verbatim, explaining the reversal: "regardless of
+  monsoon being 24hrs, the revenue specifically should go by day regardless of shift
+  presence, like shifts and counter cash modals are very fine as they are, but let us make
+  revenue realistic since it says today's revenue... it goes hand in hand with the way
+  Safaricom's till mpesa portal usually is whereby it usually displays revenue per day."
+  `station_revenue_window_start(business, is_kitchen, now=None)` simplified to a single
+  line — always `timezone.localtime(now).replace(hour=0, minute=0, second=0,
+  microsecond=0)` — dropping the confirm-anchor lookup (and, before that, the 2026-07-31
+  open-shift-spans-midnight extension) entirely; both prior designs' reasoning kept in the
+  docstring for context, not deleted, matching this file's own convention for a deliberate
+  reversal. `station_revenue_window_info()` follows suit: `anchor_label` is now always
+  "Tangu usiku wa manane wa leo," and the pending-shifts breakdown lists every shift
+  overlapping TODAY regardless of confirm status (dropped the `.exclude(status=
+  'CONFIRMED')` filter, since confirm state is no longer a signal for this figure at all).
+  **Deliberately, explicitly NOT touched** — Roy's own instruction, "shifts and counter
+  cash modals are very fine as they are": `till_expected_cash()` (the SEPARATE "Kiasi
+  Kinachotarajiwa Kwenye Counter Sasa" continuous-till mechanism, anchored on
+  `Shift.closing_cash_counted`/`TillCount`), and every shift open/close/confirm mechanic
+  itself — confirmed via grep that nothing in the shift-close/counter-cash code paths calls
+  either rewritten function. `home.html`'s owner-only revenue disclosure panel dropped its
+  now-meaningless "⏳ shift not yet confirmed... Nenda uthibitishe →" prompt (confirming a
+  shift no longer changes what the tile shows, so telling the owner to go confirm one was
+  actively misleading) — kept the per-shift + "other revenue" breakdown list and the
+  running total, unchanged in structure. `_station_reset_anchor()` (the now-unused confirm-
+  anchor helper) left in place as dead code rather than deleted, per this file's own
+  low-risk-cleanup discipline; two stale docstring references to it in
+  `_auto_close_expired_shifts()` were left as-is (cosmetic only). 13 pre-existing tests
+  across `StationRevenueWindowStartTest`, `StationRevenueWindowInfoTest`, and
+  `AutoCloseRevenueContinuityTest` rewritten (not just deleted) to assert the new plain-
+  daily-reset contract instead of the old confirm-anchored one, including a new explicit
+  regression lock for the literal reported bug
+  (`test_yesterdays_shift_never_appears_in_todays_breakdown`) and one confirming a
+  CONFIRMED shift no longer moves the window at all
+  (`test_confirmed_shift_does_not_change_the_window`). `HomeDashboardRevenueSurvivesMidnightTest`
+  needed no changes — it already only asserted that a sale genuinely dated today counts,
+  which stayed true under both designs. No migrations (pure function-body + template
+  change, no schema touched).

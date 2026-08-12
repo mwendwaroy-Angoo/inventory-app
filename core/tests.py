@@ -18712,21 +18712,20 @@ class AutoCloseRevenueContinuityTest(TestCase):
     auto close balances/transactional information adjusts automatically
     regardless of the auto shift close." Runs the REAL production
     auto-close path (_auto_close_expired_shifts(), not a hand-built CLOSED
-    shift) end to end and confirms the continuous till
-    (till_expected_cash — already locked in for a hand-built shift by
-    TillAnchorSkipsAutoClosedShiftTest above) comes out correct once the
-    sweep has actually run: nothing drops a sale just because the shift
-    got force-closed by the business-hours sweep instead of a deliberate
-    manual close.
+    shift) end to end and confirms nothing drops a sale, or corrupts a
+    shift's own recorded figures, just because it got force-closed by the
+    business-hours sweep instead of a deliberate manual close.
 
-    2026-08-02, same-day follow-up — Roy's own words: "the bar revenue and
-    sales could reset ... if the shift is autoclosed but in a logical
-    sense" (see _station_reset_anchor()'s docstring). Since the sweep is
-    now activity-based rather than a flat clock grace, a genuine auto-close
-    IS trustworthy enough to also reset the live revenue tile — this
-    class's window-related tests were rewritten to match that (the
-    confirm-only behaviour these tests originally locked in is now
-    "confirm OR a genuine activity-based auto-close", not confirm alone)."""
+    2026-08-12, same-day follow-up to the daily-reset reversal —
+    station_revenue_window_start() no longer anchors on confirm/auto-close
+    at all (see that function's own docstring); it's now always plain
+    local midnight, regardless of shift state. The window-continuity
+    assertions this class used to lock in (confirming or auto-closing
+    resets the tile to that moment) are gone along with that design —
+    what's left here is the still-real, still-worth-locking-in guarantee
+    that the auto-close sweep itself doesn't lose or corrupt any sales
+    data, which a plain daily revenue query would immediately expose if
+    it ever did."""
 
     def setUp(self):
         from datetime import time as _time, datetime as _datetime
@@ -18758,8 +18757,8 @@ class AutoCloseRevenueContinuityTest(TestCase):
             created_at=self.started_at + timedelta(hours=2),
         )
 
-    def test_revenue_window_resets_to_the_auto_closed_shifts_last_activity(self):
-        from core.shift_views import _auto_close_expired_shifts, station_revenue_window_start
+    def test_auto_close_does_not_delete_or_alter_yesterdays_sales(self):
+        from core.shift_views import _auto_close_expired_shifts
         result = _auto_close_expired_shifts(self.biz)
         self.assertEqual(len(result), 1)
         self.shift.refresh_from_db()
@@ -18769,54 +18768,33 @@ class AutoCloseRevenueContinuityTest(TestCase):
         expected_reset = self.started_at + timedelta(hours=2)  # the later of the two sales
         self.assertEqual(self.shift.ended_at, expected_reset)
 
-        window_start = station_revenue_window_start(self.biz, is_kitchen=False)
-        self.assertEqual(
-            window_start, expected_reset,
-            'A genuine (8h-inactivity) auto-close now resets the window to its own '
-            "last real sale — the closed shift's own sales no longer inflate "
-            '"today\'s" figure once the counter has gone truly quiet',
-        )
-
+        # Both sales must still exist, untouched, regardless of the sweep.
         total = sum(
             t.revenue() for t in Transaction.objects.filter(
-                business=self.biz, type='Issue', created_at__gte=window_start,
+                business=self.biz, type='Issue',
                 payment_method__in=['cash', 'mpesa'], item__store__is_kitchen=False,
             )
         )
-        self.assertEqual(total, 250.0, 'Only the exact last sale (the reset point itself) still counts')
+        self.assertEqual(total, 1000.0)
 
-    def test_auto_closed_shift_no_longer_appears_as_pending(self):
-        from core.shift_views import _auto_close_expired_shifts, station_revenue_window_info
-        _auto_close_expired_shifts(self.biz)
-        info = station_revenue_window_info(self.biz, is_kitchen=False)
-        self.assertEqual(
-            info['pending_shifts'], [],
-            'The auto-closed shift is now the reset anchor itself, not something '
-            'still awaiting resolution — it must not show up as pending',
-        )
-        # The reset point itself (the shift's own last sale, used as both
-        # ended_at and the new window_start) is boundary-inclusive — same
-        # >= semantics already used for a confirmed shift's confirmed_at.
-        self.assertEqual(info['total_revenue'], 250.0)
-        self.assertEqual(info['other_revenue'], 250.0)
-
-    def test_confirming_the_auto_closed_shift_resets_the_window(self):
+    def test_todays_revenue_window_is_unaffected_by_yesterdays_auto_close(self):
+        """The new plain-daily window doesn't care about shift state at
+        all — a today's-midnight-to-now query correctly excludes
+        yesterday's sales whether or not the shift touching them ever got
+        auto-closed."""
         from core.shift_views import _auto_close_expired_shifts, station_revenue_window_start
         _auto_close_expired_shifts(self.biz)
-        self.shift.refresh_from_db()
-        self.shift.status = 'CONFIRMED'
-        self.shift.confirmed_at = timezone.now()
-        self.shift.save(update_fields=['status', 'confirmed_at'])
-
         window_start = station_revenue_window_start(self.biz, is_kitchen=False)
-        self.assertEqual(window_start, self.shift.confirmed_at)
+        self.assertEqual(window_start, timezone.localtime(timezone.now()).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        ))
         total = sum(
             t.revenue() for t in Transaction.objects.filter(
                 business=self.biz, type='Issue', created_at__gte=window_start,
                 payment_method__in=['cash', 'mpesa'], item__store__is_kitchen=False,
             )
         )
-        self.assertEqual(total, 0.0, 'Confirming must clear the tile — the old sales predate the confirm moment')
+        self.assertEqual(total, 0.0, "Yesterday's sales must not count toward today's window")
 
 
 class OpeningVarianceReviewTest(TestCase):
@@ -23009,18 +22987,16 @@ class AdjustmentNoRealLossTest(TestCase):
 # ── Revenue tile survives midnight while a shift stays open (2026-08-01) ────
 
 class StationRevenueWindowStartTest(TestCase):
-    """Live request: a business closing at midnight (Monsoon Inn) saw its
-    dashboard revenue tiles reset to KES 0 the instant the calendar day
-    rolled over, even while a shift was still open and actively selling —
-    "the revenue should still continue until the business owner or manager
-    signs off." Roy's same-day follow-up clarified the exact rule: the
-    tile must only ever reset at the moment a station's shift is actually
-    CONFIRMED (Thibitisha) — never at midnight, never merely because a new
-    shift opened. station_revenue_window_start() anchors on the most
-    recently CONFIRMED shift's confirmed_at, falling back to the
-    station's earliest-ever shift (never midnight) when nothing has been
-    confirmed yet, and to plain midnight only when the station has no
-    shift record at all."""
+    """2026-08-12 live request (Roy), reversing the earlier confirm-anchored
+    design: "regardless of monsoon being 24hrs, the revenue specifically
+    should go by day regardless of shift presence... it goes hand in hand
+    with the way Safaricom's till mpesa portal usually is" — revenue tiles
+    now reset at plain local midnight, full stop, regardless of shift
+    open/close/confirm/auto-close state. The earlier confirm-anchored
+    behaviour (documented in station_revenue_window_start()'s own
+    docstring) had already caused real confusion twice; this is simpler
+    and matches what a business owner actually expects from a "today's
+    revenue" figure."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='Midnight Window Biz')
@@ -23035,13 +23011,15 @@ class StationRevenueWindowStartTest(TestCase):
         base = timezone.localtime(timezone.now()).replace(hour=0, minute=0, second=0, microsecond=0)
         return base + timedelta(days=day_offset)
 
-    def test_no_shift_at_all_falls_back_to_plain_midnight(self):
+    def test_no_shift_at_all_is_plain_midnight(self):
         from core.shift_views import station_revenue_window_start
         now = self._midnight() + timedelta(hours=1)  # 1am — just past midnight
         result = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
         self.assertEqual(result, self._midnight())
 
-    def test_open_shift_spanning_midnight_extends_window_backward(self):
+    def test_open_shift_spanning_midnight_does_not_extend_window_backward(self):
+        """A shift open since last night must NOT pull yesterday's sales
+        into today's tile — the whole point of the daily-reset design."""
         from core.shift_views import station_revenue_window_start
         shift_start = self._midnight(-1) + timedelta(hours=18)  # 6pm yesterday
         Shift.objects.create(
@@ -23051,138 +23029,56 @@ class StationRevenueWindowStartTest(TestCase):
         )
         now = self._midnight() + timedelta(hours=1)  # 1am today, shift still open
         result = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
-        self.assertEqual(result, shift_start, 'Window must extend back to when the still-open shift began, not reset at midnight')
+        self.assertEqual(result, self._midnight())
 
-    def test_closed_shift_with_no_newer_one_stays_frozen_not_reset(self):
-        """Kitchen staff closed their shift just after midnight — no NEW
-        kitchen shift has opened yet — the tile must keep reading from
-        when that shift began (so it shows the final total), not silently
-        reset to a fresh, empty midnight window."""
+    def test_confirmed_shift_does_not_change_the_window(self):
+        """Confirm state is no longer a signal at all — a CONFIRMED shift
+        from days ago has zero effect on today's window."""
         from core.shift_views import station_revenue_window_start
-        shift_start = self._midnight(-1) + timedelta(hours=18)  # 6pm yesterday
-        shift_end = self._midnight() + timedelta(minutes=15)    # 00:15 today
-        Shift.objects.create(
-            business=self.biz, store=self.kitchen_store, staff=self.staff,
-            status='CLOSED', station='kitchen', opening_float=Decimal('0'),
-            started_at=shift_start, ended_at=shift_end,
-        )
-        now = self._midnight() + timedelta(hours=1)  # 1am, after the close
-        result = station_revenue_window_start(self.biz, is_kitchen=True, now=now)
-        self.assertEqual(result, shift_start)
-
-    def test_new_shift_without_confirming_prior_does_not_reset_window(self):
-        """A NEW shift opening is NOT the reset signal — only confirming
-        the prior one is. If yesterday's shift was closed but never
-        confirmed, the window must still reach all the way back to it,
-        even after today's new shift has opened."""
-        from core.shift_views import station_revenue_window_start
-        yesterday_start = self._midnight(-1) + timedelta(hours=18)
-        yesterday_end = self._midnight() + timedelta(minutes=10)
-        Shift.objects.create(
-            business=self.biz, store=self.bar_store, staff=self.staff,
-            status='CLOSED', station='bar', opening_float=Decimal('0'),
-            started_at=yesterday_start, ended_at=yesterday_end,
-        )
-        new_shift_start = self._midnight() + timedelta(hours=9)  # 9am today
-        Shift.objects.create(
-            business=self.biz, store=self.bar_store, staff=self.staff,
-            status='OPEN', station='bar', opening_float=Decimal('0'),
-            started_at=new_shift_start,
-        )
-        now = self._midnight() + timedelta(hours=10)
-        result = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
-        self.assertEqual(
-            result, yesterday_start,
-            'Opening a new shift must not reset the window while the prior one is unconfirmed',
-        )
-
-    def test_confirming_shift_resets_window_to_confirm_time(self):
-        """The one true reset signal: tapping Thibitisha. Once a shift is
-        confirmed, the window starts from that confirm moment, not from
-        the shift's own started_at or midnight."""
-        from core.shift_views import station_revenue_window_start
-        shift_start = self._midnight(-2)
-        confirm_time = self._midnight(-1) + timedelta(hours=8)
         Shift.objects.create(
             business=self.biz, store=self.bar_store, staff=self.staff,
             status='CONFIRMED', station='bar', opening_float=Decimal('0'),
-            started_at=shift_start, ended_at=self._midnight(-1),
-            confirmed_at=confirm_time,
+            started_at=self._midnight(-2), ended_at=self._midnight(-1),
+            confirmed_at=self._midnight(-1) + timedelta(hours=8),
         )
         now = self._midnight() + timedelta(hours=1)
         result = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
-        self.assertEqual(result, confirm_time)
-
-    def test_unconfirmed_shift_spans_multiple_days_regardless_of_midnight(self):
-        """Roy's explicit wording: "regardless of continuity of sales and
-        business closing time setting." A shift left unconfirmed for
-        several days must keep the window anchored at its own start the
-        whole time — midnight crossing multiple times must not matter."""
-        from core.shift_views import station_revenue_window_start
-        shift_start = self._midnight(-3) + timedelta(hours=9)
-        Shift.objects.create(
-            business=self.biz, store=self.kitchen_store, staff=self.staff,
-            status='CLOSED', station='kitchen', opening_float=Decimal('0'),
-            started_at=shift_start, ended_at=self._midnight(-2),
-        )
-        now = self._midnight() + timedelta(hours=2)
-        result = station_revenue_window_start(self.biz, is_kitchen=True, now=now)
-        self.assertEqual(result, shift_start)
-
-    def test_most_recent_confirmation_wins_over_an_older_one(self):
-        """Two confirmed shifts on the same station — the window must
-        anchor on the LATEST confirm event, not the first one found."""
-        from core.shift_views import station_revenue_window_start
-        Shift.objects.create(
-            business=self.biz, store=self.bar_store, staff=self.staff,
-            status='CONFIRMED', station='bar', opening_float=Decimal('0'),
-            started_at=self._midnight(-3), ended_at=self._midnight(-2),
-            confirmed_at=self._midnight(-2) + timedelta(hours=1),
-        )
-        latest_confirm = self._midnight(-1) + timedelta(hours=2)
-        Shift.objects.create(
-            business=self.biz, store=self.bar_store, staff=self.staff,
-            status='CONFIRMED', station='bar', opening_float=Decimal('0'),
-            started_at=self._midnight(-2) + timedelta(hours=8), ended_at=self._midnight(-1),
-            confirmed_at=latest_confirm,
-        )
-        now = self._midnight() + timedelta(hours=1)
-        result = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
-        self.assertEqual(result, latest_confirm)
+        self.assertEqual(result, self._midnight())
 
     def test_stations_are_independent(self):
-        """Kitchen closed (frozen at its final total), bar still open
-        (still counting) — each station's window must be computed
-        independently, matching Roy's exact live scenario."""
+        """Each station's window is computed independently — both must
+        land on the exact same plain midnight regardless of either
+        station's own shift history."""
         from core.shift_views import station_revenue_window_start
-        bar_start = self._midnight(-1) + timedelta(hours=18)
         Shift.objects.create(
             business=self.biz, store=self.bar_store, staff=self.staff,
             status='OPEN', station='bar', opening_float=Decimal('0'),
-            started_at=bar_start,
+            started_at=self._midnight(-1) + timedelta(hours=18),
         )
-        kitchen_start = self._midnight(-1) + timedelta(hours=17)
-        kitchen_end = self._midnight() + timedelta(minutes=5)
         Shift.objects.create(
             business=self.biz, store=self.kitchen_store, staff=self.staff,
             status='CLOSED', station='kitchen', opening_float=Decimal('0'),
-            started_at=kitchen_start, ended_at=kitchen_end,
+            started_at=self._midnight(-1) + timedelta(hours=17),
+            ended_at=self._midnight() + timedelta(minutes=5),
         )
         now = self._midnight() + timedelta(hours=1)
         bar_window = station_revenue_window_start(self.biz, is_kitchen=False, now=now)
         kitchen_window = station_revenue_window_start(self.biz, is_kitchen=True, now=now)
-        self.assertEqual(bar_window, bar_start)
-        self.assertEqual(kitchen_window, kitchen_start)
-        self.assertNotEqual(bar_window, kitchen_window)
+        self.assertEqual(bar_window, self._midnight())
+        self.assertEqual(kitchen_window, self._midnight())
 
 
 class StationRevenueWindowInfoTest(TestCase):
     """2026-08-01 live report: Roy saw the Bar Revenue tile at KES 7300+
     with the bar counter fully closed and "no sales that side" happening,
     and said he "could not trace the cause." station_revenue_window_info()
-    is the human-facing explanation — same anchor rule as
-    station_revenue_window_start(), plus which shift(s) are still holding
-    the total open — surfaced on the home dashboard for owner/manager."""
+    is the human-facing explanation surfaced on the home dashboard for
+    owner/manager. 2026-08-12: simplified alongside the window itself
+    reverting to a plain daily reset — the anchor is now always "since
+    today's midnight," and the shift breakdown lists every shift touching
+    today's window regardless of confirm status (confirm state no longer
+    affects the window boundary, so it's no longer a meaningful filter
+    here either)."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='Window Info Biz')
@@ -23206,14 +23102,13 @@ class StationRevenueWindowInfoTest(TestCase):
         self.assertEqual(info['pending_shifts'], [])
         self.assertIn('manane', info['anchor_label'])
 
-    def test_unconfirmed_closed_shift_appears_in_pending_list(self):
+    def test_todays_shift_appears_in_breakdown_with_correct_revenue(self):
         from core.shift_views import station_revenue_window_info
-        shift_start = self._midnight(-1) + timedelta(hours=11, minutes=49)
-        shift_end = self._midnight()
+        shift_start = self._midnight() + timedelta(hours=9)
         shift = Shift.objects.create(
             business=self.biz, store=self.bar_store, staff=self.staff,
             status='CLOSED', station='bar', opening_float=Decimal('0'),
-            started_at=shift_start, ended_at=shift_end,
+            started_at=shift_start, ended_at=shift_start + timedelta(hours=3),
         )
         Transaction.objects.create(
             business=self.biz, item=self.item, type='Issue',
@@ -23226,25 +23121,42 @@ class StationRevenueWindowInfoTest(TestCase):
             created_at=shift_start + timedelta(hours=2),
         )
         info = station_revenue_window_info(self.biz, is_kitchen=False)
-        self.assertEqual(info['window_start'], shift_start)
+        self.assertEqual(info['window_start'], self._midnight())
         self.assertEqual(len(info['pending_shifts']), 1)
         self.assertEqual(info['pending_shifts'][0]['id'], shift.id)
         self.assertEqual(info['pending_shifts'][0]['staff_name'], 'Dush')
-        self.assertEqual(info['pending_shifts'][0]['status'], 'CLOSED')
         self.assertEqual(info['pending_shifts'][0]['revenue'], 870.0)
         self.assertEqual(info['total_revenue'], 870.0)
         self.assertEqual(info['other_revenue'], 0)
 
-    def test_other_revenue_bucket_captures_sales_outside_any_shift(self):
-        """The exact live gap Roy reported: a listed shift's own total
-        (870) didn't match the tile total (1770) — the missing 900 was
-        real cash/mpesa sales that happened outside that shift's own time
-        window (e.g. the owner selling directly with no shift open). The
-        breakdown must surface that remainder explicitly, not silently
-        fold it into the listed shift's own figure."""
+    def test_yesterdays_shift_never_appears_in_todays_breakdown(self):
+        """The exact reported bug: a shift (confirmed or not) from a
+        previous day must never contribute to today's figure or listing,
+        no matter how recently it was touched/confirmed."""
         from core.shift_views import station_revenue_window_info
-        shift_start = self._midnight(-1) + timedelta(hours=11, minutes=23)
-        shift_end = self._midnight(-1) + timedelta(hours=22, minutes=47)
+        shift_start = self._midnight(-1) + timedelta(hours=11)
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.staff,
+            status='CONFIRMED', station='bar', opening_float=Decimal('0'),
+            started_at=shift_start, ended_at=self._midnight(-1) + timedelta(hours=20),
+            confirmed_at=timezone.now() - timedelta(minutes=5),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('600'), payment_method='credit',
+            created_at=shift_start + timedelta(hours=1),
+        )
+        info = station_revenue_window_info(self.biz, is_kitchen=False)
+        self.assertEqual(info['pending_shifts'], [])
+        self.assertEqual(info['total_revenue'], 0)
+
+    def test_other_revenue_bucket_captures_sales_outside_any_shift(self):
+        """A listed shift's own total doesn't have to match the tile total
+        — direct sales with no shift open (owner/manager selling) must
+        surface as their own explicit bucket, not silently folded in."""
+        from core.shift_views import station_revenue_window_info
+        shift_start = self._midnight() + timedelta(hours=8)
+        shift_end = self._midnight() + timedelta(hours=10)
         shift = Shift.objects.create(
             business=self.biz, store=self.bar_store, staff=self.staff,
             status='CLOSED', station='bar', opening_float=Decimal('0'),
@@ -23259,7 +23171,7 @@ class StationRevenueWindowInfoTest(TestCase):
         Transaction.objects.create(
             business=self.biz, item=self.item, type='Issue',
             qty=Decimal('-1'), sale_amount=Decimal('770'), payment_method='mpesa',
-            created_at=shift_start + timedelta(hours=2),
+            created_at=shift_start + timedelta(hours=1, minutes=30),
         )
         # AFTER the shift ended, no shift open at all (e.g. owner selling directly)
         Transaction.objects.create(
@@ -23274,45 +23186,32 @@ class StationRevenueWindowInfoTest(TestCase):
         self.assertEqual(info['other_revenue'], 900.0)
         self.assertEqual(info['total_revenue'], 1770.0)
 
-    def test_confirmed_shift_never_appears_in_pending_list(self):
-        from core.shift_views import station_revenue_window_info
-        Shift.objects.create(
-            business=self.biz, store=self.bar_store, staff=self.staff,
-            status='CONFIRMED', station='bar', opening_float=Decimal('0'),
-            started_at=self._midnight(-1), ended_at=self._midnight(-1) + timedelta(hours=1),
-            confirmed_at=self._midnight(-1) + timedelta(hours=2),
-        )
-        info = station_revenue_window_info(self.biz, is_kitchen=False)
-        self.assertEqual(info['pending_shifts'], [])
-        self.assertIn('Dush', info['anchor_label'])
-
-    def test_home_dashboard_shows_disclosure_with_pending_shift_to_owner(self):
+    def test_home_dashboard_shows_disclosure_with_todays_shift_to_owner(self):
         from core.models import BusinessType
         bar_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
         self.biz.business_type = bar_type
         self.biz.save(update_fields=['business_type'])
-        shift_start = self._midnight(-1) + timedelta(hours=11, minutes=49)
+        shift_start = self._midnight() + timedelta(hours=9)
         Shift.objects.create(
             business=self.biz, store=self.bar_store, staff=self.staff,
             status='CLOSED', station='bar', opening_float=Decimal('0'),
-            started_at=shift_start, ended_at=self._midnight(),
+            started_at=shift_start, ended_at=shift_start + timedelta(hours=2),
         )
         self.client.force_login(self.owner)
         resp = self.client.get('/')
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'vipi hesabu hii ilipatikana')
-        self.assertContains(resp, 'Nenda uthibitishe')
 
     def test_home_dashboard_hides_disclosure_from_ordinary_staff(self):
         from core.models import BusinessType
         bar_type, _created = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
         self.biz.business_type = bar_type
         self.biz.save(update_fields=['business_type'])
-        shift_start = self._midnight(-1) + timedelta(hours=11, minutes=49)
+        shift_start = self._midnight() + timedelta(hours=9)
         Shift.objects.create(
             business=self.biz, store=self.bar_store, staff=self.staff,
             status='CLOSED', station='bar', opening_float=Decimal('0'),
-            started_at=shift_start, ended_at=self._midnight(),
+            started_at=shift_start, ended_at=shift_start + timedelta(hours=2),
         )
         self.client.force_login(self.staff)
         resp = self.client.get('/')

@@ -546,15 +546,15 @@
     </div>
 
     <!-- 2026-08-01 live report — Roy saw Bar Revenue at KES 7300+ with the bar
-         counter fully closed and no live sales, and could not tell why. The
-         figure was correct (an auto-closed, still-unconfirmed shift's whole
-         total — station_revenue_window_start() only resets on Thibitisha, not
-         at midnight or shift-close) but nothing on the dashboard explained it.
-         Same disclosure-details pattern as the continuous-till tile above,
-         plus a direct list of which shift(s) are still holding the total
-         open so it's obvious what to go confirm. Rendered only when the
-         view supplies bar_revenue_info/kitchen_revenue_info (owner/manager
-         only — see home() in core/views.py). -->
+         counter fully closed and no live sales, and could not tell why.
+         Same disclosure-details pattern as the continuous-till tile above:
+         a plain per-shift breakdown of today's revenue, so any figure here
+         is checkable directly. 2026-08-12: the window itself was simplified
+         to plain calendar-day (see station_revenue_window_start()'s own
+         docstring) — this disclosure no longer talks about confirming a
+         shift, since confirm state no longer affects what's shown. Rendered
+         only when the view supplies bar_revenue_info/kitchen_revenue_info
+         (owner/manager only — see home() in core/views.py). -->
     {% if bar_revenue_info or kitchen_revenue_info %}
     <div style="background:#1a1a1a; border:1px solid #333; border-radius:10px;
                 padding:.6rem 1rem; margin-bottom:1rem;">
@@ -564,11 +564,7 @@
             <div style="font-size:.7rem; color:#999; margin-top:.35rem; line-height:1.6;">
                 {{ bar_revenue_info.anchor_label }}
                 {% if bar_revenue_info.pending_shifts or bar_revenue_info.other_revenue %}
-                <div style="margin-top:.4rem; color:#f39c12;">
-                    ⏳ Bado {% if bar_revenue_info.pending_shifts|length == 1 %}shift moja haijathibitishwa{% else %}shift {{ bar_revenue_info.pending_shifts|length }} hazijathibitishwa{% endif %}
-                    — kiasi hiki kitaendelea kuonekana hadi ithibitishwe:
-                </div>
-                <ul style="margin:.25rem 0 0 1.1rem; padding:0;">
+                <ul style="margin:.4rem 0 0 1.1rem; padding:0;">
                     {% for sh in bar_revenue_info.pending_shifts %}
                     <li>{{ sh.staff_name }} — {{ sh.started_at|date:"d M, H:i" }}{% if sh.ended_at %} – {{ sh.ended_at|date:"H:i" }}{% endif %} ({{ sh.status }}) — <strong style="color:#ccc;">KES {{ sh.revenue|floatformat:0 }}</strong></li>
                     {% endfor %}
@@ -577,7 +573,6 @@
                     {% endif %}
                 </ul>
                 <div style="margin-top:.3rem; color:#666;">Jumla: KES {{ bar_revenue_info.total_revenue|floatformat:0 }}</div>
-                <a href="{% url 'shift_history' %}" style="color:var(--biz-accent); font-size:.7rem;">Nenda uthibitishe →</a>
                 {% endif %}
             </div>
         </details>
@@ -588,11 +583,7 @@
             <div style="font-size:.7rem; color:#999; margin-top:.35rem; line-height:1.6;">
                 {{ kitchen_revenue_info.anchor_label }}
                 {% if kitchen_revenue_info.pending_shifts or kitchen_revenue_info.other_revenue %}
-                <div style="margin-top:.4rem; color:#f39c12;">
-                    ⏳ Bado {% if kitchen_revenue_info.pending_shifts|length == 1 %}shift moja haijathibitishwa{% else %}shift {{ kitchen_revenue_info.pending_shifts|length }} hazijathibitishwa{% endif %}
-                    — kiasi hiki kitaendelea kuonekana hadi ithibitishwe:
-                </div>
-                <ul style="margin:.25rem 0 0 1.1rem; padding:0;">
+                <ul style="margin:.4rem 0 0 1.1rem; padding:0;">
                     {% for sh in kitchen_revenue_info.pending_shifts %}
                     <li>{{ sh.staff_name }} — {{ sh.started_at|date:"d M, H:i" }}{% if sh.ended_at %} – {{ sh.ended_at|date:"H:i" }}{% endif %} ({{ sh.status }}) — <strong style="color:#ccc;">KES {{ sh.revenue|floatformat:0 }}</strong></li>
                     {% endfor %}
@@ -601,7 +592,6 @@
                     {% endif %}
                 </ul>
                 <div style="margin-top:.3rem; color:#666;">Jumla: KES {{ kitchen_revenue_info.total_revenue|floatformat:0 }}</div>
-                <a href="{% url 'kitchen_shift_history' %}" style="color:#ff9800; font-size:.7rem;">Nenda uthibitishe →</a>
                 {% endif %}
             </div>
         </details>
