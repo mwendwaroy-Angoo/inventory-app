@@ -28068,7 +28068,11 @@ class QuickSellCatchUpBackdateTest(TestCase):
         txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
         self.assertGreaterEqual(txn.created_at, before)
 
-    def test_backdate_ignored_for_credit(self):
+    def test_backdated_direct_credit_sale_uses_the_given_timestamp(self):
+        # 2026-08-12 live request — "ensure that for backdating i can put
+        # customer in debt for that day... right there on the selling part":
+        # a direct Deni (credit) checkout must now honor backdated_at too,
+        # not just cash/mpesa.
         self.client.force_login(self.owner)
         resp = self.client.post('/quick-sell/', {
             'cart': json.dumps([{'id': self.item.id, 'qty': 1}]),
@@ -28078,8 +28082,25 @@ class QuickSellCatchUpBackdateTest(TestCase):
         })
         self.assertEqual(resp.status_code, 200)
         txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
-        # Credit sales ignore backdated_at entirely — created_at stays "now".
-        self.assertGreater(txn.created_at, self.yesterday + timedelta(hours=1))
+        self.assertEqual(txn.payment_method, 'credit')
+        self.assertEqual(txn.recipient, 'Mteja X')
+        self.assertEqual(timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+                          timezone.localtime(self.yesterday).strftime('%Y-%m-%d %H:%M'))
+
+    def test_backdate_ignored_for_tab(self):
+        # A Tab is an open, ongoing bill — never backdatable, unlike a direct
+        # Deni sale (which is a completed, one-shot event).
+        self.client.force_login(self.owner)
+        before = timezone.now()
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item.id, 'qty': 1}]),
+            'payment_method': 'tab', 'recipient': 'Tab Customer',
+            'backdated_at': self._iso(self.yesterday),
+            'idempotency_token': 'qsbd-3b',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
+        self.assertGreaterEqual(txn.created_at, before)
 
     def test_backdated_sale_split_payment_remainder_inherits_timestamp(self):
         self.client.force_login(self.owner)
@@ -29142,12 +29163,36 @@ class KitchenBackdatedCheckoutTest(TestCase):
             past_local.strftime('%Y-%m-%d %H:%M'),
         )
 
-    def test_backdate_ignored_for_credit(self):
+    def test_backdated_direct_credit_sale_uses_the_given_timestamp(self):
+        # 2026-08-12 live request — "ensure that for backdating i can put
+        # customer in debt for that day... right there on the selling
+        # part": a direct Deni checkout must now honor backdated_at too,
+        # same as cash/mpesa.
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        cart = _json.dumps([{'item_id': self.kuku.id, 'qty': 1, 'amount': 150, 'description': 'Kuku'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'credit', 'credit_name': 'Mary',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.payment_method, 'credit')
+        self.assertEqual(txn.recipient, 'Mary')
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
+
+    def test_backdate_ignored_for_food_tab(self):
+        # A food_tab is an open, ongoing bill — never backdatable, unlike a
+        # direct Deni sale (a completed, one-shot event).
         import json as _json
         past = (timezone.now() - timedelta(days=2)).replace(microsecond=0)
         cart = _json.dumps([{'item_id': self.kuku.id, 'qty': 1, 'amount': 150, 'description': 'Kuku'}])
         resp = self.client.post('/kitchen/', {
-            'cart': cart, 'payment_method': 'credit', 'credit_name': 'Mary',
+            'cart': cart, 'payment_method': 'food_tab', 'tab_customer': 'Mary',
             'backdated_at': past.strftime('%Y-%m-%dT%H:%M'),
         })
         self.assertTrue(resp.json().get('ok'), resp.json())
@@ -29204,6 +29249,27 @@ class KitchenBackdatedCheckoutTest(TestCase):
         self.assertTrue(resp.json().get('ok'), resp.json())
         txn = Transaction.objects.filter(business=self.biz, kitchen_batch=self.chipo_batch, type='Issue').first()
         self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+
+    def test_batch_backdated_direct_credit_sale_uses_the_given_timestamp(self):
+        # 2026-08-12 live request — Roy's literal scenario: a Chipo sale
+        # from the 7th, part mpesa + part owed by the customer. A direct
+        # Deni checkout on a batch item must now honor backdated_at too.
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=5)).replace(microsecond=0)
+        cart = _json.dumps([{'batch_id': self.chipo_batch.id, 'qty': 1, 'amount': 50, 'description': 'Chipo — Ya 50'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'credit', 'credit_name': 'Bosco',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, kitchen_batch=self.chipo_batch, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(txn.payment_method, 'credit')
+        self.assertEqual(txn.recipient, 'Bosco')
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
 
     def test_bunch_backdated_cash_sale_uses_the_given_timestamp(self):
         import json as _json

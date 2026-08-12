@@ -1800,9 +1800,10 @@
             if (pcRow) {
                 pcRow.style.display = (this.value === 'cash' || this.value === 'mpesa') ? 'block' : 'none';
             }
-            // 2026-08-07 — backdate row: same visibility rule (direct
-            // cash/mpesa only), reset whenever the method changes so a stale
-            // backdate from a previous selection never carries through.
+            // 2026-08-07 — backdate row: direct cash/mpesa/Deni sale only
+            // (2026-08-12: widened to include direct Deni — never a Tab, an
+            // open running bill), reset whenever the method changes so a
+            // stale backdate from a previous selection never carries through.
             var bdRow = document.getElementById('qsBackdateRow');
             var bdInputs = document.getElementById('qsBackdateInputs');
             var bdInput = document.getElementById('qsBackdatedAtInput');
@@ -1811,7 +1812,7 @@
             if (bdInputs) bdInputs.style.display = 'none';
             if (bdWarn) bdWarn.style.display = 'none';
             if (bdRow) {
-                bdRow.style.display = (this.value === 'cash' || this.value === 'mpesa') ? 'block' : 'none';
+                bdRow.style.display = (this.value === 'cash' || this.value === 'mpesa' || this.value === 'credit') ? 'block' : 'none';
             }
         });
     });
@@ -1946,9 +1947,10 @@
         document.getElementById('qsSplitAmountData').value = splitAmountVal;
         document.getElementById('qsSplitMethodData').value = splitMethodVal;
         // 2026-08-07 — catch-up posting: one backdated timestamp applied to
-        // the whole cart, only meaningful for a direct cash/mpesa sale.
+        // the whole cart, for a direct cash/mpesa sale or (2026-08-12 live
+        // request) a direct Deni sale — never a Tab (an open running bill).
         var backdatedAtVal = '';
-        if (pm === 'cash' || pm === 'mpesa') {
+        if (pm === 'cash' || pm === 'mpesa' || pm === 'credit') {
             var bdInputs = document.getElementById('qsBackdateInputs');
             var bdInput = document.getElementById('qsBackdatedAtInput');
             if (bdInputs && bdInputs.style.display !== 'none' && bdInput && bdInput.value) {

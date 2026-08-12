@@ -2412,14 +2412,18 @@
     if (isCashOrMpesa && splitOtherLabel) {
       splitOtherLabel.textContent = pm === 'cash' ? 'M-Pesa' : 'Cash';
     }
-    // 2026-08-09 — backdate toggle only makes sense for a direct Cash/M-Pesa
-    // sale (never Tab/Deni) — reset on every method change, same as split.
+    // 2026-08-09 — backdate toggle only makes sense for a direct, already-
+    // completed sale — Cash, M-Pesa, or (2026-08-12 live request) a direct
+    // Deni sale, straight at checkout, no separate after-the-fact
+    // correction needed. Never Tab (an open running bill). Reset on every
+    // method change, same as split.
     var bdToggleRow = document.getElementById('kb-backdate-toggle-row');
     var bdRow = document.getElementById('kb-backdate-row');
     var bdInput = document.getElementById('kb-backdated-at');
     if (bdInput) bdInput.value = '';
     if (bdRow) bdRow.style.display = 'none';
-    if (bdToggleRow) bdToggleRow.style.display = isCashOrMpesa ? 'block' : 'none';
+    var isCashMpesaOrCredit = isCashOrMpesa || pm === 'credit';
+    if (bdToggleRow) bdToggleRow.style.display = isCashMpesaOrCredit ? 'block' : 'none';
     // Trigger cross-tab check immediately if name already typed when food_tab selected
     if (pm === 'food_tab') {
       var _nameNow = document.getElementById('kb-tab-name');
@@ -2741,9 +2745,10 @@
         partialMpesaVal = document.getElementById('kb-partial-mpesa-input').value || '0';
       }
     }
-    // 2026-08-09 — catch-up posting backdated timestamp (Cash/M-Pesa only).
+    // 2026-08-09 — catch-up posting backdated timestamp (Cash/M-Pesa/Deni —
+    // 2026-08-12: widened to cover a direct Deni sale too).
     var backdatedAtVal = '';
-    if (pm === 'cash' || pm === 'mpesa') {
+    if (pm === 'cash' || pm === 'mpesa' || pm === 'credit') {
       var bdRow = document.getElementById('kb-backdate-row');
       var bdInput = document.getElementById('kb-backdated-at');
       if (bdRow && bdRow.style.display !== 'none' && bdInput && bdInput.value) {

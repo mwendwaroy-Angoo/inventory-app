@@ -3298,13 +3298,18 @@ def quick_sell(request):
         # without the slow one-item-at-a-time Add Transaction form ("no time
         # for that long process when the items are too many"). One backdated
         # timestamp applied to every plain item in THIS checkout, reusing the
-        # same fast search-and-tap cart flow staff already know. Only makes
-        # sense for a direct, already-completed cash/mpesa sale — never a
-        # Tab (an open running bill, not something "already happened") or
-        # Credit/Deni (its own separate, more sensitive flow). Same parse
-        # shape as add_transaction()'s own backdated_at.
+        # same fast search-and-tap cart flow staff already know. Makes sense
+        # for a direct, already-completed sale — cash, mpesa, OR a direct
+        # Credit/Deni sale (2026-08-12 live request: "ensure that for
+        # backdating i can put customer in debt for that day... right there
+        # on the selling part" — previously this required selling as cash
+        # first, then correcting to credit afterward via the Recent Payments
+        # "🤝 Deni" split). Deliberately still excludes 'tab' — checked via
+        # payment_method_raw, NOT payment_method_qs, since a Tab is stored
+        # with the same payment_method='credit' value once settled/converted
+        # but is an open running bill, not something "already happened".
         qs_backdated_at = None
-        if payment_method_qs in ("cash", "mpesa"):
+        if payment_method_raw in ("cash", "mpesa", "credit"):
             _bd_raw = request.POST.get("backdated_at", "").strip()
             if _bd_raw:
                 try:

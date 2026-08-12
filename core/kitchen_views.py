@@ -748,12 +748,19 @@ def _kitchen_checkout(request, up, business, is_owner):
         # toggle (2026-08-07): staff left without recording two days' worth
         # of chicken sales; the owner needs to post them under the correct
         # historical date, not today's, without polluting today's live
-        # dashboard/till figures. Gated to cash/mpesa only (never Tab/Deni —
-        # a running bill or a debt is not "already happened"), same as
-        # Quick Sell's own gate. Only applied to the plain portion-item
-        # branch below (batch/bunch record_sale() have no created_at param).
+        # dashboard/till figures. Applies to the plain portion-item, batch,
+        # and bunch branches below (all three now accept created_at).
+        #
+        # 2026-08-12 live request (Roy) — "ensure that for backdating i can
+        # put customer in debt for that day... right there on the selling
+        # part": widened to also cover a direct 'credit' (Deni) checkout —
+        # previously required selling as cash first, then correcting to
+        # credit afterward via the Recent Payments "🤝 Deni" split. Still
+        # excludes 'food_tab'/'bar_tab' — a running bill is an open,
+        # ongoing thing, not something that already "happened" on a fixed
+        # past date; those never set active_tab=None below either way.
         kb_backdated_at = None
-        if payment_method in ('cash', 'mpesa'):
+        if payment_method in ('cash', 'mpesa', 'credit'):
             _bd_raw = (request.POST.get('backdated_at') or '').strip()
             if _bd_raw:
                 try:

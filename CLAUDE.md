@@ -6392,3 +6392,42 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `_get_customer_debt_data()`'s `outstanding` figure — plus the full pre-existing
   `DirectSalePaymentSplitTest` suite re-run and confirmed passing unmodified (the
   cash/mpesa split path is completely untouched). No migrations.
+- Backdate a direct Deni sale at checkout, no split-correction step needed (2026-08-12,
+  same-day follow-up). Roy's very next ask, right after the split-to-debt feature above:
+  "ensure that for backdating i can put customer in debt for that day without it having
+  to go to sales just right there on the selling part." Quick Sell's whole-cart catch-up
+  backdate toggle (2026-08-07) and Kitchen Board's own (2026-08-09) were both deliberately
+  gated to cash/mpesa only — their own comments explicitly said "never Tab/Deni... Credit/
+  Deni [is] its own separate, more sensitive flow" — meaning a direct Deni (credit)
+  checkout had NO way to post under a historical date; the only path was to sell as cash
+  first, then use the "🤝 Deni" Recent Payments correction from the fix above. Widened
+  both counters' backdate gate to also accept `'credit'` — but carefully NOT `'tab'`/
+  `'food_tab'`/`'bar_tab'`, which remain excluded since an open running bill is an
+  ongoing thing, not something that already "happened" on a fixed past date. **Quick
+  Sell's own subtlety**: its `payment_method_qs` remaps BOTH the `'tab'` and `'credit'`
+  radio values to the stored value `'credit'` (a Tab's underlying Transaction is
+  `payment_method='credit'` until settled) — so the gate had to check the true
+  pre-remap `payment_method_raw` (`core/views.py`), not `payment_method_qs`, to tell a
+  direct Deni sale apart from an open Tab. Kitchen Board's `payment_method` is already
+  the raw, unambiguous value (`'credit'` vs `'food_tab'`/`'bar_tab'` are distinct strings
+  throughout `core/kitchen_views.py`), so no equivalent remapping issue there — its
+  `kb_backdated_at` already threads unconditionally into all three sale-creation branches
+  (plain portion-item, `KitchenBatch.record_sale`, `ProduceBunch.record_sale_locked`, all
+  three gained a `created_at` param earlier this same day) via the existing `kb_backdated_at
+  and not active_tab` check, which was already correctly `None` for a direct credit
+  checkout — so widening the initial parse gate was the only backend change needed there.
+  **Frontend had a SECOND, separate gate in both files that would have silently defeated
+  the fix if missed**: both `quick_sell.html`'s submit handler and `kitchen_board.html`'s
+  `doCheckout()` only ever READ the backdate input's value into the POST body when
+  `pm === 'cash' || pm === 'mpesa'` — the row-visibility toggle is a completely different
+  code path from what actually gets sent, so widening only the visibility rule (showing
+  the toggle button for Deni) without also widening this submit-time read would have shown
+  staff a working-looking backdate field that silently did nothing. Both fixed alongside
+  the visibility toggles. Bar Board was NOT touched — its own keg-cart checkout never had
+  ANY backdate support to begin with (only Quick Sell and Kitchen Board got that feature),
+  so this is a pre-existing, separate gap, not part of this fix. 4 tests rewritten from
+  "backdate ignored for credit" to "backdate now applies to a direct credit sale" (one
+  each for Quick Sell's plain checkout, Kitchen's plain portion-item, and a new one for
+  Kitchen's `KitchenBatch` branch — matching Roy's own literal Chipo-on-Deni scenario);
+  2 new "still ignored for an open Tab/food_tab" regression locks added alongside them so
+  the excluded case stays excluded. No migrations.
