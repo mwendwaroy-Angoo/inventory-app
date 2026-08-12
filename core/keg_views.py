@@ -1942,8 +1942,13 @@ def split_transaction_payment_method(request, txn_id):
     new_method = (request.POST.get('new_method') or '').strip()
     split_amount_raw = (request.POST.get('split_amount') or '').strip()
     reason = (request.POST.get('reason') or '').strip()
+    recipient = (request.POST.get('recipient') or '').strip()
     old_method = txn.payment_method
     old_total = float(txn.revenue())
+    # The date this ACTUAL sale happened — not today — since the original
+    # transaction may itself be a backdated catch-up entry (2026-08-12 live
+    # request: a Chipo sale from the 7th, paid partly mpesa/partly owed).
+    sale_when = timezone.localtime(txn.created_at).strftime('%d %b %Y, %H:%M')
 
     try:
         split_amount = Decimal(split_amount_raw)
@@ -1953,18 +1958,50 @@ def split_transaction_payment_method(request, txn_id):
     try:
         _orig, new_txn = Transaction.split_payment_method_locked(
             txn_id=txn.id, business=up.business, split_amount=split_amount,
-            new_method=new_method, staff_user=request.user,
+            new_method=new_method, staff_user=request.user, recipient=recipient,
         )
     except ValueError as e:
         return JsonResponse({'ok': False, 'error': str(e)}, status=400)
 
+    # 2026-08-12 live request (Roy): part of a direct sale can now be split
+    # straight to a customer's debt (e.g. Chipo — 50 mpesa + 50 owed), not
+    # just between cash/mpesa. This is recording a HISTORICAL fact (the
+    # goods already sold), so — same reasoning already established for tab
+    # conversion — no evaluate_credit() gate here; only the Customer
+    # record + confirmation SMS, dated to when the sale actually happened.
+    customer = None
+    if new_method == 'credit':
+        customer = Customer.objects.filter(business=up.business, name__iexact=recipient).first()
+        if customer is None:
+            customer = Customer.objects.create(
+                business=up.business, name=recipient, credit_approved=True,
+            )
+        if customer.phone:
+            try:
+                from .notifications import normalize_ke_phone, send_sms_notification
+                _norm = normalize_ke_phone(customer.phone)
+                if _norm:
+                    _sms = (
+                        f"Habari {customer.name},\n"
+                        f"{up.business.name}: Deni la KES {float(new_txn.revenue()):,.0f} "
+                        f"kwa \"{txn.item.description}\" (tarehe {sale_when}) limeandikwa.\n"
+                        f"Tafadhali lipa ndani ya siku {up.business.credit_window_days}."
+                    )
+                    send_sms_notification(_sms, _norm)
+            except Exception:
+                logger.exception(
+                    'split_transaction_payment_method: debt SMS failed (business=%s customer=%s)',
+                    up.business.id, customer.id,
+                )
+
     who = request.user.get_full_name() or request.user.username
     when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
-    label = {'cash': 'Cash', 'mpesa': 'M-Pesa'}
+    label = {'cash': 'Cash', 'mpesa': 'M-Pesa', 'credit': f'Deni ({recipient})'}
     message = (
-        f'✂️ {who} amegawanya malipo ya "{txn.item.description}" (jumla KES {old_total:,.0f}): '
+        f'✂️ {who} amegawanya malipo ya "{txn.item.description}" (jumla KES {old_total:,.0f}, '
+        f'iliyouzwa tarehe {sale_when}): '
         f'KES {float(_orig.revenue()):,.0f} {label.get(old_method, old_method)} + '
-        f'KES {float(new_txn.revenue()):,.0f} {label.get(new_method, new_method)} — tarehe {when}.'
+        f'KES {float(new_txn.revenue()):,.0f} {label.get(new_method, new_method)} — {when}.'
         + (f' Sababu: {reason}' if reason else '')
     )
     _notify_direct_correction(up.business, message, request.user, source=('kitchen' if is_kitchen else 'bar'))

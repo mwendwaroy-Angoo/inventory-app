@@ -16380,6 +16380,101 @@ class DirectSalePaymentSplitTest(TestCase):
             self.assertFalse(r.meta.get('payment_corrections'))
 
 
+class DirectSalePaymentSplitToDebtTest(TestCase):
+    """2026-08-12 (live request, Roy): a Chipo sale from a past day was paid
+    50 mpesa + 50 owed by the customer — no way existed to record the debt
+    half of an already-recorded direct sale. Extends
+    split_payment_method_locked/split_transaction_payment_method to accept
+    new_method='credit', requiring a recipient, with the debt correctly
+    dated to the ORIGINAL (possibly backdated) sale, not today.
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Split Debt Biz')
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='sd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='sd_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN', station='kitchen')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='SD-1', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.backdated_at = timezone.now() - timedelta(days=5)
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='mpesa',
+            created_at=self.backdated_at,
+        )
+
+    def test_model_split_to_credit_requires_recipient(self):
+        with self.assertRaises(ValueError):
+            Transaction.split_payment_method_locked(
+                txn_id=self.txn.id, business=self.biz,
+                split_amount=Decimal('50'), new_method='credit',
+            )
+
+    def test_model_split_to_credit_creates_debt_sibling_with_original_date(self):
+        orig, new_txn = Transaction.split_payment_method_locked(
+            txn_id=self.txn.id, business=self.biz,
+            split_amount=Decimal('50'), new_method='credit',
+            recipient='Bosco', staff_user=self.staff,
+        )
+        orig.refresh_from_db()
+        self.assertEqual(orig.payment_method, 'mpesa')
+        self.assertEqual(float(orig.sale_amount), 50.0)
+        self.assertEqual(new_txn.payment_method, 'credit')
+        self.assertEqual(new_txn.recipient, 'Bosco')
+        self.assertEqual(float(new_txn.sale_amount), 50.0)
+        # Debt must inherit the ORIGINAL sale's date, not today.
+        self.assertEqual(new_txn.created_at, self.backdated_at)
+
+    def test_view_splits_to_debt_creates_customer_and_receipt_reflects(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/split-payment/', {
+            'new_method': 'credit', 'split_amount': '50', 'recipient': 'Bosco',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.txn.refresh_from_db()
+        self.assertEqual(float(self.txn.sale_amount), 50.0)
+        customer = Customer.objects.get(business=self.biz, name='Bosco')
+        self.assertTrue(customer.credit_approved)
+        new_txn = Transaction.objects.filter(
+            business=self.biz, payment_method='credit', recipient='Bosco',
+        ).first()
+        self.assertIsNotNone(new_txn)
+        self.assertEqual(new_txn.created_at, self.backdated_at)
+
+    def test_view_reuses_existing_customer_case_insensitive(self):
+        Customer.objects.create(business=self.biz, name='Bosco', credit_approved=True)
+        self.client.force_login(self.staff)
+        self.client.post(f'/bar/transactions/{self.txn.id}/split-payment/', {
+            'new_method': 'credit', 'split_amount': '50', 'recipient': 'bosco',
+        })
+        self.assertEqual(Customer.objects.filter(business=self.biz, name__iexact='bosco').count(), 1)
+
+    def test_view_rejects_credit_split_without_recipient(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/split-payment/', {
+            'new_method': 'credit', 'split_amount': '50',
+        })
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), 1)
+
+    def test_debt_appears_in_customer_debt_data_dated_to_original_sale(self):
+        self.client.force_login(self.staff)
+        self.client.post(f'/bar/transactions/{self.txn.id}/split-payment/', {
+            'new_method': 'credit', 'split_amount': '50', 'recipient': 'Bosco',
+        })
+        customer = Customer.objects.get(business=self.biz, name='Bosco')
+        from core.debt_views import _get_customer_debt_data
+        data = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(float(data['outstanding']), 50.0)
+
+
 class StockTakeVarianceItemLockTest(TestCase):
     """2026-07-26 (item 6, live request): an unresolved stock-take variance on
     a SPECIFIC item blocks selling that exact item across counters — never

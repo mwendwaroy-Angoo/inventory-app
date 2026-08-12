@@ -6359,3 +6359,36 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   batches rather than only the first — plus the full pre-existing `KitchenBatchOpenBatchDrawTest`
   suite re-run and confirmed passing unmodified, proving the multi-pot scenario is still
   fully supported. No migrations.
+- Split a direct sale straight into a customer's debt, dated to the original sale
+  (2026-08-12, same-day follow-up). Roy: "there is an order for chipo that was sold on
+  7th, the customer paid 50 mpesa and 50 went to debt, so i am not sure how to backdate
+  that so what i have done is put it as mpesa then went to recent sales in the food tab
+  split it into two but then, there is no way to transfer the remainder into debt for
+  that customer for that specific day." The existing "✂️ Gawanya" split-payment
+  correction (`Transaction.split_payment_method_locked()`, 2026-07-26) only ever allowed
+  splitting between `cash` and `mpesa` — no way to route part of an already-recorded
+  direct sale to credit at all. Widened `new_method` to also accept `'credit'`, requiring
+  a new `recipient` param (the customer's name) in that case; the split-off sibling
+  transaction already copies `created_at` from the original (pre-existing behavior) — so
+  a debt split off from a BACKDATED sale is automatically, correctly backdated too,
+  answering Roy's exact question. `split_transaction_payment_method`
+  (`core/keg_views.py`) resolves/creates the `Customer` record the same safe way this
+  codebase always does (`filter(name__iexact=...).first()`, never `get_or_create` — see
+  this file's own documented `MultipleObjectsReturned` history), sets
+  `credit_approved=True` matching every other auto-created-customer call site, and sends
+  a best-effort debt-confirmation SMS worded with the ACTUAL historical sale date
+  (`sale_when`, derived from the original transaction's own `created_at`), never "today"
+  — deliberately no `evaluate_credit()` gate here, same reasoning already established for
+  tab-to-debt conversion: this is recording a historical fact (the goods already sold),
+  not originating new credit. New "🤝 Deni" button added to the Recent Payments panel's
+  direct-sales section in all three counters (`bar_board.html`, `kitchen_board.html`,
+  `quick_sell.html`, per the tabs-drawer-parity rule) next to the existing "✂️ Gawanya" —
+  two `prompt()`s (amount owed, then customer name), reusing each file's own established
+  POST helper (`post`/`qsPost`, form-encoded) and toast function. 15 new tests
+  (`DirectSalePaymentSplitToDebtTest`) — recipient required for a credit split, the debt
+  sibling's `created_at` matches the original (backdated) sale exactly, Customer
+  creation + case-insensitive reuse, rejection without a recipient leaves the original
+  transaction untouched, and the resulting debt correctly appears in
+  `_get_customer_debt_data()`'s `outstanding` figure — plus the full pre-existing
+  `DirectSalePaymentSplitTest` suite re-run and confirmed passing unmodified (the
+  cash/mpesa split path is completely untouched). No migrations.

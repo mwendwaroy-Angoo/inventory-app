@@ -3423,6 +3423,8 @@
               'style="background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:4px;color:#c9a84c;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 ' + otherLabel + '</button>' +
               '<button onclick="window.splitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
               'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
+              (e.payment_method !== 'credit' ? '<button onclick="window.splitToDebt(' + e.id + ',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
+              'style="background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.25);border-radius:4px;color:#e29aab;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🤝 Deni</button>' : '') +
               (e.payment_method !== 'credit' ? '<button onclick="window.voidDirectPayment(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
               'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🗑 Futa</button>' : '') +
               '</div>';
@@ -3577,6 +3579,41 @@
       .then(function (d) {
         if (d.ok) {
           showToast(d.message || '✓ Imegawanywa');
+          window.loadRecentPayments();
+        } else if (d.shift_required) {
+          showToast('Fungua shift kwanza.');
+        } else {
+          showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+        }
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao.'); });
+  };
+
+  // 2026-08-12 live request (Roy) — a direct sale (often a backdated catch-up
+  // entry) can be part-paid and part-owed, with no way to record the debt
+  // half before this. Debt correctly lands on the SAME historical date as
+  // the original sale (Transaction.split_payment_method_locked), not today.
+  window.splitToDebt = function (txnId, totalAmount, desc) {
+    var amtStr = prompt(
+      '"' + desc + '" — jumla KES ' + Math.round(totalAmount) + '.\n' +
+      'Ni KES ngapi ANAZODAIWA mteja (deni)? (Ile iliyobaki itabaki kama ilivyo)',
+      ''
+    );
+    if (amtStr === null) return;
+    var amt = parseFloat(amtStr);
+    if (isNaN(amt) || amt <= 0 || amt >= totalAmount) {
+      showToast('Kiasi lazima kiwe kati ya 0 na KES ' + Math.round(totalAmount) + '.');
+      return;
+    }
+    var name = prompt('Jina la mteja anayedaiwa KES ' + Math.round(amt) + '?', '');
+    if (!name || !name.trim()) { showToast('Jina la mteja linahitajika.'); return; }
+    post('/bar/transactions/' + txnId + '/split-payment/', {
+      new_method: 'credit', split_amount: amt, recipient: name.trim(), reason: 'Sehemu ya malipo ni deni',
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          showToast(d.message || '✓ Deni limeandikwa');
           window.loadRecentPayments();
         } else if (d.shift_required) {
           showToast('Fungua shift kwanza.');

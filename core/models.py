@@ -1251,7 +1251,7 @@ class Transaction(models.Model):
         return self.revenue() - self.cost()
 
     @classmethod
-    def split_payment_method_locked(cls, txn_id, business, split_amount, new_method, staff_user=None):
+    def split_payment_method_locked(cls, txn_id, business, split_amount, new_method, staff_user=None, recipient=None):
         """Split a DIRECT-sale (no tab_entry — Quick Sell/bar/kitchen walk-up
         checkout) Issue transaction's amount across two payment methods
         (2026-07-26 live request) — e.g. a KES 500 sale entered entirely as
@@ -1271,6 +1271,16 @@ class Transaction(models.Model):
 
         Returns (original_txn, new_txn). Caller must hold no prior lock —
         this acquires its own via select_for_update().
+        recipient (2026-08-12 live request, Roy — a Chipo sale from a past
+        day, KES 50 mpesa + KES 50 owed by the customer, had no way to
+        record the debt half at all): new_method may also be 'credit', in
+        which case `recipient` (the customer's name) is REQUIRED and is
+        written onto the split-off sibling transaction — same created_at-
+        copy behavior as cash/mpesa above, so the debt correctly lands on
+        the SAME historical date as the original (backdated) sale, not
+        "today". The caller (split_transaction_payment_method view) is
+        responsible for the Customer record / SMS side effects, matching
+        this method's existing scope (Transaction-level mechanics only).
         """
         from django.db import transaction as _txn
         with _txn.atomic():
@@ -1285,8 +1295,11 @@ class Transaction(models.Model):
                 raise ValueError('Muamala huu hauwezi kugawanywa — si mauzo ya moja kwa moja.')
             if txn.payment_method not in ('cash', 'mpesa'):
                 raise ValueError('Njia ya malipo ya sasa haiwezi kugawanywa.')
-            if new_method not in ('cash', 'mpesa') or new_method == txn.payment_method:
+            if new_method not in ('cash', 'mpesa', 'credit') or new_method == txn.payment_method:
                 raise ValueError('Chagua njia tofauti ya malipo kwa sehemu ya pili.')
+            recipient = (recipient or '').strip()
+            if new_method == 'credit' and not recipient:
+                raise ValueError('Jina la mteja anayedaiwa linahitajika.')
 
             original_amount = float(txn.revenue())
             split_amount = float(split_amount)
@@ -1301,7 +1314,8 @@ class Transaction(models.Model):
                 item=txn.item, business=txn.business, type='Issue',
                 qty=Decimal('0'), sale_amount=Decimal(str(round(split_amount, 2))),
                 payment_method=new_method,
-                recipient=txn.recipient, invoice_no=txn.invoice_no,
+                recipient=(recipient if new_method == 'credit' else txn.recipient),
+                invoice_no=txn.invoice_no,
                 recorded_by=staff_user or txn.recorded_by,
                 date=txn.date,
                 # created_at copied from the original (2026-08-07 fix, found
