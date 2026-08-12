@@ -611,13 +611,28 @@ def kitchen_board(request):
     # home()'s till-expected-cash disclosure.
     kitchen_revenue_lines = []
     if kitchen_store:
+        # 2026-08-12 live report (Roy) — "I backdated everything from 7th to
+        # 11th... kitchen staff has not yet made sales but the system is
+        # showing as if it had." Root cause: Transaction.date defaults to
+        # timezone.now() AT CREATION TIME (a plain model field default,
+        # completely independent of any created_at= override) — every
+        # backdated sale entered TODAY via the kb_backdated_at mechanism
+        # (2026-08-09) therefore has date=today even though created_at
+        # correctly reflects the historical date, so this query (filtering
+        # on `date`, not `created_at`) silently counted a whole week of
+        # backdated catch-up sales as if they happened right now. Fixed to
+        # use the same station_revenue_window_start()-anchored created_at
+        # window home()'s own kitchen_today_revenue tile already uses (see
+        # core/views.py) — the two tiles now can never drift apart either.
+        from core.shift_views import station_revenue_window_start
+        _window_start = station_revenue_window_start(business, is_kitchen=True)
         txns = Transaction.objects.filter(
             business=business,
             type='Issue',
-            date=timezone.localdate(),
+            created_at__gte=_window_start,
             item__store=kitchen_store,
             payment_method__in=['cash', 'mpesa', 'credit'],
-        ).exclude(invoice_no='[SVQ]').select_related('item', 'preset').order_by('-created_at')
+        ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item', 'preset').order_by('-created_at')
         for t in txns:
             rev = Decimal(str(t.revenue()))
             if t.payment_method == 'credit':
@@ -1051,7 +1066,10 @@ def _kitchen_checkout(request, up, business, is_owner):
                 recipient=txn_recipient,
                 recorded_by=request.user,
                 preset=sale_preset,
-                **({'created_at': kb_backdated_at} if kb_backdated_at and not active_tab else {}),
+                # See ProduceBunch.record_sale()'s 2026-08-12 comment —
+                # Transaction.date defaults independently of created_at.
+                **({'created_at': kb_backdated_at, 'date': timezone.localtime(kb_backdated_at).date()}
+                   if kb_backdated_at and not active_tab else {}),
             )
             if active_tab:
                 BarTabEntry.objects.create(
@@ -2671,13 +2689,18 @@ def kitchen_stats_api(request):
     revenue_today = Decimal('0')
     revenue_credit = Decimal('0')
     if kitchen_store:
+        # 2026-08-12 — same date-vs-created_at fix as kitchen_board()'s own
+        # initial render (see that view's detailed comment); this is the
+        # LIVE poll refreshing the same "🍽 Leo" tile, must stay consistent.
+        from core.shift_views import station_revenue_window_start
+        _window_start = station_revenue_window_start(business, is_kitchen=True)
         txns = Transaction.objects.filter(
             business=business,
             type='Issue',
-            date=timezone.localdate(),
+            created_at__gte=_window_start,
             item__store=kitchen_store,
             payment_method__in=['cash', 'mpesa', 'credit'],
-        ).exclude(invoice_no='[SVQ]').select_related('item')
+        ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
         for t in txns:
             rev = Decimal(str(t.revenue()))
             if t.payment_method == 'credit':

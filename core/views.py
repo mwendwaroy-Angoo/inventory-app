@@ -3591,7 +3591,12 @@ def quick_sell(request):
                 recipient=credit_recipient if payment_method_qs == "credit" else "",
                 recorded_by=request.user,
                 preset=sale_preset,
-                **({"created_at": qs_backdated_at} if qs_backdated_at else {}),
+                # 2026-08-12 live report (Roy) — Transaction.date defaults to
+                # timezone.now() AT CREATION TIME, independent of any
+                # created_at= override, so a backdated sale with no matching
+                # date= silently kept date=today, wrongly showing up in every
+                # date=-filtered "today's revenue" query. Set both together.
+                **({"created_at": qs_backdated_at, "date": timezone.localtime(qs_backdated_at).date()} if qs_backdated_at else {}),
             )
             created_txn_ids.append(last_transaction.id)
             recorded.append(

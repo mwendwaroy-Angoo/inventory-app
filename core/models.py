@@ -3967,7 +3967,14 @@ class ProduceBunch(models.Model):
             recipient=recipient or '',
             produce_bunch=self,
             recorded_by=recorded_by,
-            **({'created_at': created_at} if created_at else {}),
+            # 2026-08-12 live report (Roy) — Transaction.date defaults to
+            # timezone.now() AT CREATION TIME, completely independent of any
+            # created_at= override, so a backdated sale with no matching
+            # date= silently kept date=today — every `date=`-filtered
+            # "today's revenue" query (Kitchen Board's own "Leo" tile, the
+            # daily summary email, etc.) then wrongly counted it. Set both
+            # together so they can never drift apart.
+            **({'created_at': created_at, 'date': timezone.localtime(created_at).date()} if created_at else {}),
         )
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
         if self.opened_on is None:
@@ -5844,7 +5851,11 @@ class KitchenBatch(models.Model):
             recipient=recipient or '',
             kitchen_batch=self,
             recorded_by=recorded_by,
-            **({'created_at': created_at} if created_at else {}),
+            # See ProduceBunch.record_sale()'s identical 2026-08-12 comment —
+            # Transaction.date defaults independently of created_at, so both
+            # must be set together or a backdated batch sale silently keeps
+            # date=today.
+            **({'created_at': created_at, 'date': timezone.localtime(created_at).date()} if created_at else {}),
         )
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
         if preset:
@@ -5931,7 +5942,10 @@ class KitchenBatch(models.Model):
                     qty=-draw_qty,
                     recipient=f'Kitchen batch: {item.description}'[:200],
                     recorded_by=recorded_by,
-                    **({'created_at': draw_created_at} if draw_created_at else {}),
+                    # See ProduceBunch.record_sale()'s 2026-08-12 comment —
+                    # avg_daily_issues() reads type__in=['Issue','Draw'], so a
+                    # backdated draw needs the same date/created_at sync.
+                    **({'created_at': draw_created_at, 'date': timezone.localtime(draw_created_at).date()} if draw_created_at else {}),
                 )
                 source_qty = draw_qty
             else:

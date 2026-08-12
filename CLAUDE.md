@@ -6550,3 +6550,49 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   thread that might not have run yet; patching the wrapper itself keeps the test
   deterministic. Full 1810-test suite (plus these additions) run clean before push. No
   migrations.
+- Fix: backdated sales silently counted as "today's" revenue — Transaction.date vs
+  created_at drift (2026-08-12, live report). Roy: "I backdated everything from 7th to
+  11th... kitchen staff has not yet made sales but the system is showing as if it had."
+  Root cause: `Transaction.date` (`models.DateField(default=timezone.now)`) and
+  `Transaction.created_at` (`models.DateTimeField(default=timezone.now)`) are two
+  INDEPENDENTLY-defaulted fields meant to represent the same moment — in the ordinary
+  case both evaluate `timezone.now()` at the same instant and naturally agree, but every
+  backdating feature built this session (Quick Sell's whole-cart catch-up toggle
+  2026-08-07, Kitchen Board's own portion/batch/bunch backdate 2026-08-09, and today's
+  direct-Deni backdate widening) only ever overrode `created_at=` — `date` kept its own
+  independent default of "today, the actual day it was entered," silently diverging from
+  the historical date `created_at` correctly represented. Kitchen Board's own "Leo"
+  (today) revenue tile — `kitchen_revenue_today`/`kitchen_revenue_lines` in
+  `kitchen_board()`, plus its live-poll sibling `kitchen_stats_api()` — filtered on
+  `date=timezone.localdate()`, not `created_at`, so a whole week of backdated catch-up
+  sales entered today all silently counted as if they'd just happened. **Two-layer fix**:
+  (1) READ side — both queries switched from `date=` to the same `created_at__gte=
+  station_revenue_window_start(business, is_kitchen=True)` window `home()`'s own
+  dashboard tile already uses (`core/views.py`) — the two now can never show different
+  numbers either, closing a smaller pre-existing inconsistency for free; also added the
+  `.exclude(payment_method='void')` `home()`'s version already had but this hand-rolled
+  query was missing. (2) WRITE side, the actual root-cause fix — every backdating call
+  site now sets `date=timezone.localtime(created_at).date()` alongside `created_at=`, so
+  the two fields can never drift apart again for any NEW transaction: `ProduceBunch.
+  record_sale()`, `KitchenBatch.record_sale()`, `KitchenBatch.open_batch()`'s raw-
+  material Draw transaction (all `core/models.py`), Quick Sell's checkout
+  (`core/views.py`), and Kitchen Board's own plain portion-item checkout
+  (`core/kitchen_views.py`). Confirmed by direct trace that `split_payment_method_
+  locked()` (the "✂️ Gawanya"/"🤝 Deni" split-payment corrections) was ALREADY correct —
+  it copies `date=orig_txn.date` alongside `created_at=orig_txn.created_at`, so a split
+  off an already-correctly-dated transaction stays correct automatically. **Backfill for
+  historical rows** (every backdated transaction entered before this fix, across every
+  business on the platform, not just Kitchen — the same field is read by `daily_sales()`
+  (`/daily/`, an explicit date-picker report where `date` genuinely is the right field to
+  filter on, unlike Kitchen Board's live tile) and the emailed daily summary
+  (`send_daily_summary()`), both of which would show a historical backdated entry under
+  the WRONG day until corrected): new `backfill_transaction_date_from_created_at`
+  management command, same `--dry-run`-first convention as every other backfill in this
+  app, corrects `Transaction.date` to match `timezone.localtime(created_at).date()` for
+  every row where the two currently disagree (found via direct code trace that no
+  application code anywhere intentionally sets them to different values — the drift is
+  purely this bug, not a deliberate design choice) — safe to re-run, platform-wide, run
+  once via Render's Shell tab. 8 new tests (`TransactionDateCreatedAtSyncTest` — the
+  literal reported bug reproduced end to end plus a regression lock that a genuinely-
+  today sale still counts; `TransactionDateBackfillCommandTest` — dry-run, correction,
+  idempotent re-run). One new migration-free management command file; no model changes.

@@ -32115,3 +32115,172 @@ class NotificationAsyncDispatchTest(TestCase):
             # or is affected by the background send's own failure.
             notifications.send_sms_notification_async('hi', '0712345678')
             time.sleep(0.1)
+
+
+class TransactionDateCreatedAtSyncTest(TestCase):
+    """2026-08-12 live report (Roy): "I backdated everything from 7th to
+    11th... kitchen staff has not yet made sales but the system is showing
+    as if it had." Root cause: Transaction.date defaults to timezone.now()
+    AT CREATION TIME — a plain, independently-defaulted DateField,
+    completely decoupled from any created_at= override — so every
+    backdated sale (Quick Sell 2026-08-07, Kitchen Board 2026-08-09/12)
+    silently kept date=today even though created_at correctly reflected
+    the historical date. Kitchen Board's own "Leo" tile filtered on `date`,
+    not `created_at`, so a week of backdated catch-up sales all counted as
+    if they'd just happened. Fixed at both the write side (every backdating
+    call site now sets date= alongside created_at=) and the read side
+    (Kitchen Board's tile now uses the same created_at-anchored window
+    home()'s dashboard already uses)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Date Sync Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='dsync_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kuku = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='DSYNC-KUKU', unit='Pcs', selling_price=Decimal('150'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('10'))
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='DSYNC-CHIPO', unit='Batch', selling_price=Decimal('100'),
+            is_kitchen_batch=True,
+        )
+        self.chipo_batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            cost_total=Decimal('1000'), status='OPEN', recorded_by=self.owner,
+        )
+        self.smokies = Item.objects.create(
+            business=self.biz, store=self.store, description='Smokies',
+            material_no='DSYNC-SMOKIES', unit='Batch', selling_price=Decimal('40'),
+            is_produce=True, produce_mode='BUNCH',
+        )
+        self.bunch = ProduceBunch.objects.create(
+            item=self.smokies, business=self.biz, size='LARGE',
+            cost_price=Decimal('300'), target_revenue=Decimal('500'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_backdated_portion_sale_date_matches_created_at(self):
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=5)).replace(microsecond=0)
+        cart = _json.dumps([{'item_id': self.kuku.id, 'qty': 1, 'amount': 150, 'description': 'Kuku'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
+        self.assertEqual(txn.date, past_local.date())
+
+    def test_backdated_batch_sale_date_matches_created_at(self):
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=5)).replace(microsecond=0)
+        cart = _json.dumps([{'batch_id': self.chipo_batch.id, 'qty': 1, 'amount': 100, 'description': 'Chipo — Ya 100'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, kitchen_batch=self.chipo_batch, type='Issue').first()
+        self.assertEqual(txn.date, past_local.date())
+
+    def test_backdated_bunch_sale_date_matches_created_at(self):
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=5)).replace(microsecond=0)
+        cart = _json.dumps([{'bunch_id': self.bunch.id, 'qty': 1, 'amount': 40, 'description': 'Smokies — Ya 40'}])
+        resp = self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn = Transaction.objects.filter(business=self.biz, produce_bunch=self.bunch, type='Issue').first()
+        self.assertEqual(txn.date, past_local.date())
+
+    def test_kitchen_leo_tile_excludes_backdated_sale_entered_today(self):
+        """The literal reported bug: a sale backdated to 5 days ago, entered
+        right now (today), must NOT count toward Kitchen Board's own live
+        "Leo" (today) revenue tile."""
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=5)).replace(microsecond=0)
+        cart = _json.dumps([{'item_id': self.kuku.id, 'qty': 1, 'amount': 150, 'description': 'Kuku'}])
+        self.client.post('/kitchen/', {
+            'cart': cart, 'payment_method': 'cash',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+        })
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.context['kitchen_revenue_today'], 0)
+
+        resp2 = self.client.get('/kitchen/stats/')
+        self.assertEqual(resp2.json()['revenue_today'], 0.0)
+
+    def test_kitchen_leo_tile_still_shows_a_genuinely_todays_sale(self):
+        """Regression lock — the fix must not also hide a REAL today sale."""
+        import json as _json
+        cart = _json.dumps([{'item_id': self.kuku.id, 'qty': 1, 'amount': 150, 'description': 'Kuku'}])
+        self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.context['kitchen_revenue_today'], 150.0)
+
+
+class TransactionDateBackfillCommandTest(TestCase):
+    """Backfill for historical rows created before the 2026-08-12
+    date/created_at sync fix — corrects Transaction.date to match
+    created_at for every row that still disagrees."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Backfill Date Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Widget',
+            material_no='BFD-1', unit='pcs', selling_price=Decimal('100'),
+        )
+
+    def test_dry_run_reports_but_does_not_change(self):
+        from django.core.management import call_command
+        import io
+        past = timezone.now() - timedelta(days=5)
+        drifted = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash', created_at=past,
+        )
+        self.assertNotEqual(drifted.date, past.date())
+        out = io.StringIO()
+        call_command('backfill_transaction_date_from_created_at', '--dry-run', stdout=out)
+        drifted.refresh_from_db()
+        self.assertNotEqual(drifted.date, timezone.localtime(past).date())
+        self.assertIn('DRY RUN', out.getvalue())
+
+    def test_corrects_drifted_rows(self):
+        from django.core.management import call_command
+        import io
+        past = timezone.now() - timedelta(days=5)
+        drifted = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash', created_at=past,
+        )
+        already_correct = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('5'),
+        )
+        out = io.StringIO()
+        call_command('backfill_transaction_date_from_created_at', stdout=out)
+        drifted.refresh_from_db()
+        already_correct.refresh_from_db()
+        self.assertEqual(drifted.date, timezone.localtime(past).date())
+        # Untouched row's date must not have been perturbed.
+        self.assertEqual(already_correct.date, timezone.localtime(already_correct.created_at).date())
+        self.assertIn('Corrected 1 transaction', out.getvalue())
+
+    def test_rerun_is_a_no_op(self):
+        from django.core.management import call_command
+        import io
+        past = timezone.now() - timedelta(days=5)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash', created_at=past,
+        )
+        call_command('backfill_transaction_date_from_created_at', stdout=io.StringIO())
+        out2 = io.StringIO()
+        call_command('backfill_transaction_date_from_created_at', stdout=out2)
+        self.assertIn('Corrected 0 transaction', out2.getvalue())
