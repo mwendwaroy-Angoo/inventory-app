@@ -31,7 +31,26 @@ services:
     runtime: python
     plan: free
     buildCommand: "./build.sh"
-    startCommand: "gunicorn stockapp.wsgi:application --workers 1 --threads 8 --worker-class gthread --timeout 120 --log-file -"
+    # 2026-08-12 live incident — bumped 1 worker → 2 (8 threads each, 16
+    # total). Root cause: every SMS send (core/notifications.py, ~80 call
+    # sites, mostly synchronous in the request path) uses the Africa's
+    # Talking SDK's own default timeout of up to ~12s (3s connect + 9s
+    # read — confirmed via africastalking.Service.DEFAULT_TIMEOUT_S). With
+    # only 1 worker (8 threads total) serving everything — page loads,
+    # checkouts, SMS sends, AND Render's own /health/ check — a burst of a
+    # few SMS-triggering actions landing close together could occupy every
+    # thread for up to 12s each, leaving none free to answer the health
+    # check inside its 5s window → "HTTP health check failed (timed out
+    # after 5 seconds)" → Render restarts the instance → a brief 502.
+    # Doubling workers doubles the buffer against this exact scenario.
+    # STILL A STOPGAP, not the real fix — the proper fix is making every
+    # SMS send truly non-blocking (background thread, same pattern
+    # notify_transaction_async() already uses), planned as its own
+    # dedicated, carefully-tested follow-up sprint. REMINDER (per this
+    # file's own drift warning above): this line alone does NOT change
+    # production — the Render dashboard's Start Command field is the
+    # actual source of truth and must be updated there too.
+    startCommand: "gunicorn stockapp.wsgi:application --workers 2 --threads 8 --worker-class gthread --timeout 120 --log-file -"
     healthCheckPath: /health/
     preDeployCommand: "python manage.py migrate --noinput"
     envVars:
