@@ -31993,3 +31993,39 @@ class WaitressConvertToDebtPermissionTest(TestCase):
         self.assertFalse(
             BarTab.objects.filter(business=self.biz, customer_name='Waitress New Credit').exists()
         )
+
+
+class NotificationTimeoutTest(TestCase):
+    """2026-08-12 live incident — every SMS/email send previously used the
+    SDK's own generous default timeout (AT ~12s worst case, Resend 30s),
+    letting a burst of a few notification-triggering actions occupy every
+    available gunicorn thread long enough to miss Render's /health/ check.
+    Both send_sms_notification() and send_email_notification() now pass an
+    explicit, much shorter timeout — verify it's actually threaded through
+    to the underlying SDK call, not just documented in a comment."""
+
+    def test_sms_send_passes_shortened_timeout(self):
+        from core import notifications
+        with patch('africastalking.initialize'), \
+             patch('africastalking.SMS') as mock_sms:
+            mock_sms.send.return_value = {
+                'SMSMessageData': {'Recipients': [{'status': 'Success'}]}
+            }
+            ok, detail = notifications.send_sms_notification('hi', '0712345678')
+        self.assertTrue(ok)
+        mock_sms.send.assert_called_once()
+        _, kwargs = mock_sms.send.call_args
+        self.assertEqual(kwargs.get('timeout'), (3, 5))
+
+    def test_email_send_uses_shortened_timeout_client(self):
+        from core import notifications
+        from django.test import override_settings
+        with override_settings(RESEND_API_KEY='test-key'):
+            with patch('resend.Emails.send') as mock_send:
+                mock_send.return_value = {'id': 'abc'}
+                ok = notifications.send_email_notification(
+                    'x@example.com', 'Subject', '<p>Hi</p>',
+                )
+        self.assertTrue(ok)
+        import resend
+        self.assertEqual(resend.default_http_client._timeout, 8)

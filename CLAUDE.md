@@ -6464,3 +6464,37 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   Procfile/render.yaml change does NOT by itself change what's running in production; Roy
   must also update the Render dashboard's own Start Command field to match (worker count
   1 → 2), same as he had to do for the original thread-count fix.
+- Same-incident follow-up (2026-08-12) — shortened SMS/email network timeouts. Roy
+  approved going further than the worker bump alone. Inspected both SDKs directly rather
+  than guessing: Africa's Talking (`africastalking.Service.DEFAULT_TIMEOUT_S`) defaults to
+  `(3.05, 9.05)`s — confirmed the ~12s worst-case figure already cited in this file's own
+  incident writeup. Resend's default HTTP client (`resend.http_client_requests.
+  RequestsClient.__init__(timeout=30)`) turned out to be a WORSE, previously-undiscovered
+  risk — a single slow email send could block a thread for up to 30 seconds, six times
+  Render's 5-second health-check window, on its own. Both `send_sms_notification()` and
+  `send_email_notification()` (`core/notifications.py`) now pass an explicit, much
+  shorter timeout to the underlying SDK call — SMS to `(3, 5)` (≈8s worst case, down from
+  ~12s) via `sms.send(..., timeout=(3, 5))`, email to `8` seconds (down from 30s) via
+  `resend.default_http_client = RequestsClient(timeout=8)`. Deliberately safe: audited all
+  81 `send_sms_notification()` call sites first and found only 2 (`debt_views.py`'s
+  `send_debt_reminder`, `receipt_views.py`'s receipt-share SMS) actually read the
+  `(success, detail)` return value to shape an immediate user-facing response — both are
+  deliberate, low-frequency, user-initiated "send now" taps (not automatic side-effects
+  fired during every checkout), left completely untouched; every other call site already
+  treats a failure as best-effort (logged, never blocks the main flow), so failing a bit
+  faster on a genuinely slow/unreachable endpoint is a pure improvement, not a behavior
+  change anywhere. Deliberately did NOT touch M-Pesa/Daraja's own `requests` timeouts
+  (`core/mpesa.py`, 15-30s, already explicit) — those are synchronous, user-initiated
+  payment flows where the whole feature legitimately depends on waiting for Safaricom's
+  response; shortening them is a different, higher-stakes tradeoff outside this fix's
+  scope. Also deliberately did NOT attempt the fuller "make every SMS send truly
+  non-blocking via a background thread" version of the fix — traced why that's riskier
+  than it looks: `notify_transaction_async()`'s existing background-thread pattern is
+  already the suspected source of the recurring, mostly-harmless "database table is
+  locked" tracebacks visible in this project's own test-suite output (a background thread
+  querying the DB while the test's own wrapping transaction is still open) — doing the
+  same for the other ~79 call sites would meaningfully amplify that test-suite flakiness
+  risk for a live, money-critical app, and deserves its own dedicated, carefully-tested
+  pass rather than a blanket same-incident sweep. 2 new tests
+  (`NotificationTimeoutTest`) — mock-verify the shortened timeout is actually threaded
+  through to each SDK call, not just documented in a comment. No migrations.

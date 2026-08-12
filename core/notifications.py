@@ -152,7 +152,13 @@ def notify_transaction_async(transaction_id, business_id, daily_count=0, user_id
 
 
 def send_email_notification(to_email, subject, html_message, text_message=None):
-    """Send email via Resend API — works on Render free tier (HTTPS, not SMTP)."""
+    """Send email via Resend API — works on Render free tier (HTTPS, not SMTP).
+
+    2026-08-12 live incident — same root cause as send_sms_notification()'s
+    own timeout tightening: Resend's default HTTP client timeout is 30s
+    (resend.http_client_requests.RequestsClient's own default), an even
+    bigger worst-case thread-blocking risk than SMS's ~12s. Every call
+    site treats an email failure as best-effort — shortened here too."""
     from django.conf import settings as _settings
     api_key = getattr(_settings, 'RESEND_API_KEY', '') or ''
     if not api_key:
@@ -162,7 +168,9 @@ def send_email_notification(to_email, subject, html_message, text_message=None):
         return False
     try:
         import resend
+        from resend.http_client_requests import RequestsClient
         resend.api_key = api_key
+        resend.default_http_client = RequestsClient(timeout=8)
         params = {
             'from': _settings.DEFAULT_FROM_EMAIL,
             'to': [to_email],
@@ -180,7 +188,19 @@ def send_email_notification(to_email, subject, html_message, text_message=None):
 
 
 def send_sms_notification(message, phone_number):
-    """Returns (success: bool, detail: str). detail is the AT error on failure, '' on success."""
+    """Returns (success: bool, detail: str). detail is the AT error on failure, '' on success.
+
+    2026-08-12 live incident — the AT SDK's own default timeout is
+    (3.05, 9.05)s (connect, read), so a single call could legitimately
+    block its calling thread for up to ~12s. With this app's own
+    single-gunicorn-worker-process history, a burst of a few SMS-
+    triggering actions landing close together could occupy every
+    available thread long enough to miss Render's /health/ check inside
+    its 5s window — causing a brief 502 while Render restarts the
+    instance. Shortened to (3, 5) ≈ 8s worst case — every existing call
+    site already treats an SMS failure as best-effort (logged, never
+    blocks user-facing logic), so failing a bit faster on a genuinely
+    slow/unreachable AT endpoint is a pure win, not a behavior change."""
     if not phone_number:
         return False, 'no_phone'
     original_phone = phone_number
@@ -195,7 +215,7 @@ def send_sms_notification(message, phone_number):
             username=settings.AT_USERNAME, api_key=settings.AT_API_KEY
         )
         sms = africastalking.SMS
-        response = sms.send(message, [phone_number])
+        response = sms.send(message, [phone_number], timeout=(3, 5))
         # Check per-recipient status in case AT accepted the call but rejected the number
         recipients = (response or {}).get('SMSMessageData', {}).get('Recipients', [])
         if recipients:
