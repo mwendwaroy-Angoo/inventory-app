@@ -6431,3 +6431,36 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   Kitchen's `KitchenBatch` branch — matching Roy's own literal Chipo-on-Deni scenario);
   2 new "still ignored for an open Tab/food_tab" regression locks added alongside them so
   the excluded case stays excluded. No migrations.
+- Live 502 investigation, third occurrence — root cause finally identified with hard
+  evidence (2026-08-12). Roy hit the same "HTTP health check failed (timed out after 5
+  seconds)" signature as the two prior incidents (2026-08-09, 2026-08-11), this time
+  clearly unrelated to a deploy (the last deploy had been live and stable for 5 hours).
+  Investigated the SMS-blocking-request-threads theory this session's own history had
+  already flagged as a candidate but never confirmed with numbers: inspected the installed
+  `africastalking` SDK directly (`africastalking.Service.DEFAULT_TIMEOUT_S`) and confirmed
+  its HTTP calls carry a real, built-in timeout of `(3.05, 9.05)` seconds
+  (connect, read) — so a single `send_sms_notification()` call can legitimately block its
+  calling thread for up to ~12 seconds before giving up. Grepped for call sites: ~81 across
+  the codebase, the large majority synchronous in the request path (only
+  `notify_transaction_async()`'s own background-thread dispatch is truly non-blocking).
+  Cross-checked the actual deployed gunicorn config (`Procfile`/`render.yaml`, confirmed
+  matching the real dashboard Start Command Roy fixed on 2026-08-09/10) — still
+  `--workers 1 --threads 8`, meaning ONE process, 8 total threads, serving every page load,
+  every checkout, every SMS send, AND Render's own `/health/` check simultaneously. A burst
+  of just a handful of SMS-triggering actions landing close together (debt confirmations,
+  cash-payment-request notices, shift alerts — all real, common events on a busy shift) can
+  occupy every one of those 8 threads for up to 12 seconds each, leaving none free to answer
+  the health check inside its 5-second window — Render marks the instance unhealthy,
+  restarts it, and the customer sees a 502 for the ~30-60s it takes to recover (matching the
+  "Instance failed" → "Service recovered" pair in Roy's own Events log screenshot exactly).
+  **Fix applied (stopgap, Roy approved)**: bumped `--workers` 1 → 2 in both `Procfile` and
+  `render.yaml` (16 total threads across 2 independent processes instead of 8 in one) —
+  doubles the buffer against this exact failure shape with zero application-code risk.
+  Explicitly flagged as NOT the real fix — that's making every SMS send genuinely
+  non-blocking (same background-thread pattern `notify_transaction_async()` already proves
+  works), which touches ~80 call sites and needs its own dedicated, carefully-tested pass,
+  not a same-session rush. **Reminder for next time this recurs**: per the SAME config-drift
+  warning already documented in `render.yaml`'s header comment (2026-08-09/10) — this
+  Procfile/render.yaml change does NOT by itself change what's running in production; Roy
+  must also update the Render dashboard's own Start Command field to match (worker count
+  1 → 2), same as he had to do for the original thread-count fix.
