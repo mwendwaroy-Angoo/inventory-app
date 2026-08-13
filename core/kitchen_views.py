@@ -1979,10 +1979,31 @@ def tab_check_api(request):
             similar_names.append(other_name)
             seen_lower.add(other_lower)
 
+    # 2026-08-13 live request (Roy) — "Bosco" the debt customer IS the
+    # owner Bosco, and staff typing a customer name at checkout should be
+    # warned when it's the SAME (exact) name as a linked owner alias, or
+    # merely SIMILAR (a genuinely different person could share the owner's
+    # first name — never silently assume). Deliberately never auto-
+    # redirects the sale itself (see Customer.is_owner_alias's own
+    # docstring on why this stays a staff/owner-confirmed action, never a
+    # live checkout-time interception) — this is purely an informational
+    # hint, same non-blocking spirit as the similar_names check above.
+    owner_alias_match = None
+    alias_customers = Customer.objects.filter(business=up.business, is_owner_alias=True)
+    for ac in alias_customers:
+        ac_lower = ac.name.lower()
+        if ac_lower == name_lower:
+            owner_alias_match = {'exact': True, 'name': ac.name}
+            break
+        if ac_lower.startswith(name_lower[:4]) or name_lower.startswith(ac_lower[:4]):
+            owner_alias_match = {'exact': False, 'name': ac.name}
+            # keep scanning in case a later alias is an EXACT match instead
+
     return JsonResponse({
         'tabs': result,
         'prior_debt': prior_debt,
         'similar_names': similar_names[:5],  # cap at 5
+        'owner_alias_match': owner_alias_match,
     })
 
 

@@ -28275,7 +28275,7 @@ class OwnerConsumptionTransferTest(TestCase):
         self.client.force_login(self.staff)
         resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
         self.assertTrue(resp.json()['ok'], resp.json())
-        req_id = resp.json()['request_id']
+        req_id = resp.json()['request_ids'][0]
 
         self.client.force_login(self.owner)
         resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
@@ -28292,7 +28292,7 @@ class OwnerConsumptionTransferTest(TestCase):
         txn = self._make_debt_txn()
         self.client.force_login(self.staff)
         resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
-        req_id = resp.json()['request_id']
+        req_id = resp.json()['request_ids'][0]
 
         self.client.force_login(self.owner)
         resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'reject'})
@@ -28311,7 +28311,7 @@ class OwnerConsumptionTransferTest(TestCase):
 
         self.client.force_login(self.staff)
         resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
-        req_id = resp.json()['request_id']
+        req_id = resp.json()['request_ids'][0]
         self.client.force_login(self.owner)
         self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
 
@@ -28321,7 +28321,7 @@ class OwnerConsumptionTransferTest(TestCase):
         txn = self._make_debt_txn()
         self.client.force_login(self.staff)
         resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
-        req_id = resp.json()['request_id']
+        req_id = resp.json()['request_ids'][0]
         resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
         self.assertEqual(resp2.status_code, 403)
         txn.refresh_from_db()
@@ -28331,7 +28331,7 @@ class OwnerConsumptionTransferTest(TestCase):
         txn = self._make_debt_txn()
         self.client.force_login(self.staff)
         resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
-        req_id = resp.json()['request_id']
+        req_id = resp.json()['request_ids'][0]
         self.client.force_login(self.manager)
         resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
         self.assertTrue(resp2.json()['ok'], resp2.json())
@@ -28419,6 +28419,338 @@ class OwnerConsumptionTransferTest(TestCase):
         resp = self.client.get('/stock/owner-consumption/list/')
         self.assertContains(resp, 'Vinavyosubiri Uamuzi Wako')
         self.assertContains(resp, 'Mary')
+
+    def test_propose_to_owner_bulk_multiple_ids_batched(self):
+        """2026-08-13 — propose_to_owner_locked widened to accept several
+        ids at once, batched under one batch_id so accept/reject resolves
+        them all as one decision (mirroring the from_owner direction's
+        existing whole-bill behaviour)."""
+        txn1 = self._make_debt_txn('Bosco', '500')
+        txn2 = self._make_debt_txn('Bosco', '300')
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {
+            'txn_ids': f'{txn1.id},{txn2.id}',
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(len(d['request_ids']), 2)
+
+        req_id = d['request_ids'][0]
+        resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
+        self.assertTrue(resp2.json()['ok'], resp2.json())
+        txn1.refresh_from_db()
+        txn2.refresh_from_db()
+        self.assertEqual(txn1.type, 'OwnerConsumption')
+        self.assertEqual(txn2.type, 'OwnerConsumption')
+
+    def test_propose_to_owner_bulk_skips_already_pending_not_errors(self):
+        """A resync call that includes an id already proposed must silently
+        skip it (not error the whole batch) — only errors when NOTHING in
+        the set is eligible."""
+        txn1 = self._make_debt_txn('Bosco', '500')
+        txn2 = self._make_debt_txn('Bosco', '300')
+        self.client.force_login(self.owner)
+        self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn1.id})
+        # Resync call includes BOTH — txn1 already pending, txn2 is new.
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {
+            'txn_ids': f'{txn1.id},{txn2.id}',
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(len(d['request_ids']), 1)  # only txn2's new request
+
+    def test_propose_to_owner_bulk_all_already_pending_errors(self):
+        txn = self._make_debt_txn('Bosco', '500')
+        self.client.force_login(self.owner)
+        self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_ids': str(txn.id)})
+        self.assertFalse(resp.json()['ok'])
+
+
+class CustomerLinkAsOwnerTest(TestCase):
+    """2026-08-13 live request (Roy) — "the system can be able to know that
+    a certain name in either orders/tabs/debt tracker is the owner" (e.g.
+    a debt customer named "Bosco" IS the owner Bosco). Explicit, owner/
+    manager-confirmed link (never automatic name-matching); doubles as a
+    "resync" action once linked — bulk-proposes whatever's currently
+    unpaid under that Customer to Mmiliki Alichukua, always via the
+    normal pending/accept step (per Roy's explicit confirmation this must
+    never auto-post)."""
+
+    def setUp(self):
+        self.biz, self.store, self.staff, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'CLAO Biz'
+        )
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.owner = User.objects.create_user(username='clao_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='clao_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.customer = Customer.objects.create(business=self.biz, name='Bosco')
+
+    def _make_debt_txn(self, amount='500', customer_name='Bosco'):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal(amount), payment_method='credit', recipient=customer_name,
+            date=timezone.localdate(),
+        )
+
+    def test_link_sets_flag_and_bulk_proposes_unpaid_debt(self):
+        txn1 = self._make_debt_txn('500')
+        txn2 = self._make_debt_txn('300')
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(d['proposed_count'], 2)
+        self.assertEqual(d['proposed_total'], 800.0)
+
+        self.customer.refresh_from_db()
+        self.assertTrue(self.customer.is_owner_alias)
+
+        from core.models import OwnerConsumptionTransferRequest as OCTR
+        pending = OCTR.objects.filter(
+            business=self.biz, direction=OCTR.DIRECTION_TO_OWNER, status='PENDING',
+        )
+        self.assertEqual(pending.count(), 2)
+        self.assertEqual({p.source_txn_id for p in pending}, {txn1.id, txn2.id})
+
+    def test_resync_only_picks_up_newly_unpaid_debt(self):
+        txn1 = self._make_debt_txn('500')
+        self.client.force_login(self.owner)
+        resp1 = self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        self.assertEqual(resp1.json()['proposed_count'], 1)
+
+        # New debt accumulates under the same linked customer afterward.
+        txn2 = self._make_debt_txn('200')
+        resp2 = self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        d2 = resp2.json()
+        self.assertTrue(d2['ok'], d2)
+        self.assertEqual(d2['proposed_count'], 1)  # only the new one
+        self.assertEqual(d2['proposed_total'], 200.0)
+
+    def test_resync_after_accept_never_reproposes_already_moved_debt(self):
+        """Once a proposal is ACCEPTED, the transaction's type flips to
+        OwnerConsumption and it drops out of _get_customer_debt_data
+        entirely — a resync must never try to re-propose it."""
+        txn = self._make_debt_txn('500')
+        self.client.force_login(self.owner)
+        resp1 = self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        from core.models import OwnerConsumptionTransferRequest as OCTR
+        req = OCTR.objects.get(source_txn=txn)
+        req.accept()
+
+        resp2 = self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        d2 = resp2.json()
+        self.assertTrue(d2['ok'], d2)
+        self.assertEqual(d2['proposed_count'], 0)
+
+    def test_link_still_requires_owner_accept_never_auto_posts(self):
+        """Explicit confirmation from Roy: linking must NOT skip the
+        pending/accept step even though the owner himself initiated it."""
+        txn = self._make_debt_txn('500')
+        self.client.force_login(self.owner)
+        self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        txn.refresh_from_db()
+        self.assertEqual(txn.type, 'Issue')  # not yet reclassified
+        from core.models import OwnerConsumptionTransferRequest as OCTR
+        self.assertEqual(
+            OCTR.objects.filter(source_txn=txn, status='PENDING').count(), 1,
+        )
+
+    def test_link_with_no_unpaid_debt_still_sets_flag(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(d['proposed_count'], 0)
+        self.customer.refresh_from_db()
+        self.assertTrue(self.customer.is_owner_alias)
+
+    def test_manager_can_link(self):
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        self.assertTrue(resp.json()['ok'])
+
+    def test_staff_cannot_link(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        self.assertEqual(resp.status_code, 403)
+        self.customer.refresh_from_db()
+        self.assertFalse(self.customer.is_owner_alias)
+
+    def test_unlink_clears_flag_but_leaves_past_transfers_untouched(self):
+        txn = self._make_debt_txn('500')
+        self.client.force_login(self.owner)
+        self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        from core.models import OwnerConsumptionTransferRequest as OCTR
+        req = OCTR.objects.get(source_txn=txn)
+        req.accept()
+
+        resp = self.client.post(f'/debt/{self.customer.id}/unlink-owner/')
+        self.assertTrue(resp.json()['ok'])
+        self.customer.refresh_from_db()
+        self.assertFalse(self.customer.is_owner_alias)
+
+        txn.refresh_from_db()
+        self.assertEqual(txn.type, 'OwnerConsumption')  # untouched by unlink
+
+    def test_staff_cannot_unlink(self):
+        self.customer.is_owner_alias = True
+        self.customer.save()
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/{self.customer.id}/unlink-owner/')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_cross_business_customer_404s(self):
+        other_biz = Business.objects.create(name='Other Biz CLAO')
+        other_owner = User.objects.create_user(username='clao_other_owner', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        self.client.force_login(other_owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/link-owner/')
+        self.assertEqual(resp.status_code, 404)
+
+
+class OwnerAliasDebtSearchTest(TestCase):
+    """2026-08-13 live request (Roy) — dedicated cross-customer search/
+    bulk-transfer page: "transfer some of the other customers tabs and
+    debts that those customers claimed Bosco was to pay for them" without
+    opening each customer's own debt profile one at a time."""
+
+    def setUp(self):
+        self.biz, self.store, self.staff, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'OADS Biz'
+        )
+        self.owner = User.objects.create_user(username='oads_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item2 = Item.objects.create(
+            business=self.biz, store=self.store, material_no='OADS-2',
+            description='Tusker Lager', unit='bottle', selling_price=Decimal('260'),
+        )
+
+    def _make_debt_txn(self, customer_name, amount, item=None):
+        Customer.objects.get_or_create(business=self.biz, name=customer_name)
+        return Transaction.objects.create(
+            business=self.biz, item=item or self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal(amount), payment_method='credit', recipient=customer_name,
+            date=timezone.localdate(),
+        )
+
+    def test_finds_unpaid_debt_across_multiple_customers(self):
+        self._make_debt_txn('Alice', '100')
+        self._make_debt_txn('Bosco', '260', item=self.item2)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/owner-alias/search/')
+        self.assertContains(resp, 'Alice')
+        self.assertContains(resp, 'Bosco')
+        self.assertContains(resp, 'Tusker Lager')
+
+    def test_search_by_item_name_finds_it_under_the_right_customer(self):
+        """A search for an ITEM name must find it under whichever customer
+        actually owes it, not just customers whose NAME matches — the
+        whole reason this doesn't pre-filter the Customer queryset by q."""
+        self._make_debt_txn('Alice', '100')
+        self._make_debt_txn('Zawadi', '260', item=self.item2)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/owner-alias/search/?q=Tusker')
+        self.assertContains(resp, 'Zawadi')
+        self.assertNotContains(resp, 'Alice')
+
+    def test_search_by_customer_name(self):
+        self._make_debt_txn('Alice', '100')
+        self._make_debt_txn('Zawadi', '200')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/owner-alias/search/?q=Alice')
+        self.assertContains(resp, 'Alice')
+        self.assertNotContains(resp, 'Zawadi')
+
+    def test_fully_paid_customer_excluded(self):
+        from core.models import CustomerDebtPayment
+        customer = Customer.objects.create(business=self.biz, name='Alice')
+        self._make_debt_txn('Alice', '100')
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('100'),
+            payment_method='cash', source='bar',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/owner-alias/search/')
+        self.assertNotContains(resp, 'Alice')
+
+    def test_bulk_select_and_transfer_from_search_page(self):
+        txn1 = self._make_debt_txn('Alice', '100')
+        txn2 = self._make_debt_txn('Zawadi', '200')
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {
+            'txn_ids': f'{txn1.id},{txn2.id}',
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(len(d['request_ids']), 2)
+
+    def test_staff_cannot_access_search_page(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/debt/owner-alias/search/')
+        self.assertNotEqual(resp.status_code, 200)
+
+    def test_open_tab_items_excluded(self):
+        """An item still on an OPEN tab is not yet real debt — must not
+        appear (matches _get_customer_debt_data's own exclusion)."""
+        tab = BarTab.create_with_credentials(business=self.biz, customer_name='Kioko', status='OPEN', source='bar')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('150'), payment_method='credit', recipient='Kioko',
+            date=timezone.localdate(),
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='x', amount=Decimal('150'))
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/owner-alias/search/')
+        self.assertNotContains(resp, 'Kioko')
+
+
+class OwnerAliasSimilarNameHintTest(TestCase):
+    """2026-08-13 live request (Roy) — tab_check_api warns staff when a
+    typed customer name exactly matches, or is merely similar to, a
+    Customer already linked as the owner. Purely informational — never
+    auto-redirects the sale itself."""
+
+    def setUp(self):
+        self.biz, self.store, self.staff, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'OASH Biz'
+        )
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.alias = Customer.objects.create(business=self.biz, name='Bosco', is_owner_alias=True)
+
+    def test_exact_match_flagged(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/kitchen/tab/check/?customer=Bosco')
+        d = resp.json()
+        self.assertEqual(d['owner_alias_match'], {'exact': True, 'name': 'Bosco'})
+
+    def test_exact_match_case_insensitive(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/kitchen/tab/check/?customer=bosco')
+        d = resp.json()
+        self.assertTrue(d['owner_alias_match']['exact'])
+
+    def test_similar_but_not_exact_flagged_as_non_exact(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/kitchen/tab/check/?customer=Boscoh')
+        d = resp.json()
+        self.assertEqual(d['owner_alias_match'], {'exact': False, 'name': 'Bosco'})
+
+    def test_unrelated_name_no_match(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/kitchen/tab/check/?customer=Zawadi')
+        d = resp.json()
+        self.assertIsNone(d['owner_alias_match'])
+
+    def test_no_linked_alias_no_match_key_still_present(self):
+        self.alias.delete()
+        self.client.force_login(self.staff)
+        resp = self.client.get('/kitchen/tab/check/?customer=Bosco')
+        d = resp.json()
+        self.assertIsNone(d['owner_alias_match'])
 
 
 class NegativeBalanceNeverAllowedTest(TestCase):

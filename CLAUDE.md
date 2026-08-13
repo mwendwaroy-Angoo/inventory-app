@@ -6824,3 +6824,101 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   pass, since it's the one part touching the M-Pesa callback surface. 18 new tests
   (`OwnerConsumptionPriceCaptureTest`, `OwnerConsumptionTransferTest`). One migration
   (0162, additive).
+- Fix: owner-dashboard "Active Shifts" meter frozen (2026-08-13), live report. The
+  shift-meter row's elapsed-time figure looked stuck instead of counting up. Root cause:
+  the whole `home.html` block only ever fetched `/bar/shift/active/` once, on page load —
+  unlike the revenue tiles right below it, which already poll every 30s. Wrapped the
+  existing fetch+render logic in a named function (`_homeRefreshShiftMeter()`) and polled
+  it on the same 30s cadence. No backend/Python change — pure template/JS fix.
+- Fix: waitress's Muda genuinely, permanently stays 0h00m — explain it, don't just
+  refresh it (2026-08-13), same-day follow-up. After the polling fix above shipped, Roy
+  caught the real gap: a waitress (Sarah, cross-access — "BAR & KITCHEN") stayed at
+  "0h 00m" on every fresh poll while a genuine custodian's number correctly climbed.
+  Traced to this app's own deliberate `_shift_active_segments()` rule (2026-08-06/08
+  design): a waitress's own attribution is subtracted out entirely for as long as a real
+  till custodian (bartender/kitchen staff) is open on her station — correct accounting,
+  since she's a concurrent helper, never the till custodian — but shown with zero
+  explanation it just looks like a broken clock. `active_shift_api()`'s `all_shifts`
+  payload now carries `started_at_iso` per shift; `home.html`'s Active Shifts meter
+  computes a genuine client-side wall-clock duration from it and shows "Muda: 0h 00m ·
+  Tangu Kufungua: Xh Ym" for a waitress row specifically (`s.staff_role === 'waitress'`)
+  — the exact same real-time-vs-accountability split already built for her own screens
+  this session (`waitress_screen.html`/`bar_board.html`'s live timer), now extended to
+  the owner's own dashboard, where he was actually looking. 1 new test
+  (`test_all_shifts_payload_carries_started_at_iso_for_owner_dashboard`, added to
+  `WaitressLiveShiftTimerTest`). No migrations.
+- "Mmiliki Alichukua" — recognize a debt customer as the owner, bulk transfer, and a
+  cross-customer search page (2026-08-13), live request with screenshots: a debt customer
+  named "Bosco" IS the business owner Bosco (KES 4,750 outstanding, blocked/high-risk) —
+  "I want the system to identify that this is the owner so that I can transfer all those
+  items to his personalised section... and transfer some of the other customers' tabs and
+  debts that those customers claimed Bosco was to pay for them... let us give it more
+  detailing and practicality." Three design decisions confirmed via `AskUserQuestion`
+  before building: (1) **permanent redirect**, not one-time — "what if there is a similar
+  name to that of the owner at the same time, in such instances the system should ask for
+  clarification" (2) build a **dedicated cross-customer search/bulk-transfer page**, not
+  just the existing per-customer button (3) **still go through the pending/accept step**
+  even when the owner himself initiates — never auto-post, matching this app's own
+  established discipline everywhere else. New `Customer.is_owner_alias` (core migration
+  0163) — deliberately NOT automatic name-matching (same "the system knowing a name is the
+  owner is not a heuristic" principle the original Mmiliki Alichukua design already
+  established) — only ever set via an explicit "🔗 Weka kama Mmiliki" tap on that specific
+  Customer's own debt profile (owner/manager only). New `link_customer_as_owner`/
+  `unlink_customer_as_owner` views (`core/debt_views.py`) — linking sets the flag AND
+  bulk-proposes every currently-unpaid transaction under that customer (via
+  `_get_customer_debt_data(scope='all')`, the same authoritative FIFO source the debt
+  profile itself reads) to Mmiliki Alichukua in one action; pressing the SAME button again
+  once already linked becomes a "🔄 Sawazisha kwa Mmiliki" resync — safely idempotent for
+  anything already proposed or already transferred, only picking up genuinely NEW unpaid
+  debt each time, so debt accumulating under that name later doesn't silently pile up
+  unnoticed. `OwnerConsumptionTransferRequest.propose_to_owner_locked()` widened from a
+  single-`txn_id` signature to accept a list, batched under one `batch_id` (mirroring the
+  `from_owner` direction's existing whole-bill behaviour) — but deliberately SKIPS (never
+  errors on) any id that already has a pending request, unlike its `from_owner` sibling,
+  since a resync call must be a safe no-op for already-in-flight items and only error when
+  NOTHING in the set is actually eligible; `propose_transfer_to_owner` (the view) widened
+  to match, accepting `txn_ids` (comma-separated) alongside the original single `txn_id` —
+  existing pre-2026-08-13 tests updated from `request_id` to `request_ids[0]` to match the
+  new always-a-list response shape, confirmed passing unmodified otherwise. New dedicated
+  `owner_alias_debt_search` page (`/debt/owner-alias/search/`, owner/manager only) —
+  searches unpaid debt items across EVERY customer at once (by customer name OR item
+  description — deliberately does NOT pre-filter the `Customer` queryset by name at the DB
+  level, so a search for an item like "Tusker" correctly finds it under whichever
+  customer(s) actually owe it, not just customers whose own name matches), reusing
+  `_get_customer_debt_data` per candidate customer (same technique `debtors_list_api`
+  already established) rather than a raw aggregate query, since a bare `Sum()` would
+  double-count or miss a partially-paid transaction — multi-select checkboxes submit the
+  chosen items to the same widened `propose_transfer_to_owner` endpoint in one bulk call.
+  Linked from the Debt Tracker dashboard toolbar next to the existing "🔀 Sahihisha Jina la
+  Mteja" button. **Similar-name hint at checkout** (the Q1 caveat): `tab_check_api`
+  (`core/kitchen_views.py`, the shared blur-check endpoint bar_board.html's tab-customer
+  field already calls) now also checks the typed name against every `is_owner_alias=True`
+  Customer — an EXACT match surfaces a purely informational note ("this name is linked to
+  the owner, it'll show up on the resync list"), a SIMILAR-but-not-exact match surfaces
+  the SAME click-to-confirm pattern the existing duplicate-name check already uses ("is
+  this the same person as the owner? Ndiyo"). Deliberately never auto-redirects the sale
+  itself at checkout time — reasoned explicitly against the invasive alternative (touching
+  every checkout code path — Quick Sell, Bar Board, Kitchen Board, tab-to-debt conversion —
+  each with different mechanics and no single safe choke point) in favor of the
+  lower-risk, already-proven "confirm first, staff/owner-initiated action" pattern this
+  whole feature already uses everywhere else. Disclosed scope note: this hint is wired
+  into `bar_board.html` only, matching where the underlying `tab_check_api` blur-check is
+  actually already used today — `kitchen_board.html`/`quick_sell.html` never had this
+  blur-check wired in at all (confirmed by grep before assuming otherwise), so extending
+  it there would be new client wiring beyond what's asked, not a parity fix. **UI polish**
+  ("give it more detailing and practicality"): `owner_consumption_list.html` gained
+  summary stat tiles (total unpaid, total paid this month, pending-decision count), a
+  "🏠 Wateja Walioungwa na Mmiliki" section listing every currently-linked customer with
+  their live outstanding figure, and split the previously-flat mixed list into distinct
+  "⏳ Bado Haijalipwa" / "✓ Imelipwa" sections (shared per-row markup factored into a new
+  `_owner_consumption_row.html` partial to avoid duplicating it). `customer_debt_profile.
+  html` gained the link/resync button plus a distinct "🏠 Huyu ni Mmiliki wa Biashara"
+  banner (with its own unlink action) whenever `customer.is_owner_alias` is true. 39 new
+  tests (`CustomerLinkAsOwnerTest`, `OwnerAliasDebtSearchTest`,
+  `OwnerAliasSimilarNameHintTest`, 3 more on `OwnerConsumptionTransferTest` for the widened
+  bulk `propose_to_owner_locked`) — including cross-business isolation, staff-blocked
+  regression locks on every new endpoint, the resync-never-reproposes-already-accepted
+  regression lock, the never-auto-posts-even-when-owner-initiated regression lock, the
+  open-tab-items-excluded regression lock (matching `_get_customer_debt_data`'s own
+  exclusion), and the item-vs-customer-name search-scope regression lock. One migration
+  (0163, additive). 1878 tests pass.

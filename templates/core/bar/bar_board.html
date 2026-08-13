@@ -6132,6 +6132,23 @@ window._barMergeTabId = '';
           hintParts.push(simMsg);
         }
 
+        // 2026-08-13 live request (Roy) — a name matching (exactly or
+        // similarly) a Customer already linked as an owner alias
+        // ("🔗 Weka kama Mmiliki" on the debt profile). Purely
+        // informational, never blocks or auto-redirects the sale — the
+        // actual move to Mmiliki Alichukua still needs an explicit action.
+        var ownerAlias = data.owner_alias_match || null;
+        if (ownerAlias) {
+          if (ownerAlias.exact) {
+            hintParts.push('🏠 <strong>' + ownerAlias.name + '</strong> ni jina lililounganishwa na Mmiliki — ' +
+              'deni hili litaonekana kwenye orodha ya kusawazisha kwa Mmiliki Alichukua.');
+          } else {
+            hintParts.push('🏠 Jina hili linafanana na <strong>' + ownerAlias.name + '</strong> aliyeunganishwa na Mmiliki. ' +
+              'Je, ni yeye? <a href="#" style="color:#c9a84c;" onclick="barConfirmSameName(\'' +
+              ownerAlias.name.replace(/'/g, "\\'") + '\'); return false;">Ndiyo</a>');
+          }
+        }
+
         if (hintParts.length) {
           hint.innerHTML = hintParts.join('<hr style="border-color:#2a2a2a;margin:.4rem 0;">');
           hint.style.display = 'block';

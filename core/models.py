@@ -221,6 +221,22 @@ class Customer(models.Model):
         default=False,
         help_text='Had a debt written off as bad debt; permanently high-risk flag.',
     )
+    is_owner_alias = models.BooleanField(
+        default=False,
+        help_text='2026-08-13 live request (Roy): this Customer record is actually the '
+                  'business owner, recorded under a name (e.g. "Bosco") that also happens '
+                  'to be his own — NOT automatic name-matching (see Mmiliki Alichukua\'s own '
+                  'design note on why that\'s deliberately avoided elsewhere), only ever set '
+                  'via the explicit owner/manager-confirmed "🔗 Weka kama Mmiliki" action on '
+                  'this customer\'s own debt profile. Once set, that action becomes a '
+                  '"🔄 Sawazisha kwa Mmiliki" resync button — every currently-unpaid debt '
+                  'transaction under this exact customer record is proposed (still via the '
+                  'normal pending/accept step, never auto-moved) to the owner\'s own '
+                  'OwnerConsumption ledger each time it\'s pressed, so debt that accumulates '
+                  'under this name later doesn\'t silently pile up unnoticed. Also read by '
+                  'tab_check_api to warn staff typing a SIMILAR (not exact) name at checkout '
+                  '— "is this the same person as the owner?" — rather than guessing.',
+    )
     last_cleared_at = models.DateTimeField(
         null=True, blank=True,
         help_text='Timestamp when this customer last had their outstanding balance reach zero.',
@@ -5621,20 +5637,46 @@ class OwnerConsumptionTransferRequest(models.Model):
         )
 
     @classmethod
-    def propose_to_owner_locked(cls, txn_id, business, requested_by, note=''):
-        txn = Transaction.objects.filter(
-            id=txn_id, business=business, type='Issue', payment_method='credit',
-        ).first()
-        if not txn:
+    def propose_to_owner_locked(cls, txn_ids, business, requested_by, note=''):
+        """Propose one or more customer debt/tab transactions as the
+        owner's own draw. Accepts a single id or a list.
+
+        2026-08-13 live request (Roy) — widened from a single-item-only
+        signature to support two new bulk flows: linking a Customer record
+        as an owner alias (moves everything currently unpaid under that
+        name in one action) and the cross-customer search/bulk-transfer
+        page. Unlike propose_from_owner_locked's sibling method — which
+        errors out entirely if ANY given id already has a pending request
+        — this SKIPS ids that already have one instead of raising, so the
+        "resync" action on an already-linked customer is a safe, idempotent
+        no-op for anything already proposed/transferred, only picking up
+        genuinely new unpaid debt each time it's pressed. Only raises when
+        NOTHING in the given set is actually eligible.
+        """
+        if isinstance(txn_ids, (str, int)):
+            txn_ids = [txn_ids]
+        txns = list(Transaction.objects.filter(
+            id__in=txn_ids, business=business, type='Issue', payment_method='credit',
+        ))
+        if not txns:
             raise ValueError('Transaction haipatikani au si deni linaloweza kuhamishwa.')
-        if OwnerConsumptionTransferRequest.objects.filter(
-            source_txn=txn, status='PENDING',
-        ).exists():
-            raise ValueError('Ombi la kuhamisha item hii tayari lipo.')
-        return cls.objects.create(
-            business=business, direction=cls.DIRECTION_TO_OWNER,
-            source_txn=txn, requested_by=requested_by, note=note[:80],
+        already_pending_ids = set(
+            OwnerConsumptionTransferRequest.objects.filter(
+                source_txn__in=txns, status='PENDING',
+            ).values_list('source_txn_id', flat=True)
         )
+        txns = [t for t in txns if t.id not in already_pending_ids]
+        if not txns:
+            raise ValueError('Ombi la kuhamisha item(s) hizi tayari lipo.')
+        import uuid as _uuid
+        batch_id = _uuid.uuid4().hex if len(txns) > 1 else ''
+        requests = []
+        for txn in txns:
+            requests.append(cls.objects.create(
+                business=business, direction=cls.DIRECTION_TO_OWNER,
+                source_txn=txn, requested_by=requested_by, note=note[:80], batch_id=batch_id,
+            ))
+        return requests
 
     @classmethod
     def propose_from_owner_locked(cls, txn_ids, business, dest_customer_name, requested_by, note=''):

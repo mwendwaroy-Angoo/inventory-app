@@ -157,13 +157,26 @@ def owner_consumption_list(request):
         .order_by('-created_at')[:200]
     )
     rows = []
+    unpaid_rows = []
+    paid_rows = []
+    total_unpaid = Decimal('0')
+    total_paid_this_month = Decimal('0')
+    this_month = timezone.localdate().replace(day=1)
     for t in txns:
         settlement = t.settlements.first()
-        rows.append({
+        row = {
             'txn': t,
             'settlement': settlement,
             'is_own': t.recorded_by_id == request.user.id,
-        })
+        }
+        rows.append(row)
+        if settlement:
+            paid_rows.append(row)
+            if timezone.localtime(settlement.created_at).date() >= this_month:
+                total_paid_this_month += settlement.sale_amount or Decimal('0')
+        else:
+            unpaid_rows.append(row)
+            total_unpaid += t.sale_amount or Decimal('0')
 
     # 2026-08-12 live request (Roy) — "the ability to accept or reject" for
     # a tab item/debt balance a staff member (or the owner himself) has
@@ -171,16 +184,32 @@ def owner_consumption_list(request):
     # since this is a claim about who's actually financially responsible.
     from .models import OwnerConsumptionTransferRequest as _OCTR
     pending_to_owner = []
+    linked_customers = []
     if getattr(up, 'is_owner_or_manager', False):
         pending_to_owner = list(
             _OCTR.objects.filter(
                 business=business, direction=_OCTR.DIRECTION_TO_OWNER, status='PENDING',
             ).select_related('source_txn__item', 'requested_by').order_by('-requested_at')
         )
+        # 2026-08-13 live request (Roy) — "give it more detailing and
+        # practicality": surface which Customer records are currently
+        # linked as the owner right from this page too, not only on each
+        # customer's own debt profile, with their live outstanding figure
+        # so a resync-worthy customer is obvious without hunting for them.
+        from .models import Customer
+        from .debt_views import _get_customer_debt_data
+        for cust in Customer.objects.filter(business=business, is_owner_alias=True).order_by('name'):
+            data = _get_customer_debt_data(cust, business, scope='all')
+            linked_customers.append({'customer': cust, 'outstanding': data['outstanding']})
 
     return render(request, 'core/owner_consumption_list.html', {
         'rows': rows,
+        'unpaid_rows': unpaid_rows,
+        'paid_rows': paid_rows,
+        'total_unpaid': total_unpaid,
+        'total_paid_this_month': total_paid_this_month,
         'pending_to_owner': pending_to_owner,
+        'linked_customers': linked_customers,
         'is_owner_or_manager': getattr(up, 'is_owner_or_manager', False),
     })
 
@@ -318,10 +347,17 @@ def settle_owner_consumption(request, txn_id):
 @require_POST
 def propose_transfer_to_owner(request):
     """Staff (or the owner himself) proposes that a customer's unpaid tab
-    item or debt balance is actually the owner's own — needs the owner's
-    accept before anything moves. Any staff with an open shift may propose
-    (matches Roy's "initiated by the staffs or him of course"); owner/
-    manager exempt from the shift requirement, same as recording a draw."""
+    item(s) or debt balance is actually the owner's own — needs the
+    owner's accept before anything moves. Any staff with an open shift may
+    propose (matches Roy's "initiated by the staffs or him of course");
+    owner/manager exempt from the shift requirement, same as recording a
+    draw.
+
+    2026-08-13: widened to accept multiple items in one call (txn_ids,
+    comma-separated) alongside the original single txn_id — used by the
+    customer-link/resync action and the cross-customer search/bulk-transfer
+    page, on top of the original one-row-at-a-time button this endpoint
+    already served."""
     up = _get_up(request)
     if not up or not up.business:
         return JsonResponse({'ok': False, 'error': 'Not authenticated.'}, status=403)
@@ -330,29 +366,41 @@ def propose_transfer_to_owner(request):
         if shift is False:
             return JsonResponse({'ok': False, 'error': 'Hakuna shift iliyofunguliwa. Fungua shift kwanza.'}, status=403)
 
-    txn_id = request.POST.get('txn_id')
+    txn_ids_raw = (request.POST.get('txn_ids') or request.POST.get('txn_id') or '').strip()
+    txn_ids = [t.strip() for t in txn_ids_raw.split(',') if t.strip()]
     note = (request.POST.get('note') or '').strip()
-    if not txn_id:
+    if not txn_ids:
         return JsonResponse({'ok': False, 'error': 'Taja transaction.'}, status=400)
 
     from .models import OwnerConsumptionTransferRequest as _OCTR
     try:
-        req = _OCTR.propose_to_owner_locked(txn_id, up.business, request.user, note=note)
+        reqs = _OCTR.propose_to_owner_locked(txn_ids, up.business, request.user, note=note)
     except ValueError as e:
         return JsonResponse({'ok': False, 'error': str(e)}, status=400)
 
     actor_name = request.user.get_full_name() or request.user.username
-    item_name = req.source_txn.item.description if req.source_txn.item_id else ''
-    msg = (
-        f"{actor_name} anapendekeza kwamba {req.source_txn.recipient} — "
-        f"{item_name} (KES {req.source_txn.sale_amount or 0:,.0f}) ni ya mmiliki. "
-        f"Inasubiri uamuzi wako."
-    )
+    total = sum(float(r.source_txn.sale_amount or 0) for r in reqs)
+    if len(reqs) == 1:
+        req = reqs[0]
+        item_name = req.source_txn.item.description if req.source_txn.item_id else ''
+        msg = (
+            f"{actor_name} anapendekeza kwamba {req.source_txn.recipient} — "
+            f"{item_name} (KES {req.source_txn.sale_amount or 0:,.0f}) ni ya mmiliki. "
+            f"Inasubiri uamuzi wako."
+        )
+    else:
+        names = sorted({r.source_txn.recipient for r in reqs if r.source_txn.recipient})
+        who = ', '.join(names[:3]) + (f' na wengine {len(names) - 3}' if len(names) > 3 else '')
+        msg = (
+            f"{actor_name} anapendekeza vitu {len(reqs)} (KES {total:,.0f}) — kutoka {who} — "
+            f"ni vya mmiliki. Inasubiri uamuzi wako."
+        )
     _notify_owner_consumption_change(
         up.business, request.user, '🏠 Ombi — Hamishia kwa Mmiliki', msg,
         '/stock/owner-consumption/list/',
     )
-    return JsonResponse({'ok': True, 'message': 'Ombi limetumwa kwa mmiliki.', 'request_id': req.id})
+    ok_msg = 'Ombi limetumwa kwa mmiliki.' if len(reqs) == 1 else f'Ombi la vitu {len(reqs)} (KES {total:,.0f}) limetumwa kwa mmiliki.'
+    return JsonResponse({'ok': True, 'message': ok_msg, 'request_ids': [r.id for r in reqs]})
 
 
 @login_required

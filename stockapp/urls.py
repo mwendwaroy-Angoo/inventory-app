@@ -302,6 +302,9 @@ from core.debt_views import (
     debtors_list_api,
     merge_customer,
     customer_identity_correct,
+    link_customer_as_owner,
+    unlink_customer_as_owner,
+    owner_alias_debt_search,
 )
 from core.haki_views import (
     staff_contribution_report,
@@ -645,6 +648,9 @@ urlpatterns = [
     path("debt/customers/debtors/", debtors_list_api, name="debtors_list_api"),
     path("debt/customers/correct/", customer_identity_correct, name="customer_identity_correct"),
     path("debt/<int:customer_id>/merge/", merge_customer, name="merge_customer"),
+    path("debt/<int:customer_id>/link-owner/", link_customer_as_owner, name="link_customer_as_owner"),
+    path("debt/<int:customer_id>/unlink-owner/", unlink_customer_as_owner, name="unlink_customer_as_owner"),
+    path("debt/owner-alias/search/", owner_alias_debt_search, name="owner_alias_debt_search"),
     # ── Haki (Staff Contribution + Salary) ──
     path("staff/contribution/", staff_contribution_report, name="staff_contribution_report"),
     path("staff/<int:profile_id>/salary/", record_salary_payment, name="record_salary_payment"),

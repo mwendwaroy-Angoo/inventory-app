@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}Tafuta Deni la Mmiliki{% endblock %}
+
+{% block extra_css %}
+<style>
+    .section-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 10px;
+        padding: 1.1rem 1.25rem;
+        margin-bottom: 1.25rem;
+    }
+    .oad-row {
+        display: flex; align-items: center; gap: .6rem;
+        padding: .55rem .6rem; border-bottom: 1px solid #222;
+        font-size: .85rem;
+    }
+    .oad-row:last-child { border-bottom: none; }
+    .oad-row.alias-linked { background: rgba(232,124,150,0.05); }
+    .oad-amount { color: #fbbf24; font-weight: 600; white-space: nowrap; }
+    .oad-overdue { color: #f87171; }
+    #oad-toast {
+        position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%) translateY(120%);
+        background: #2a2a2a; border: 1px solid #c9a84c; border-radius: 10px;
+        padding: .65rem 1.1rem; color: #f0ece4; font-size: .85rem; max-width: 90vw;
+        box-shadow: 0 4px 18px rgba(0,0,0,.4); z-index: 2000;
+        transition: transform .25s ease; text-align: center;
+    }
+    #oad-toast.show { transform: translateX(-50%) translateY(0); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+    <a href="{% url 'debt_dashboard' %}" style="color:var(--gold);">{% trans 'Debt Tracker' %}</a>
+    <span class="mx-1">›</span>
+    <span>Tafuta Deni la Mmiliki</span>
+</nav>
+
+<h1 class="page-title mb-2">🏠 Tafuta na Hamishia Deni kwa Mmiliki</h1>
+<p style="color:#b0b0b0; font-size:0.85rem; max-width:680px; margin-bottom:1.5rem;">
+    Tafuta bidhaa zote za deni ambazo hazijalipwa kwa wateja WOTE — kama mteja alidai
+    kwamba mmiliki alikuwa alipe kwa niaba yake, tafuta hapa, chagua vitu husika, kisha
+    uvihamishe kwenye "Mmiliki Alichukua" kwa hatua moja. Kila ombi bado litasubiri
+    uamuzi wako kwenye <a href="/stock/owner-consumption/list/" style="color:var(--gold);">Mmiliki Alichukua</a>.
+</p>
+
+<div class="section-card">
+    <form method="get" class="d-flex gap-2 flex-wrap mb-2">
+        <input type="text" name="q" class="form-control" style="max-width:340px;"
+               placeholder="Tafuta kwa jina la mteja au bidhaa (mfano: Tusker, Bosco...)"
+               value="{{ q }}">
+        <button type="submit" class="btn btn-gold">Tafuta</button>
+        {% if q %}<a href="{% url 'owner_alias_debt_search' %}" class="btn btn-outline-light">Futa</a>{% endif %}
+    </form>
+    <div style="color:#888; font-size:.78rem;">
+        {{ total_rows }} bidhaa hazijalipwa · Jumla KES {{ total_amount|floatformat:0 }}
+        {% if truncated %} — inaonyesha 300 za kwanza tu, punguza utafutaji{% endif %}
+    </div>
+</div>
+
+{% if not rows %}
+<div class="text-center py-5" style="color:#555;">
+    <div style="font-size:2rem; margin-bottom:.5rem;">🔍</div>
+    Hakuna deni lililopatikana.
+</div>
+{% else %}
+<div class="section-card p-0" style="overflow:hidden;">
+    <form method="post" id="oadForm" action="/stock/owner-consumption/transfer/to-owner/">
+        {% csrf_token %}
+        <div class="oad-row" style="background:rgba(255,255,255,.02); font-weight:600; color:#b0b0b0;">
+            <input type="checkbox" id="oadSelectAll">
+            <div style="flex:1;">Mteja / Bidhaa</div>
+            <div style="width:90px; text-align:right;">Kiasi</div>
+            <div style="width:110px; text-align:right;">Siku</div>
+        </div>
+        {% for row in rows %}
+        <div class="oad-row{% if row.is_owner_alias %} alias-linked{% endif %}">
+            <input type="checkbox" name="txn_ids_cb" value="{{ row.txn_id }}" class="oad-cb">
+            <div style="flex:1;">
+                <a href="/debt/{{ row.customer_id }}/" target="_blank" style="color:#f0ece4; font-weight:600;">
+                    {{ row.customer_name }}
+                </a>
+                {% if row.is_owner_alias %}<span style="color:#e87c96; font-size:.72rem;">🏠 Ameunganishwa na Mmiliki</span>{% endif %}
+                <div style="color:#b0b0b0; font-size:.78rem;">{{ row.item_name }} — {{ row.date|date:"d M Y" }}</div>
+            </div>
+            <div class="oad-amount" style="width:90px; text-align:right;">KES {{ row.amount|floatformat:0 }}</div>
+            <div style="width:110px; text-align:right; {% if row.is_overdue %}color:#f87171;{% else %}color:#888;{% endif %} font-size:.78rem;">
+                {{ row.days_outstanding }} siku{% if row.is_overdue %} ⚠️{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </form>
+</div>
+
+<div class="mt-3 d-flex align-items-center gap-3 flex-wrap">
+    <button type="button" class="btn btn-gold" id="oadSubmitBtn" disabled onclick="oadSubmit()">
+        🏠 Hamishia Vilivyochaguliwa kwa Mmiliki
+    </button>
+    <span id="oadSelectedInfo" style="color:#b0b0b0; font-size:.85rem;"></span>
+</div>
+{% endif %}
+
+<div id="oad-toast"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    var selectAll = document.getElementById('oadSelectAll');
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('.oad-cb'));
+    var submitBtn = document.getElementById('oadSubmitBtn');
+    var info = document.getElementById('oadSelectedInfo');
+    if (!selectAll) return;
+
+    function updateState() {
+        var checked = boxes.filter(function(b) { return b.checked; });
+        submitBtn.disabled = checked.length === 0;
+        info.textContent = checked.length ? (checked.length + ' zimechaguliwa') : '';
+    }
+    selectAll.addEventListener('change', function() {
+        boxes.forEach(function(b) { b.checked = selectAll.checked; });
+        updateState();
+    });
+    boxes.forEach(function(b) { b.addEventListener('change', updateState); });
+    updateState();
+})();
+
+function oadToast(msg) {
+    var t = document.getElementById('oad-toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function() { t.classList.remove('show'); }, 3200);
+}
+
+function oadSubmit() {
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('.oad-cb:checked'));
+    if (!boxes.length) return;
+    if (!confirm('Hamishia ' + boxes.length + ' bidhaa kwenye orodha ya Mmiliki Alichukua? Itasubiri uamuzi wa mmiliki.')) return;
+    var btn = document.getElementById('oadSubmitBtn');
+    btn.disabled = true;
+    var ids = boxes.map(function(b) { return b.value; }).join(',');
+    var body = new URLSearchParams({
+        txn_ids: ids,
+        csrfmiddlewaretoken: document.querySelector('[name=csrfmiddlewaretoken]').value,
+    });
+    fetch('/stock/owner-consumption/transfer/to-owner/', { method: 'POST', body: body, credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            btn.disabled = false;
+            if (d.ok) {
+                oadToast(d.message || 'Ombi limetumwa.');
+                setTimeout(function() { location.reload(); }, 1000);
+            } else {
+                alert(d.error || 'Imeshindikana');
+            }
+        })
+        .catch(function() { alert('Hitilafu ya mtandao'); btn.disabled = false; });
+}
+</script>
+{% endblock %}

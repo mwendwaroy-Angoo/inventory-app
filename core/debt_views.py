@@ -1362,6 +1362,70 @@ def customer_identity_correct(request):
     })
 
 
+@owner_or_manager_required
+def owner_alias_debt_search(request):
+    """Dedicated cross-customer search/bulk-transfer page (2026-08-13 live
+    request, Roy): "transfer some of the other customers tabs and debts
+    that those customers claimed Bosco was to pay for them." The existing
+    "🏠 Mmiliki" per-item button on customer_debt_profile.html only ever
+    covers ONE customer's own page at a time — this searches unpaid debt
+    items across EVERY customer at once (by customer name or item
+    description) so items scattered across several different customers'
+    records can be multi-selected and proposed to the owner in one submit.
+
+    Reuses _get_customer_debt_data per candidate customer (same technique
+    debtors_list_api already established) rather than a raw aggregate
+    query — the FIFO/partial-payment math must stay correct per this app's
+    own hard rule on how debt is computed; a bare Sum() would double-count
+    or miss a partially-paid transaction. Candidates are narrowed first to
+    customers who actually have a credit transaction at all (cheap), then
+    each candidate's real unpaid list is computed and flattened, then
+    filtered by q across both customer name and item description — so a
+    search for an ITEM ("Tusker") finds it under whichever customer(s)
+    actually owe it, not just customers whose NAME matches.
+    """
+    business = get_user_profile(request).business
+    q = (request.GET.get('q') or '').strip().lower()
+
+    credit_qs = Transaction.objects.filter(
+        business=business, payment_method='credit', type='Issue',
+    ).exclude(tab_entry__tab__status='OPEN')
+    recipient_names = set(n for n in credit_qs.values_list('recipient', flat=True) if n)
+    customers = Customer.objects.filter(
+        business=business, name__in=recipient_names,
+    ).order_by('name')
+
+    rows = []
+    for cust in customers:
+        data = _get_customer_debt_data(cust, business, scope='all')
+        for entry in data.get('unpaid_transactions', []):
+            txn = entry['txn']
+            item_name = txn.item.description if txn.item_id else ''
+            if q and q not in cust.name.lower() and q not in item_name.lower():
+                continue
+            rows.append({
+                'txn_id': txn.id,
+                'customer_id': cust.id,
+                'customer_name': cust.name,
+                'is_owner_alias': cust.is_owner_alias,
+                'item_name': item_name,
+                'amount': entry['amount'],
+                'date': txn.date,
+                'days_outstanding': entry['days_outstanding'],
+                'is_overdue': entry['is_overdue'],
+            })
+    rows.sort(key=lambda r: -r['amount'])
+    total_amount = round(sum(r['amount'] for r in rows), 2)
+
+    return render(request, 'core/owner_alias_debt_search.html', {
+        'rows': rows[:300],
+        'q': request.GET.get('q', ''),
+        'total_rows': len(rows),
+        'total_amount': total_amount,
+        'truncated': len(rows) > 300,
+    })
+
+
 @login_required
 def debtors_list_api(request):
     """AJAX GET — every customer with outstanding debt right now, station-
@@ -1503,6 +1567,102 @@ def merge_customer(request, customer_id):
         msg = f"Jina limesahihishwa kuwa {keep.name} na {reviewer_name} tarehe {when}."
     messages.success(request, msg)
     return redirect('customer_debt_profile', customer_id=keep.id)
+
+
+@login_required
+@require_POST
+def link_customer_as_owner(request, customer_id):
+    """Explicit, owner/manager-confirmed action: mark this Customer record
+    as actually being the business owner (2026-08-13 live request, Roy —
+    a debt customer named "Bosco" IS the owner Bosco, and every item under
+    that name should move to his own Mmiliki Alichukua ledger). Deliberately
+    NOT automatic name-matching (see the original Mmiliki Alichukua
+    design's own "the system knowing a name is the owner is NOT a
+    Customer-name-matching heuristic" rule) — this flag is only ever set
+    here, by an explicit tap on a specific Customer record's own profile.
+
+    Doubles as the "resync" action once already linked — pressing it again
+    proposes whatever's newly unpaid since the last time, safely
+    idempotent for anything already proposed/transferred (see
+    OwnerConsumptionTransferRequest.propose_to_owner_locked's own
+    skip-rather-than-error behaviour for an id already pending). Per Roy's
+    explicit confirmation, this NEVER auto-accepts — every proposal still
+    lands in the normal pending/accept queue on Mmiliki Alichukua."""
+    up = get_user_profile(request)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+    business = up.business
+    customer = get_object_or_404(Customer, id=customer_id, business=business)
+
+    was_linked = customer.is_owner_alias
+    if not was_linked:
+        customer.is_owner_alias = True
+        customer.save(update_fields=['is_owner_alias'])
+
+    # Always pulls the FULL cross-ledger picture (bar + kitchen), regardless
+    # of the acting owner/manager's own station scope — deliberately, since
+    # this action already requires is_owner_or_manager, who see both anyway.
+    data = _get_customer_debt_data(customer, business, scope='all')
+    txn_ids = [e['txn'].id for e in data.get('unpaid_transactions', [])]
+
+    proposed_count = 0
+    proposed_total = 0.0
+    if txn_ids:
+        from .models import OwnerConsumptionTransferRequest as _OCTR
+        try:
+            reqs = _OCTR.propose_to_owner_locked(
+                txn_ids, business, request.user,
+                note='Kuunganishwa kama Mmiliki' if not was_linked else 'Kusawazisha kwa Mmiliki',
+            )
+            proposed_count = len(reqs)
+            proposed_total = sum(float(r.source_txn.sale_amount or 0) for r in reqs)
+        except ValueError:
+            pass  # nothing NEW to propose right now — not an error for a resync
+
+    actor_name = request.user.get_full_name() or request.user.username
+    if not was_linked:
+        base_msg = f"{actor_name} ameunganisha {customer.name} kama Mmiliki."
+    else:
+        base_msg = f"{actor_name} amesawazisha deni la {customer.name} kwa Mmiliki."
+    if proposed_count:
+        msg = (
+            f"{base_msg} Vitu {proposed_count} (KES {proposed_total:,.0f}) vinasubiri "
+            f"uamuzi wako kwenye Mmiliki Alichukua."
+        )
+    else:
+        msg = f"{base_msg} Hakuna deni jipya la kuhamisha kwa sasa."
+
+    from .models import Notification
+    from accounts.models import UserProfile as _UP
+    for op in _UP.objects.filter(business=business, role__in=('owner', 'manager')).exclude(user=request.user):
+        Notification.objects.create(
+            user=op.user, title='🏠 Mteja Ameunganishwa na Mmiliki', message=msg,
+            notification_type='info', link_url='/stock/owner-consumption/list/',
+        )
+    return JsonResponse({
+        'ok': True, 'message': msg, 'is_owner_alias': True,
+        'proposed_count': proposed_count, 'proposed_total': proposed_total,
+    })
+
+
+@login_required
+@require_POST
+def unlink_customer_as_owner(request, customer_id):
+    """Reverses link_customer_as_owner's flag — reversible, since a mis-tap
+    or a genuinely different person sharing the owner's name is always
+    possible. Never touches any already-created transfer request or
+    already-reclassified transaction — accept()/reject() already resolved
+    those independently on their own merits; this only turns off future
+    resync-button eligibility and the tab_check_api similar-name hint."""
+    up = get_user_profile(request)
+    if not up or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+    customer = get_object_or_404(Customer, id=customer_id, business=up.business)
+    customer.is_owner_alias = False
+    customer.save(update_fields=['is_owner_alias'])
+    actor_name = request.user.get_full_name() or request.user.username
+    msg = f"{actor_name} ameondoa uunganisho wa {customer.name} na Mmiliki."
+    return JsonResponse({'ok': True, 'message': msg, 'is_owner_alias': False})
 
 
 @login_required

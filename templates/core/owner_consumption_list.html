@@ -31,18 +31,65 @@
   transition:transform .25s ease; text-align:center;
 }
 #oc-toast.show { transform:translateX(-50%) translateY(0); }
+.oc-stat {
+  background:#2a2a2a; border:1px solid #3a3a3a; border-radius:10px;
+  padding:.6rem 1.1rem; min-width:150px;
+}
+.oc-stat-label { color:#888; font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; }
+.oc-stat-value { font-size:1.35rem; font-weight:700; font-family:'Playfair Display',serif; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-3">
   <div>
     <h1 class="page-title mb-1">🥃 Mmiliki Alichukua</h1>
     <div style="color:#b0b0b0; font-size:.85rem;">
       Bidhaa alizochukua mmiliki bila malipo — sahihisha hitilafu au rekodi malipo hapa.
     </div>
   </div>
+  {% if is_owner_or_manager %}
+  <a href="{% url 'owner_alias_debt_search' %}" class="btn btn-outline-secondary btn-sm">
+    🏠 {% trans 'Tafuta Deni la Mmiliki' %}
+  </a>
+  {% endif %}
 </div>
+
+<!-- 2026-08-13 — summary stats ("give it more detailing and practicality") -->
+<div class="d-flex flex-wrap gap-3 mb-4">
+  <div class="oc-stat">
+    <div class="oc-stat-label">Haijalipwa (Jumla)</div>
+    <div class="oc-stat-value" style="color:#ff9800;">KES {{ total_unpaid|floatformat:0 }}</div>
+  </div>
+  <div class="oc-stat">
+    <div class="oc-stat-label">Imelipwa Mwezi Huu</div>
+    <div class="oc-stat-value" style="color:#4caf50;">KES {{ total_paid_this_month|floatformat:0 }}</div>
+  </div>
+  {% if is_owner_or_manager %}
+  <div class="oc-stat">
+    <div class="oc-stat-label">Vinavyosubiri Uamuzi</div>
+    <div class="oc-stat-value" style="color:#e2c36e;">{{ pending_to_owner|length }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if is_owner_or_manager and linked_customers %}
+<div class="mb-4">
+  <h6 style="color:#e87c96;">🏠 Wateja Walioungwa na Mmiliki</h6>
+  {% for lc in linked_customers %}
+  <div class="oc-card" style="padding:.55rem 1rem;">
+    <div style="flex:1; min-width:180px;">
+      <a href="/debt/{{ lc.customer.id }}/" style="color:#f0ece4; font-weight:600; text-decoration:none;">{{ lc.customer.name }}</a>
+      {% if lc.outstanding > 0 %}
+      <span style="color:#ff9800; font-size:.8rem;"> — bado ana deni la KES {{ lc.outstanding|floatformat:0 }} (sawazisha kwenye ukurasa wake)</span>
+      {% else %}
+      <span style="color:#4caf50; font-size:.8rem;"> — deni lote limehamishwa</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 {% if pending_to_owner %}
 <div class="mb-4">
@@ -78,48 +125,21 @@
   Hakuna rekodi za Mmiliki Alichukua bado.
 </div>
 {% else %}
-{% for row in rows %}
-{% with txn=row.txn %}
-<div class="oc-card" id="oc-entry-{{ txn.id }}">
-  <div style="flex:1; min-width:180px;">
-    <div style="color:#f0ece4; font-weight:600; font-size:.92rem;">
-      {{ txn.item.description }} — {{ txn.qty|floatformat:"-2" }} {{ txn.item.unit }}
-      {% if txn.sale_amount %}<span style="color:#c9a84c;">— KES {{ txn.sale_amount|floatformat:0 }}</span>{% endif %}
-    </div>
-    <div style="color:#b0b0b0; font-size:.82rem; margin-top:.1rem;">{{ txn.recipient }}</div>
-    <div style="color:#555; font-size:.75rem; margin-top:.25rem;">
-      Imeandikwa na <strong style="color:#b0b0b0;">{{ txn.recorded_by.get_full_name|default:txn.recorded_by.username }}</strong>
-      — {{ txn.created_at|date:"d M, H:i" }}
-    </div>
-    {% if row.settlement %}
-    <div style="color:#4caf50; font-size:.78rem; margin-top:.3rem;">
-      ✓ Mmiliki amelipa KES {{ row.settlement.sale_amount|floatformat:0 }} ({{ row.settlement.payment_method }})
-      — {{ row.settlement.created_at|date:"d M, H:i" }}
-    </div>
-    {% endif %}
-  </div>
-  <div>
-    {% if row.settlement %}
-      <span class="oc-badge paid">✓ Imelipwa</span>
-    {% else %}
-      <span class="oc-badge unpaid">Haijalipwa</span>
-    {% endif %}
-  </div>
-  {% if not row.settlement %}
-  <div class="oc-actions" style="width:100%;">
-    {% if is_owner_or_manager %}
-    <button class="oc-btn oc-btn-settle" onclick="window.ocSettle({{ txn.id }}, this)">💰 Mmiliki Amelipa</button>
-    <button class="oc-btn" style="background:rgba(201,168,76,.1); border-color:rgba(201,168,76,.3); color:#e2c36e;"
-            onclick="window.ocTransferToCustomer({{ txn.id }}, this)">🔀 Hamishia kwa Mteja</button>
-    {% endif %}
-    {% if is_owner_or_manager or row.is_own %}
-    <button class="oc-btn oc-btn-void" onclick="window.ocVoid({{ txn.id }}, this)">✕ Futa (Hitilafu)</button>
-    {% endif %}
-  </div>
-  {% endif %}
-</div>
-{% endwith %}
+
+{% if unpaid_rows %}
+<h6 style="color:#ff9800; margin-bottom:.6rem;">⏳ Bado Haijalipwa ({{ unpaid_rows|length }})</h6>
+{% for row in unpaid_rows %}
+{% include "core/_owner_consumption_row.html" %}
 {% endfor %}
+{% endif %}
+
+{% if paid_rows %}
+<h6 style="color:#4caf50; margin-top:1.5rem; margin-bottom:.6rem;">✓ Imelipwa ({{ paid_rows|length }})</h6>
+{% for row in paid_rows %}
+{% include "core/_owner_consumption_row.html" %}
+{% endfor %}
+{% endif %}
+
 {% endif %}
 
 <div id="oc-toast"></div>

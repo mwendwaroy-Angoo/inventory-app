@@ -114,8 +114,42 @@
             🔀 Unganisha na Mteja Mwingine
         </button>
         {% endif %}
+
+        <!-- 2026-08-13 live request (Roy): "Bosco" the debt customer IS
+             Bosco the owner — explicit link (never automatic name
+             matching), doubling as a "sync newly-accumulated debt" resync
+             button once already linked. -->
+        {% if is_owner %}
+        <button type="button" class="btn btn-sm"
+                style="background:rgba(232,124,150,0.08); border:1px solid rgba(232,124,150,0.3); color:#e87c96;"
+                onclick="linkCustomerAsOwner({{ customer.id }}, this)">
+            {% if customer.is_owner_alias %}🔄 Sawazisha kwa Mmiliki{% else %}🔗 Weka kama Mmiliki{% endif %}
+        </button>
+        {% endif %}
     </div>
 </div>
+
+{% if customer.is_owner_alias %}
+<div class="mb-3 p-3" style="background:rgba(232,124,150,0.06); border:1px solid rgba(232,124,150,0.3); border-radius:10px;">
+    <div class="d-flex align-items-start gap-3 flex-wrap">
+        <div style="flex:1;">
+            <div style="font-weight:700; color:#e87c96; margin-bottom:0.25rem;">🏠 Huyu ni Mmiliki wa Biashara</div>
+            <div style="font-size:0.82rem; color:#b0b0b0;">
+                Rekodi hii imeunganishwa na Mmiliki — bonyeza "🔄 Sawazisha kwa Mmiliki" hapo juu wakati
+                wowote deni jipya likiongezwa hapa, na litahamishwa kwenye
+                <a href="/stock/owner-consumption/list/" style="color:var(--gold);">Mmiliki Alichukua</a>
+                (bado litasubiri uamuzi wako huko).
+            </div>
+        </div>
+        {% if is_owner %}
+        <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0"
+                onclick="unlinkCustomerAsOwner({{ customer.id }}, this)">
+            Ondoa Uunganisho
+        </button>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 
 {% if is_owner %}
 <div class="modal fade" id="mergeCustomerModal" tabindex="-1">
@@ -1143,6 +1177,50 @@ window.ocDebtProposeToOwner = function (txnId, btn) {
             btn.disabled = false;
             if (d.ok) {
                 alert(d.message || 'Ombi limetumwa kwa mmiliki.');
+            } else {
+                alert(d.error || 'Imeshindikana');
+            }
+        })
+        .catch(function () { alert('Hitilafu ya mtandao'); btn.disabled = false; });
+};
+
+// 2026-08-13 live request (Roy) — link this Customer record as actually
+// being the owner (or, once already linked, resync whatever's newly
+// unpaid). Never auto-accepts — every item this proposes still lands in
+// the normal Mmiliki Alichukua pending/accept queue.
+window.linkCustomerAsOwner = function (customerId, btn) {
+    if (!confirm('Weka \'{{ customer.name|escapejs }}\' kama Mmiliki? Deni lolote ambalo halijalipwa chini ya jina hili litapendekezwa kuhamishwa kwenye Mmiliki Alichukua.')) return;
+    btn.disabled = true;
+    var body = new URLSearchParams({
+        csrfmiddlewaretoken: document.querySelector('[name=csrfmiddlewaretoken]').value,
+    });
+    fetch('/debt/' + customerId + '/link-owner/', { method: 'POST', body: body, credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            btn.disabled = false;
+            if (d.ok) {
+                alert(d.message || 'Imefanikiwa.');
+                location.reload();
+            } else {
+                alert(d.error || 'Imeshindikana');
+            }
+        })
+        .catch(function () { alert('Hitilafu ya mtandao'); btn.disabled = false; });
+};
+
+window.unlinkCustomerAsOwner = function (customerId, btn) {
+    if (!confirm('Ondoa uunganisho wa \'{{ customer.name|escapejs }}\' na Mmiliki? Vitu vilivyokwisha kuhamishwa havitaathiriwa.')) return;
+    btn.disabled = true;
+    var body = new URLSearchParams({
+        csrfmiddlewaretoken: document.querySelector('[name=csrfmiddlewaretoken]').value,
+    });
+    fetch('/debt/' + customerId + '/unlink-owner/', { method: 'POST', body: body, credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            btn.disabled = false;
+            if (d.ok) {
+                alert(d.message || 'Imefanikiwa.');
+                location.reload();
             } else {
                 alert(d.error || 'Imeshindikana');
             }

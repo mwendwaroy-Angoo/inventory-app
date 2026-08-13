@@ -1,0 +1,40 @@
+{% with txn=row.txn %}
+<div class="oc-card" id="oc-entry-{{ txn.id }}">
+  <div style="flex:1; min-width:180px;">
+    <div style="color:#f0ece4; font-weight:600; font-size:.92rem;">
+      {{ txn.item.description }} — {{ txn.qty|floatformat:"-2" }} {{ txn.item.unit }}
+      {% if txn.sale_amount %}<span style="color:#c9a84c;">— KES {{ txn.sale_amount|floatformat:0 }}</span>{% endif %}
+    </div>
+    <div style="color:#b0b0b0; font-size:.82rem; margin-top:.1rem;">{{ txn.recipient }}</div>
+    <div style="color:#555; font-size:.75rem; margin-top:.25rem;">
+      Imeandikwa na <strong style="color:#b0b0b0;">{{ txn.recorded_by.get_full_name|default:txn.recorded_by.username }}</strong>
+      — {{ txn.created_at|date:"d M, H:i" }}
+    </div>
+    {% if row.settlement %}
+    <div style="color:#4caf50; font-size:.78rem; margin-top:.3rem;">
+      ✓ Mmiliki amelipa KES {{ row.settlement.sale_amount|floatformat:0 }} ({{ row.settlement.payment_method }})
+      — {{ row.settlement.created_at|date:"d M, H:i" }}
+    </div>
+    {% endif %}
+  </div>
+  <div>
+    {% if row.settlement %}
+      <span class="oc-badge paid">✓ Imelipwa</span>
+    {% else %}
+      <span class="oc-badge unpaid">Haijalipwa</span>
+    {% endif %}
+  </div>
+  {% if not row.settlement %}
+  <div class="oc-actions" style="width:100%;">
+    {% if is_owner_or_manager %}
+    <button class="oc-btn oc-btn-settle" onclick="window.ocSettle({{ txn.id }}, this)">💰 Mmiliki Amelipa</button>
+    <button class="oc-btn" style="background:rgba(201,168,76,.1); border-color:rgba(201,168,76,.3); color:#e2c36e;"
+            onclick="window.ocTransferToCustomer({{ txn.id }}, this)">🔀 Hamishia kwa Mteja</button>
+    {% endif %}
+    {% if is_owner_or_manager or row.is_own %}
+    <button class="oc-btn oc-btn-void" onclick="window.ocVoid({{ txn.id }}, this)">✕ Futa (Hitilafu)</button>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endwith %}
