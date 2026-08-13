@@ -6922,3 +6922,18 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   open-tab-items-excluded regression lock (matching `_get_customer_debt_data`'s own
   exclusion), and the item-vs-customer-name search-scope regression lock. One migration
   (0163, additive). 1878 tests pass.
+- Fix: Petty Cash review showed a dead-end "Hitilafu ya mtandao" with zero real signal
+  (2026-08-13), live screenshot. Traced (not guessed): every fetch() in
+  `petty_cash_list.html` (review/edit/delete/respond — 5 call sites) blindly called
+  `r.json()` with no check the response actually IS JSON. If Django's CSRF middleware
+  intercepts a POST first (a stale/rotated token — e.g. the session was refreshed
+  elsewhere via `SingleSessionMiddleware`, or the page has simply been open a long time),
+  it returns `core.views.csrf_failure_view`'s HTML redirect instead of ever reaching the
+  view — `r.json()` throws parsing HTML as JSON, landing in `.catch()` with a message
+  that tells the user nothing actionable. Confirmed the service worker is NOT involved
+  (`sw.js` skips every non-GET request outright at its very first line — POST always goes
+  straight to network, ruling out the stale-cache theory this app has hit before for a
+  similar-looking symptom). New shared `_pcParseJson`/`_pcNetworkErrorMessage` helpers
+  distinguish "not JSON" from a genuine network failure, so the real fix (reload the page
+  for a fresh CSRF token) is what the user is told, instead of a dead-end generic message.
+  Pure template/JS fix — no backend change, no migration.

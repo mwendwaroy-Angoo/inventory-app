@@ -202,6 +202,36 @@
 var _pendingAction = null;
 var _pendingId = null;
 
+// 2026-08-13 live report (Roy, screenshot): every review/edit/delete/respond
+// action on this page just showed a generic "Hitilafu ya mtandao" (network
+// error) with zero further signal. Root cause traced, not guessed: every
+// fetch() here blindly calls r.json() with no check that the response is
+// actually JSON — if Django's CSRF middleware intercepts the POST first
+// (a stale/rotated token — e.g. the session was refreshed elsewhere via
+// SingleSessionMiddleware, or the page has simply been open a long time),
+// it returns core.views.csrf_failure_view's HTML redirect instead of ever
+// reaching this view, and r.json() throws parsing HTML as JSON — landing
+// in .catch() with a message that tells the user nothing they can act on.
+// Confirmed the service worker is NOT involved (sw.js skips every non-GET
+// request outright, POST always goes straight to network). _pcParseJson
+// distinguishes "not JSON" from a real network failure so the catch
+// handler can tell the user the ACTUAL fix (reload the page) instead of a
+// dead-end generic message.
+function _pcParseJson(r) {
+  var ct = r.headers.get('content-type') || '';
+  if (ct.indexOf('application/json') === -1) {
+    var err = new Error('not-json-response');
+    err._pcNotJson = true;
+    throw err;
+  }
+  return r.json();
+}
+function _pcNetworkErrorMessage(err) {
+  return (err && err._pcNotJson)
+    ? 'Ombi halikufaulu — huenda kikao chako kimeisha muda wake. Tafadhali sasisha (reload) ukurasa kisha jaribu tena.'
+    : 'Hitilafu ya mtandao.';
+}
+
 /* ── Reason Chips popover (2026-07-25) — shared non-blocking reason-capture
    component, copy-pasted per template since there's no shared JS bundle in
    this app — same convention as showModal/hideModal above). */
@@ -365,12 +395,12 @@ function _submitPettyCashReview(entryId, action, note) {
     method: 'POST', body: body,
     headers: {'X-CSRFToken': '{{ csrf_token }}'}
   })
-    .then(function(r){ return r.json(); })
+    .then(_pcParseJson)
     .then(function(d){
       if (d.ok) { _pcApplyResult(entryId, d); }
       else { alert(d.error || 'Hitilafu.'); }
     })
-    .catch(function(){ alert('Hitilafu ya mtandao.'); });
+    .catch(function(err){ alert(_pcNetworkErrorMessage(err)); });
 }
 
 document.getElementById('pc-review-confirm-btn').addEventListener('click', function() {
@@ -388,7 +418,7 @@ document.getElementById('pc-review-confirm-btn').addEventListener('click', funct
     method: 'POST', body: body,
     headers: {'X-CSRFToken': '{{ csrf_token }}'}
   })
-    .then(function(r){ return r.json(); })
+    .then(_pcParseJson)
     .then(function(d){
       btn.disabled = false; btn.textContent = 'Thibitisha';
       if (d.ok) {
@@ -399,7 +429,7 @@ document.getElementById('pc-review-confirm-btn').addEventListener('click', funct
         alert(d.error || 'Hitilafu.');
       }
     })
-    .catch(function(){ btn.disabled=false; btn.textContent='Thibitisha'; alert('Hitilafu ya mtandao.'); });
+    .catch(function(err){ btn.disabled=false; btn.textContent='Thibitisha'; alert(_pcNetworkErrorMessage(err)); });
 });
 
 /* ── Staff self-service (2026-07-26, item 1) — edit own pending entry, or
@@ -421,7 +451,7 @@ window.openEditPetty = function (entryId, currentAmount, currentDesc) {
   fetch('/petty-cash/' + entryId + '/edit/', {
     method: 'POST', body: body, headers: {'X-CSRFToken': '{{ csrf_token }}'},
   })
-    .then(function (r) { return r.json(); })
+    .then(_pcParseJson)
     .then(function (d) {
       if (d.ok) {
         pcShowToast(d.resubmitted ? 'Imesahihishwa — imetumwa tena kwa ukaguzi.' : 'Imesahihishwa.');
@@ -429,7 +459,7 @@ window.openEditPetty = function (entryId, currentAmount, currentDesc) {
       }
       else { alert(d.error || 'Hitilafu.'); }
     })
-    .catch(function () { alert('Hitilafu ya mtandao.'); });
+    .catch(function (err) { alert(_pcNetworkErrorMessage(err)); });
 };
 
 // 2026-08-11 live request (Roy): staff may delete their own entry outright
@@ -440,7 +470,7 @@ window.deletePettyCash = function (entryId) {
   fetch('/petty-cash/' + entryId + '/delete/', {
     method: 'POST', body: body, headers: {'X-CSRFToken': '{{ csrf_token }}'},
   })
-    .then(function (r) { return r.json(); })
+    .then(_pcParseJson)
     .then(function (d) {
       if (d.ok) {
         pcShowToast('Imefutwa.');
@@ -448,7 +478,7 @@ window.deletePettyCash = function (entryId) {
         if (card) card.remove();
       } else { alert(d.error || 'Hitilafu.'); }
     })
-    .catch(function () { alert('Hitilafu ya mtandao.'); });
+    .catch(function (err) { alert(_pcNetworkErrorMessage(err)); });
 };
 
 window.openRespondPetty = function (entryId, anchorEl) {
@@ -466,12 +496,12 @@ window.openRespondPetty = function (entryId, anchorEl) {
       fetch('/petty-cash/' + entryId + '/respond/', {
         method: 'POST', body: body, headers: {'X-CSRFToken': '{{ csrf_token }}'},
       })
-        .then(function (r) { return r.json(); })
+        .then(_pcParseJson)
         .then(function (d) {
           if (d.ok) { pcShowToast('Maelezo yametumwa kwa mmiliki.'); location.reload(); }
           else { alert(d.error || 'Hitilafu.'); }
         })
-        .catch(function () { alert('Hitilafu ya mtandao.'); });
+        .catch(function (err) { alert(_pcNetworkErrorMessage(err)); });
     },
   });
 };
