@@ -1202,6 +1202,27 @@ function homeForceCloseShift(shiftId, staffName) {
                 var link      = isKitchen ? '/kitchen/' : '/bar/';
                 var linkTxt   = isKitchen ? 'Kitchen ›' : 'Bar Board ›';
                 var border    = idx < openShifts.length - 1 ? 'border-bottom:1px solid #222;' : '';
+                // 2026-08-13 live report (Roy): a waitress's "Muda" (elapsed)
+                // genuinely, correctly stays 0h 00m for as long as a real
+                // till custodian (bartender/kitchen staff) is concurrently
+                // open on her station — that's this app's own deliberate
+                // "she's a helper, not the custodian" accountability rule
+                // (_shift_active_segments), not a frozen clock. Shown with
+                // no explanation it just looks broken. Surface a genuine,
+                // client-computed wall-clock duration alongside it so it's
+                // clear "Muda: 0h 00m" means something specific, not stuck —
+                // matching the same real-time-vs-accountability split
+                // already built for her own screens (waitress_screen.html /
+                // bar_board.html), extended here to the owner's dashboard.
+                var timeLabel = s.elapsed;
+                if (s.staff_role === 'waitress' && s.started_at_iso) {
+                    var _wallMs  = Date.now() - new Date(s.started_at_iso).getTime();
+                    var _wallSec = Math.max(0, Math.floor(_wallMs / 1000));
+                    var _wh = Math.floor(_wallSec / 3600);
+                    var _wm = Math.floor((_wallSec % 3600) / 60);
+                    var _wallStr = _wh + 'h ' + (_wm < 10 ? '0' : '') + _wm + 'm';
+                    timeLabel = 'Muda: ' + s.elapsed + ' · Tangu Kufungua: ' + _wallStr;
+                }
                 // 2026-08-02: owner (or a delegated manager, acting on a
                 // non-manager staffer) may force-close this shift on the
                 // spot instead of waiting for the auto-close sweep.
@@ -1216,7 +1237,7 @@ function homeForceCloseShift(shiftId, staffName) {
                         '<span style="width:8px; height:8px; border-radius:50%; background:#5dde7a; display:inline-block; flex-shrink:0;"></span>' +
                         '<span style="color:#5dde7a; font-size:.75rem; font-weight:700;">' + icon + ' ' + label + '</span>' +
                         '<span style="color:#b0b0b0; font-size:.78rem;">' + s.staff_name + '</span>' +
-                        '<span style="color:#888; font-size:.75rem;">· ' + s.started_at + ' (' + s.elapsed + ')</span>' +
+                        '<span style="color:#888; font-size:.75rem;">· ' + s.started_at + ' (' + timeLabel + ')</span>' +
                     '</div>' +
                     '<div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:center;">' +
                         '<span style="font-size:.75rem; color:#b0b0b0;">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong></span>' +

@@ -32353,6 +32353,26 @@ class WaitressLiveShiftTimerTest(TestCase):
         # existing, deliberate accountability design.
         self.assertEqual(data['shift']['elapsed'], '0h 00m')
 
+    def test_all_shifts_payload_carries_started_at_iso_for_owner_dashboard(self):
+        """2026-08-13 live report (Roy): the owner's home-dashboard 'Active
+        Shifts' meter showed a waitress's Muda permanently stuck at 0h 00m
+        with no explanation (correct per the accountability design above,
+        but looked broken with nothing to distinguish it from a frozen
+        clock). all_shifts_data must carry a real, parseable timestamp so
+        the dashboard can show a genuine wall-clock duration alongside it."""
+        owner = User.objects.create_user(username='wt_owner', password='x')
+        UserProfile.objects.create(user=owner, business=self.biz, role='owner')
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        self.client.force_login(owner)
+        resp = self.client.get('/bar/shift/active/')
+        data = resp.json()
+        row = next(s for s in data['all_shifts'] if s['id'] == shift.id)
+        self.assertEqual(row['started_at_iso'], shift.started_at.isoformat())
+        self.assertEqual(row['staff_role'], 'waitress')
+
 
 class ShiftHistorySearchTest(TestCase):
     """2026-08-12 live request (Roy): shift_history() had zero filter params

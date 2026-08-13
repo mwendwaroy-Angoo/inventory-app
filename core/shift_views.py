@@ -1360,6 +1360,7 @@ def active_shift_api(request):
             'covers_both': _covers_both(s),
             'status':      s.status,
             'started_at':  timezone.localtime(s.started_at).strftime('%H:%M'),
+            'started_at_iso': s.started_at.isoformat(),
             'elapsed':     rec['elapsed'],
             'cash_sales':  rec['cash_sales'],
             'mpesa_sales': rec['mpesa_sales'],
