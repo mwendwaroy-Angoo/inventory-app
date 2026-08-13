@@ -6923,17 +6923,32 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   exclusion), and the item-vs-customer-name search-scope regression lock. One migration
   (0163, additive). 1878 tests pass.
 - Fix: Petty Cash review showed a dead-end "Hitilafu ya mtandao" with zero real signal
-  (2026-08-13), live screenshot. Traced (not guessed): every fetch() in
-  `petty_cash_list.html` (review/edit/delete/respond — 5 call sites) blindly called
-  `r.json()` with no check the response actually IS JSON. If Django's CSRF middleware
-  intercepts a POST first (a stale/rotated token — e.g. the session was refreshed
-  elsewhere via `SingleSessionMiddleware`, or the page has simply been open a long time),
-  it returns `core.views.csrf_failure_view`'s HTML redirect instead of ever reaching the
-  view — `r.json()` throws parsing HTML as JSON, landing in `.catch()` with a message
-  that tells the user nothing actionable. Confirmed the service worker is NOT involved
-  (`sw.js` skips every non-GET request outright at its very first line — POST always goes
-  straight to network, ruling out the stale-cache theory this app has hit before for a
-  similar-looking symptom). New shared `_pcParseJson`/`_pcNetworkErrorMessage` helpers
-  distinguish "not JSON" from a genuine network failure, so the real fix (reload the page
-  for a fresh CSRF token) is what the user is told, instead of a dead-end generic message.
-  Pure template/JS fix — no backend change, no migration.
+  (2026-08-13), live screenshot. **This is the THIRD distinct time this app has hit
+  "generic Hitilafu ya mtandao masking the real cause," each with a DIFFERENT underlying
+  mechanism** — worth knowing before assuming a future instance shares a root cause:
+  (1) 2026-07-12 stock take — the VIEW returned `redirect()` instead of `JsonResponse`,
+  so JS fetch followed it and got HTML (server-side bug); (2) 2026-07-23 tabs drawer —
+  `quick_sell.html`'s handlers discarded the response body on a non-2xx status before
+  parsing, masking a real `{ok:false, error:'...'}` JSON payload (client-side bug), on
+  top of a genuine 404 from `_allowed_tab_sources` never returning `'qs'`; (3) this one.
+  **Confirmed mechanism here**: every fetch() in `petty_cash_list.html`
+  (review/edit/delete/respond — 5 call sites) blindly called `r.json()` with no check the
+  response actually IS JSON, so anything returning HTML makes `.json()` throw while
+  parsing and land in `.catch()` under a message naming the wrong problem. Also confirmed
+  the service worker is NOT involved (`sw.js` skips every non-GET request at its first
+  line — POST always goes straight to network, ruling out the stale-cache theory this app
+  has hit before for similar-looking symptoms). **NOT confirmed — deliberately not
+  guessed**: which candidate actually produced Roy's screenshot; no server log was
+  available and it wasn't reproduced. Three are live on this app and produce an identical
+  symptom: a 403 from `csrf_failure_view` (stale/rotated token — `SingleSessionMiddleware`
+  refreshing the session elsewhere, or a long-open page), a 5xx HTML error page from
+  Render/gunicorn (very live — three 502 incidents on 2026-08-09/11/12 from thread
+  starvation), or a view returning `redirect()` (mechanism #1 above, already fixed once).
+  Rather than hardcode one explanation, new shared `_pcParseJson`/`_pcNetworkErrorMessage`
+  helpers capture `r.status` and derive the message from it — 403 → "session expired,
+  reload"; 5xx → "server busy, wait, reload to see real state, retry"; other → generic
+  with the status code shown; a genuine network failure (fetch itself rejecting) stays
+  distinct from all of them. Deliberately avoids asserting "nothing changed" on a 5xx —
+  `review_petty_cash` isn't wrapped in a transaction, so a partial write can't be ruled
+  out; the message tells the user to reload and check instead of overclaiming. Pure
+  template/JS fix — no backend change, no migration.

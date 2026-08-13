@@ -204,32 +204,59 @@ var _pendingId = null;
 
 // 2026-08-13 live report (Roy, screenshot): every review/edit/delete/respond
 // action on this page just showed a generic "Hitilafu ya mtandao" (network
-// error) with zero further signal. Root cause traced, not guessed: every
-// fetch() here blindly calls r.json() with no check that the response is
-// actually JSON — if Django's CSRF middleware intercepts the POST first
-// (a stale/rotated token — e.g. the session was refreshed elsewhere via
-// SingleSessionMiddleware, or the page has simply been open a long time),
-// it returns core.views.csrf_failure_view's HTML redirect instead of ever
-// reaching this view, and r.json() throws parsing HTML as JSON — landing
-// in .catch() with a message that tells the user nothing they can act on.
-// Confirmed the service worker is NOT involved (sw.js skips every non-GET
-// request outright, POST always goes straight to network). _pcParseJson
-// distinguishes "not JSON" from a real network failure so the catch
-// handler can tell the user the ACTUAL fix (reload the page) instead of a
-// dead-end generic message.
+// error) with zero further signal.
+//
+// CONFIRMED mechanism: every fetch() here blindly called r.json() with no
+// check that the response is actually JSON. Anything that returns HTML
+// instead — and there are at least three real candidates on this app, see
+// below — makes r.json() throw while parsing, landing in .catch() with a
+// message that names the wrong problem and offers no way forward.
+// Also confirmed the service worker is NOT involved (sw.js skips every
+// non-GET request at its first line, so POST always goes straight to
+// network) — ruling out the stale-cache theory this app has hit before for
+// similar-looking symptoms.
+//
+// NOT confirmed: which of the candidates actually produced Roy's
+// screenshot — no server log was available and it wasn't reproduced. All
+// three are live possibilities on this app and produce an identical
+// symptom, so the message is now derived from the HTTP status rather than
+// guessing one cause:
+//   403 → CSRF token rotated/stale (SingleSessionMiddleware refreshed the
+//         session elsewhere, or the page sat open a long time) —
+//         core.views.csrf_failure_view returns an HTML redirect and the
+//         view never runs. Real fix: reload for a fresh token.
+//   5xx → Render/gunicorn returning an HTML error page. Very live on this
+//         app: three 502 incidents in the week before this (2026-08-09/11/12,
+//         thread starvation from synchronous SMS). Real fix: wait, retry.
+//   other → a view returning redirect() instead of JsonResponse — the exact
+//         server-side bug already fixed once for stock take (2026-07-12).
+// This is the third distinct time this app has hit "generic Hitilafu ya
+// mtandao masking the real cause" (see also 2026-07-12 and 2026-07-23);
+// each had a different underlying mechanism, hence status-based reporting
+// rather than one hardcoded explanation.
 function _pcParseJson(r) {
   var ct = r.headers.get('content-type') || '';
   if (ct.indexOf('application/json') === -1) {
     var err = new Error('not-json-response');
     err._pcNotJson = true;
+    err._pcStatus = r.status;
     throw err;
   }
   return r.json();
 }
 function _pcNetworkErrorMessage(err) {
-  return (err && err._pcNotJson)
-    ? 'Ombi halikufaulu — huenda kikao chako kimeisha muda wake. Tafadhali sasisha (reload) ukurasa kisha jaribu tena.'
-    : 'Hitilafu ya mtandao.';
+  if (!err || !err._pcNotJson) {
+    return 'Hitilafu ya mtandao — angalia intaneti yako kisha jaribu tena.';
+  }
+  var s = err._pcStatus;
+  if (s === 403) {
+    return 'Kikao chako kimeisha muda wake. Sasisha (reload) ukurasa kisha jaribu tena.';
+  }
+  if (s >= 500) {
+    return 'Seva ina shughuli nyingi kwa sasa (hitilafu ' + s + '). Subiri kidogo, '
+         + 'sasisha ukurasa uone hali halisi, kisha jaribu tena.';
+  }
+  return 'Ombi halikufaulu (hitilafu ' + s + '). Sasisha (reload) ukurasa kisha jaribu tena.';
 }
 
 /* ── Reason Chips popover (2026-07-25) — shared non-blocking reason-capture
