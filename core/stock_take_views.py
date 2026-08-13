@@ -683,10 +683,14 @@ def adjust_stock_balance(request, item_id):
 
     actual_str = request.POST.get('actual_count', '').strip()
     note = request.POST.get('note', '').strip()
-    # "Not a real loss" is an owner/manager judgment call only (unchanged
-    # rule, now actually enforced) — a delegated staffer's submission of
-    # this flag is silently ignored rather than trusted.
-    no_real_loss = is_owner and request.POST.get('no_real_loss') in ('1', 'true', 'on')
+    # 2026-08-12 (Roy, standing principle): a delegated permission toggle
+    # grants the FULL function, not a restricted subset of it — same rule
+    # now applied to can_manage_kegs' Tupa/Pokea gap. A can_adjust_stock
+    # staffer's "not a real loss" judgment is honored exactly like the
+    # owner/manager's, matching the checkbox's own visibility in
+    # stock_list.html.
+    can_flag_no_loss = is_owner or getattr(up, 'can_adjust_stock', False)
+    no_real_loss = can_flag_no_loss and request.POST.get('no_real_loss') in ('1', 'true', 'on')
 
     if not actual_str:
         return JsonResponse({'ok': False, 'error': 'Taja hesabu halisi.'}, status=400)

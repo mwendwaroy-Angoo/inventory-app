@@ -331,6 +331,9 @@ from core.owner_consumption_views import (
     owner_consumption_list,
     void_owner_consumption,
     settle_owner_consumption,
+    propose_transfer_to_owner,
+    propose_transfer_from_owner,
+    respond_owner_transfer,
 )
 from core.reset_views import (
     reset_sales_intro,
@@ -417,6 +420,9 @@ urlpatterns = [
     path("stock/owner-consumption/list/", owner_consumption_list, name="owner_consumption_list"),
     path("stock/owner-consumption/<int:txn_id>/void/", void_owner_consumption, name="void_owner_consumption"),
     path("stock/owner-consumption/<int:txn_id>/settle/", settle_owner_consumption, name="settle_owner_consumption"),
+    path("stock/owner-consumption/transfer/to-owner/", propose_transfer_to_owner, name="propose_transfer_to_owner"),
+    path("stock/owner-consumption/transfer/from-owner/", propose_transfer_from_owner, name="propose_transfer_from_owner"),
+    path("stock/owner-consumption/transfer/<int:request_id>/respond/", respond_owner_transfer, name="respond_owner_transfer"),
     path("stock/reset-sales/", reset_sales_intro, name="reset_sales_intro"),
     path("stock/reset-sales/backup/", reset_sales_backup_download, name="reset_sales_backup_download"),
     path("stock/reset-sales/confirm/", reset_sales_confirm, name="reset_sales_confirm"),

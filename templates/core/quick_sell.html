@@ -1385,7 +1385,7 @@
         <option value="">— Chagua item —</option>
         {% for item in items %}
         {% if not item.is_keg and not item.is_produce %}
-        <option value="{{ item.id }}" data-unit="{{ item.unit }}">{{ item.description }} ({{ item.unit }})</option>
+        <option value="{{ item.id }}" data-unit="{{ item.unit }}" data-price="{{ item.selling_price|default:0 }}">{{ item.description }} ({{ item.unit }})</option>
         {% endif %}
         {% endfor %}
       </select>
@@ -1396,9 +1396,15 @@
         <input type="number" id="ot-qty" min="0.01" step="0.01" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px;">
       </div>
       <div class="col-6">
-        <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:4px;">Maelezo (optional)</label>
-        <input type="text" id="ot-note" placeholder="e.g. personal use" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px;">
+        <!-- 2026-08-12 live request (Roy) — auto-fills from the item's own
+             selling_price × qty, editable if the real value differs. -->
+        <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:4px;">Bei (KES)</label>
+        <input type="number" id="ot-price" min="0" step="1" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px;">
       </div>
+    </div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:4px;">Maelezo (optional)</label>
+      <input type="text" id="ot-note" placeholder="e.g. personal use" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px;">
     </div>
     <div id="ot-error" style="color:#e87c96; font-size:0.82rem; margin-bottom:0.5rem; display:none;"></div>
     <button type="button" onclick="submitOwnerTook()"
@@ -4154,6 +4160,7 @@ window.openOwnerTookModal = function () {
   if (!overlay) return;
   document.getElementById('ot-error').style.display = 'none';
   document.getElementById('ot-qty').value = '';
+  document.getElementById('ot-price').value = '';
   document.getElementById('ot-note').value = '';
   document.getElementById('ot-item-select').value = '';
   document.getElementById('ot-unit-label').textContent = '';
@@ -4169,15 +4176,26 @@ document.getElementById('owner-took-overlay').addEventListener('click', function
   if (e.target === this) closeOwnerTookModal();
 });
 
+function _otRecalcPrice() {
+  var sel = document.getElementById('ot-item-select');
+  var opt = sel.options[sel.selectedIndex];
+  var unitPrice = opt ? parseFloat(opt.getAttribute('data-price') || '0') : 0;
+  var qty = parseFloat(document.getElementById('ot-qty').value) || 0;
+  document.getElementById('ot-price').value = (unitPrice * qty) ? (unitPrice * qty).toFixed(0) : '';
+}
+
 document.getElementById('ot-item-select').addEventListener('change', function () {
   var opt = this.options[this.selectedIndex];
   var unit = opt ? (opt.getAttribute('data-unit') || '') : '';
   document.getElementById('ot-unit-label').textContent = unit ? '(' + unit + ')' : '';
+  _otRecalcPrice();
 });
+document.getElementById('ot-qty').addEventListener('input', _otRecalcPrice);
 
 window.submitOwnerTook = function () {
   var itemId = document.getElementById('ot-item-select').value;
   var qty    = document.getElementById('ot-qty').value;
+  var price  = document.getElementById('ot-price').value;
   var note   = document.getElementById('ot-note').value;
   var errEl  = document.getElementById('ot-error');
   errEl.style.display = 'none';
@@ -4195,6 +4213,7 @@ window.submitOwnerTook = function () {
   body.append('csrfmiddlewaretoken', csrf);
   body.append('item_id', itemId);
   body.append('qty', qty);
+  body.append('price', price);
   body.append('note', note);
   body.append('idempotency_token', (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
 

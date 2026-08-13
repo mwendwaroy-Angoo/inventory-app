@@ -278,6 +278,35 @@
   </div>
 </div>
 {% endif %}
+{% if my_open_shift_started_at %}
+<!-- 2026-08-12 live request (Roy) — a plain, live-ticking "time since you
+     opened" clock, deliberately separate from the accountability "Muda"
+     figure used for cash-variance purposes (see order_views.py::
+     waitress_screen's own comment on why they must never be the same
+     number). Client-side setInterval, no polling needed. -->
+<div id="ws-shift-timer-banner" style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3);
+            border-radius:10px; padding:0.6rem 1rem; margin-bottom:0.75rem; display:flex; align-items:center;
+            justify-content:space-between; gap:0.6rem;">
+  <span style="color:#b0b0b0; font-size:0.82rem;">⏱ Umekuwa kwenye shift kwa</span>
+  <span id="ws-shift-timer" style="color:var(--gold); font-weight:700; font-size:0.95rem; font-variant-numeric:tabular-nums;">—</span>
+</div>
+<script>
+(function () {
+  var started = new Date('{{ my_open_shift_started_at }}');
+  var el = document.getElementById('ws-shift-timer');
+  function tick() {
+    var secs = Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
+    var h = Math.floor(secs / 3600);
+    var m = Math.floor((secs % 3600) / 60);
+    var s = secs % 60;
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    el.textContent = h + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+</script>
+{% endif %}
 <div class="ws-header">
   <h1 class="ws-title">🍺 Order Desk</h1>
   <a href="{% url 'bar_board' %}" style="color:var(--gold); font-size:.82rem; text-decoration:none; white-space:nowrap;">

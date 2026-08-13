@@ -44,6 +44,34 @@
   </div>
 </div>
 
+{% if pending_to_owner %}
+<div class="mb-4">
+  <h6 style="color:#e2c36e;">⏳ Vinavyosubiri Uamuzi Wako</h6>
+  {% for req in pending_to_owner %}
+  <div class="oc-card" id="oc-pending-{{ req.id }}">
+    <div style="flex:1; min-width:180px;">
+      <div style="color:#f0ece4; font-weight:600; font-size:.92rem;">
+        {{ req.source_txn.item.description }} — KES {{ req.source_txn.sale_amount|floatformat:0 }}
+      </div>
+      <div style="color:#b0b0b0; font-size:.82rem; margin-top:.1rem;">
+        Ilikuwa ya {{ req.source_txn.recipient }}
+      </div>
+      <div style="color:#555; font-size:.75rem; margin-top:.25rem;">
+        Ilipendekezwa na <strong style="color:#b0b0b0;">{{ req.requested_by.get_full_name|default:req.requested_by.username }}</strong>
+        — {{ req.requested_at|date:"d M, H:i" }}
+        {% if req.note %} · {{ req.note }}{% endif %}
+      </div>
+    </div>
+    <div class="oc-actions" style="width:100%;">
+      <button class="oc-btn" style="background:rgba(76,175,80,.1); border-color:rgba(76,175,80,.3); color:#4caf50;"
+              onclick="window.ocRespondTransfer({{ req.id }}, 'accept', this)">✓ Kubali</button>
+      <button class="oc-btn oc-btn-void" onclick="window.ocRespondTransfer({{ req.id }}, 'reject', this)">✕ Kataa</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% if not rows %}
 <div class="text-center py-5" style="color:#555;">
   <div style="font-size:2rem; margin-bottom:.5rem;">🥃</div>
@@ -56,6 +84,7 @@
   <div style="flex:1; min-width:180px;">
     <div style="color:#f0ece4; font-weight:600; font-size:.92rem;">
       {{ txn.item.description }} — {{ txn.qty|floatformat:"-2" }} {{ txn.item.unit }}
+      {% if txn.sale_amount %}<span style="color:#c9a84c;">— KES {{ txn.sale_amount|floatformat:0 }}</span>{% endif %}
     </div>
     <div style="color:#b0b0b0; font-size:.82rem; margin-top:.1rem;">{{ txn.recipient }}</div>
     <div style="color:#555; font-size:.75rem; margin-top:.25rem;">
@@ -80,6 +109,8 @@
   <div class="oc-actions" style="width:100%;">
     {% if is_owner_or_manager %}
     <button class="oc-btn oc-btn-settle" onclick="window.ocSettle({{ txn.id }}, this)">💰 Mmiliki Amelipa</button>
+    <button class="oc-btn" style="background:rgba(201,168,76,.1); border-color:rgba(201,168,76,.3); color:#e2c36e;"
+            onclick="window.ocTransferToCustomer({{ txn.id }}, this)">🔀 Hamishia kwa Mteja</button>
     {% endif %}
     {% if is_owner_or_manager or row.is_own %}
     <button class="oc-btn oc-btn-void" onclick="window.ocVoid({{ txn.id }}, this)">✕ Futa (Hitilafu)</button>
@@ -147,6 +178,44 @@ window.ocSettle = function (txnId, btn) {
       }
     })
     .catch(function () { alert('Network error'); btn.disabled = false; });
+};
+
+window.ocTransferToCustomer = function (txnId, btn) {
+  var name = window.prompt('Jina la mteja atakayelipa (au tab yake iliyopo)?');
+  if (!name || !name.trim()) return;
+  btn.disabled = true;
+  var body = new URLSearchParams({
+    txn_ids: String(txnId), dest_customer_name: name.trim(),
+    csrfmiddlewaretoken: '{{ csrf_token }}',
+  });
+  fetch('/stock/owner-consumption/transfer/from-owner/', { method: 'POST', body: body, credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      btn.disabled = false;
+      if (d.ok) {
+        ocToast(d.message || 'Ombi limetumwa.');
+      } else {
+        alert(d.error || 'Imeshindikana');
+      }
+    })
+    .catch(function () { alert('Network error'); btn.disabled = false; });
+};
+
+window.ocRespondTransfer = function (requestId, action, btn) {
+  btn.closest('.oc-actions').querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+  var body = new URLSearchParams({ action: action, csrfmiddlewaretoken: '{{ csrf_token }}' });
+  fetch('/stock/owner-consumption/transfer/' + requestId + '/respond/', { method: 'POST', body: body, credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        ocToast(d.message || 'Imekamilika.');
+        setTimeout(function () { location.reload(); }, 900);
+      } else {
+        alert(d.error || 'Imeshindikana');
+        btn.closest('.oc-actions').querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+      }
+    })
+    .catch(function () { alert('Network error'); });
 };
 </script>
 {% endblock %}

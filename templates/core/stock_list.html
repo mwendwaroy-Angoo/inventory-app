@@ -334,11 +334,13 @@
                      an actual financial loss that never happened. Shown only for
                      a shortage (negative variance) — a surplus never counts
                      toward wastage cost in the first place. -->
-                {% if user.userprofile.is_owner_or_manager %}
-                <!-- 2026-08-11: this judgment call stays owner/manager-only
-                     even for a staffer delegated can_adjust_stock — the
-                     backend already silently ignores this field from
-                     anyone else, hidden here to match. -->
+                {% if user.userprofile.is_owner_or_manager or user.userprofile.can_adjust_stock %}
+                <!-- 2026-08-12: widened from owner/manager-only to also
+                     include a can_adjust_stock-delegated staffer, per Roy's
+                     standing principle — a granted toggle carries the FULL
+                     function, not a restricted subset. Backend now honors
+                     this field from can_adjust_stock staff too (see
+                     adjust_stock_balance()). -->
                 <div class="mb-1" id="adj-noloss-row" style="display:none;">
                     <label style="display:flex; align-items:flex-start; gap:8px; font-size:0.8rem; color:#b0b0b0; cursor:pointer;">
                         <input type="checkbox" id="adj-no-real-loss" style="margin-top:0.2rem;">
@@ -465,9 +467,9 @@
         document.getElementById('adj-note').value                = '';
         document.getElementById('adj-variance-preview').textContent = '—';
         document.getElementById('adj-variance-preview').style.color = '#888';
-        // adj-no-real-loss / adj-noloss-row only render for owner/manager
-        // (2026-08-11) — null-guarded here since a delegated can_adjust_stock
-        // staffer never gets this element at all.
+        // adj-no-real-loss / adj-noloss-row render for owner/manager AND a
+        // can_adjust_stock-delegated staffer (2026-08-12) — still null-guarded
+        // here in case neither applies to the current viewer.
         var _adjNoLossCb = document.getElementById('adj-no-real-loss');
         if (_adjNoLossCb) _adjNoLossCb.checked = false;
         var _adjNoLossRow = document.getElementById('adj-noloss-row');

@@ -447,6 +447,29 @@ def bar_board(request):
             split_amount = Decimal('0')
         split_method = (request.POST.get('split_method') or '').strip()
 
+        # 2026-08-12 live request (Roy) — the "⏰ Haya ni Mauzo ya Nyuma"
+        # backdated-sale toggle, already on Kitchen Board and Quick Sell,
+        # never reached Bar Board's own keg-cart checkout at all. Mirrors
+        # kitchen_views.py::_kitchen_checkout()'s kb_backdated_at, adapted to
+        # this board's own payment options — the keg-cart payment selector
+        # only ever offers Cash/M-Pesa/Tab (no standalone Deni/credit radio
+        # the way Kitchen/Quick Sell have), so there is no 'credit' case to
+        # cover here. Never for Tab (an ongoing bill isn't a fixed past
+        # event) — the "not active_tab" gate is applied at each sale-
+        # creation call site below, once active_tab has actually been
+        # resolved.
+        bb_backdated_at = None
+        if payment_method in ('cash', 'mpesa'):
+            _bd_raw = (request.POST.get('backdated_at') or '').strip()
+            if _bd_raw:
+                try:
+                    from datetime import datetime as _dt
+                    _naive = _dt.strptime(_bd_raw, '%Y-%m-%dT%H:%M')
+                    from django.utils import timezone as _tz
+                    bb_backdated_at = _tz.make_aware(_naive, _tz.get_current_timezone())
+                except Exception:
+                    bb_backdated_at = None
+
         # 2026-07-31 live request — Roy: "customer paid cash 120... there is
         # a remainder" / "mpesa 100 then 20 cash and there is a remainder" —
         # no way to record a direct-sale checkout that's only PARTIALLY paid,
@@ -604,6 +627,7 @@ def bar_board(request):
                 _sale_txn = KegBarrel.record_sale_locked(
                     barrel.id, business, preset, qty, payment_method,
                     request.user, tab=active_tab,
+                    created_at=(bb_backdated_at if bb_backdated_at and not active_tab else None),
                 )
             except KegBarrel.DoesNotExist:
                 continue  # depleted between fetch and lock
@@ -851,10 +875,26 @@ def bar_board(request):
 @login_required
 @require_POST
 def receive_barrel(request):
-    """Owner/manager receives N sealed barrels from the distributor."""
+    """Owner/manager receives N sealed barrels from the distributor.
+
+    2026-08-12 (Roy, standing principle): a delegated can_manage_kegs
+    staffer may now also receive barrels, same two-step gate (open shift
+    required) as tap_barrel/deplete_barrel — a granted toggle should carry
+    the full function, not a restricted subset of it.
+    """
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner_or_manager', False):
-        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not is_owner:
+        if not getattr(up, 'can_manage_kegs', False):
+            return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
 
     business = up.business
 
@@ -1301,10 +1341,25 @@ def edit_barrel(request, barrel_id):
 @login_required
 @require_POST
 def discard_barrel(request, barrel_id):
-    """Owner/manager writes off a barrel (returned, spoiled, wrong delivery)."""
+    """Owner/manager writes off a barrel (returned, spoiled, wrong delivery).
+
+    2026-08-12 (Roy, standing principle): a delegated can_manage_kegs
+    staffer may now also discard a barrel, same two-step gate (open shift
+    required) as tap_barrel/deplete_barrel/receive_barrel.
+    """
     up = _get_up(request)
-    if not up or not getattr(up, 'is_owner_or_manager', False):
-        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not is_owner:
+        if not getattr(up, 'can_manage_kegs', False):
+            return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
 
     barrel = get_object_or_404(KegBarrel, id=barrel_id, business=up.business)
 

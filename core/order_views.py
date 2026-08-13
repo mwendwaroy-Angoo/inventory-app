@@ -106,6 +106,23 @@ def waitress_screen(request):
     is_owner = getattr(up, 'is_owner', False)
     has_open_shift = Shift.objects.filter(business=business, status='OPEN').exists()
 
+    # 2026-08-12 live request (Roy) — the waitress had no way to see how long
+    # she'd been on shift; the app's own accountability "elapsed"/"Muda" figure
+    # is deliberately reduced by any overlapping bar/kitchen custodian shift
+    # (see _shift_active_segments()'s own docstring), so reusing it here would
+    # sit near zero almost the whole time she's on shift, for a reason that has
+    # nothing to do with "how long has she personally been clocked in." This is
+    # a SEPARATE, plain wall-clock figure — never reuses or renames the
+    # accountability value, which stays exactly as it is for cash-variance
+    # purposes.
+    my_open_shift_started_at = None
+    if up.role == 'waitress':
+        my_shift = Shift.objects.filter(
+            business=business, staff=request.user, status='OPEN',
+        ).order_by('-started_at').first()
+        if my_shift:
+            my_open_shift_started_at = my_shift.started_at.isoformat()
+
     return render(request, 'core/bar/waitress_screen.html', {
         'keg_items':      keg_items,
         'other_items':    other_items,
@@ -116,6 +133,7 @@ def waitress_screen(request):
         'business':       business,
         'has_open_shift': has_open_shift,
         'is_waitress':    getattr(up, 'role', '') == 'waitress',
+        'my_open_shift_started_at': my_open_shift_started_at,
     })
 
 

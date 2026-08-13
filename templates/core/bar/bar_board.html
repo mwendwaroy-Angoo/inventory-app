@@ -743,6 +743,12 @@
                 text-decoration:none; white-space:nowrap;">
         📊 Hesabu
       </a>
+      {% endif %}
+      {% if can_manage_kegs %}
+      <!-- 2026-08-12 (Roy, standing principle): moved out of the is_owner-only
+           block above — a can_manage_kegs-delegated staffer may now also
+           receive barrels (backend already accepts this, see receive_barrel()).
+           can_manage_kegs context var is already "owner OR delegated staffer". -->
       <button class="btn btn-gold btn-sm" onclick="window.openReceiveModal()">
         + Pokea Barrel
       </button>
@@ -1117,6 +1123,26 @@
            style="background:#111; border:1px solid #444; color:#f0ece4; border-radius:8px;
                   padding:5px 10px; font-size:0.83rem; width:100%;">
   </div>
+  <!-- 2026-08-12 live request (Roy) — catch-up posting for keg pours missed
+       on a busy day, mirroring Kitchen Board/Quick Sell's own backdate
+       toggle. Cash/M-Pesa direct sale only (this cart has no standalone
+       Deni/credit radio, only Cash/M-Pesa/Tab). -->
+  <div id="keg-backdate-toggle-row" style="display:none; width:100%; margin-top:6px; padding:0 0.5rem;">
+    <button type="button" onclick="window.toggleBarBackdate()"
+            style="width:100%; background:rgba(255,152,0,.08); border:1px solid rgba(255,152,0,.3);
+                   border-radius:6px; color:#ff9800; font-size:.78rem; padding:.35rem .6rem; cursor:pointer;">
+      🕐 Haya ni Mauzo ya Nyuma (jana n.k.)
+    </button>
+  </div>
+  <div id="keg-backdate-row" style="display:none; width:100%; margin-top:6px; padding:0 0.5rem;">
+    <label style="color:#b0b0b0; font-size:.75rem; display:block; margin-bottom:3px;">
+      Tarehe na saa halisi ya mauzo haya
+    </label>
+    <input type="datetime-local" id="keg-backdated-at" class="form-control form-control-sm">
+    <div style="font-size:.7rem; color:#666; margin-top:.25rem;">
+      Itaingia kwenye hesabu ya SIKU HIYO, si ya leo — mauzo ya leo hayataguswa.
+    </div>
+  </div>
   <div style="display:none;">
   </div>
 </div>
@@ -1136,6 +1162,7 @@
   <input type="hidden" name="split_method"   id="keg-split-method-input" value="">
   <input type="hidden" name="partial_cash"   id="keg-partial-cash-input" value="">
   <input type="hidden" name="partial_mpesa"  id="keg-partial-mpesa-input" value="">
+  <input type="hidden" name="backdated_at"   id="keg-backdated-at-input" value="">
   <input type="hidden" name="idempotency_token" id="keg-idem-token" value="">
 </form>
 
@@ -2148,7 +2175,7 @@
           actionHtml += '<button class="keg-owner-btn" onclick="event.stopPropagation();window.markBarrelDepleted(' +
             kg.item_id + ',' + kg.tapped_barrel_id + ')">Imekwisha</button>';
         }
-        if (QS_IS_OWNER) {
+        if (canManageBarrel) {
           actionHtml += '<button class="keg-owner-btn" style="flex:0 0 auto;padding:3px 8px;" ' +
             'onclick="window.openKegMoreMenu(' + kg.item_id + ', event)">⋯</button>';
         }
@@ -2158,7 +2185,7 @@
           '<button class="keg-owner-btn" style="flex:unset;padding:3px 10px;" ' +
           'onclick="event.stopPropagation();window.openTapModal(' + kg.item_id + ',' + kg.next_sealed_barrel_id + ')">' +
           'Fungua Barrel (' + kg.sealed_barrels + ' sealed)</button>' +
-          (QS_IS_OWNER
+          (canManageBarrel
             ? '<button class="keg-owner-btn" style="flex:0 0 auto;padding:3px 8px;" ' +
               'onclick="window.openKegMoreMenu(' + kg.item_id + ', event)">⋯</button>'
             : '') +
@@ -2578,6 +2605,17 @@
     document.getElementById('keg-partial-cash-input').value = partialCashVal;
     document.getElementById('keg-partial-mpesa-input').value = partialMpesaVal;
 
+    // 2026-08-12 — backdate: only meaningful for a direct Cash/M-Pesa sale.
+    var backdatedAtVal = '';
+    if (method === 'cash' || method === 'mpesa') {
+      var bdRow = document.getElementById('keg-backdate-row');
+      var bdInput = document.getElementById('keg-backdated-at');
+      if (bdRow && bdRow.style.display !== 'none' && bdInput && bdInput.value) {
+        backdatedAtVal = bdInput.value;
+      }
+    }
+    document.getElementById('keg-backdated-at-input').value = backdatedAtVal;
+
     document.getElementById('keg-cart-input').value    = JSON.stringify(cartArray);
     document.getElementById('keg-payment-input').value = method;
     document.getElementById('keg-idem-token').value =
@@ -2753,9 +2791,12 @@
   /* ════════════════════════════════════════════════════════
      "⋯" MORE MENU — Hariri (cost/target edit) + Tupa (write-off),
      collapsed off the main action row (2026-08-11, see the comment
-     above canManageBarrel in renderKegs()). Owner-only, matching the
-     buttons it replaces — no separate permission check needed here
-     since the "⋯" button itself only ever renders for QS_IS_OWNER.
+     above canManageBarrel in renderKegs()).
+     2026-08-12 (Roy, standing principle): the "⋯" button itself now also
+     renders for a can_manage_kegs-delegated staffer (not just QS_IS_OWNER)
+     since Tupa is now delegatable too — but Hariri (a cost/target
+     correction, a real financial-figure decision) stays owner/manager-only,
+     gated here explicitly rather than by the menu's own visibility.
   ════════════════════════════════════════════════════════ */
   window.openKegMoreMenu = function (itemId, ev) {
     ev.stopPropagation();
@@ -2771,24 +2812,26 @@
       'box-shadow:0 4px 14px rgba(0,0,0,.5);min-width:130px;' +
       'display:flex;flex-direction:column;gap:.3rem;';
 
-    var editBtn = document.createElement('button');
-    editBtn.className = 'keg-owner-btn';
-    editBtn.style.width = '100%';
-    editBtn.textContent = '✏️ Hariri';
-    editBtn.onclick = function (e) {
-      e.stopPropagation();
-      menu.remove();
-      if (kg.tapped_barrel_id) {
-        window.openEditModal(kg.tapped_barrel_id, 'TAPPED', kg.tapped_barrel_cost,
-          kg.tapped_barrel_target, 0, 0, kg.keg_type || '');
-      } else if (kg.next_sealed_barrel_id) {
-        window.openEditModal(kg.next_sealed_barrel_id, 'SEALED', kg.next_sealed_cost,
-          kg.next_sealed_target, kg.next_sealed_gross, kg.next_sealed_tare, kg.keg_type || '');
-      }
-    };
-    menu.appendChild(editBtn);
+    if (QS_IS_OWNER) {
+      var editBtn = document.createElement('button');
+      editBtn.className = 'keg-owner-btn';
+      editBtn.style.width = '100%';
+      editBtn.textContent = '✏️ Hariri';
+      editBtn.onclick = function (e) {
+        e.stopPropagation();
+        menu.remove();
+        if (kg.tapped_barrel_id) {
+          window.openEditModal(kg.tapped_barrel_id, 'TAPPED', kg.tapped_barrel_cost,
+            kg.tapped_barrel_target, 0, 0, kg.keg_type || '');
+        } else if (kg.next_sealed_barrel_id) {
+          window.openEditModal(kg.next_sealed_barrel_id, 'SEALED', kg.next_sealed_cost,
+            kg.next_sealed_target, kg.next_sealed_gross, kg.next_sealed_tare, kg.keg_type || '');
+        }
+      };
+      menu.appendChild(editBtn);
+    }
 
-    if (kg.tapped_barrel_id) {
+    if (kg.tapped_barrel_id && (QS_IS_OWNER || QS_CAN_MANAGE_KEGS)) {
       var discardBtn = document.createElement('button');
       discardBtn.className = 'keg-owner-btn btn-rs';
       discardBtn.style.width = '100%';
@@ -4753,6 +4796,9 @@
           '<span style="width:8px; height:8px; border-radius:50%; background:' + statusColor + '; display:inline-block;"></span>' +
           '<span style="color:' + statusColor + '; font-size:.78rem; font-weight:700;">' + statusLabel + '</span>' +
           '<span style="color:#b0b0b0; font-size:.8rem;">' + s.staff_name + ' · started ' + s.started_at + ' (' + s.elapsed + ')</span>' +
+          (IS_WAITRESS && s.is_mine && s.status === 'OPEN' && s.started_at_iso
+            ? ' <span id="wb-shift-timer" style="color:var(--gold); font-weight:700; font-size:.8rem; font-variant-numeric:tabular-nums;">—</span>'
+            : '') +
         '</div>' +
         '<div style="display:flex; align-items:center; gap:.5rem;">' +
           closeBtnHtml + histLink +
@@ -4775,7 +4821,29 @@
           : '') +
         varHtml +
       '</div>';
+
+    // 2026-08-12 — waitress-only live wall-clock timer, deliberately separate
+    // from the accountability "elapsed"/Muda figure printed just above (see
+    // order_views.py::waitress_screen's own comment on why they must never
+    // be the same number). Re-armed on every render call (loadShift polls
+    // periodically) — a fresh setInterval each time is harmless here since
+    // the old one is always cleared first.
+    if (_wbShiftTimerInterval) { clearInterval(_wbShiftTimerInterval); _wbShiftTimerInterval = null; }
+    if (IS_WAITRESS && s.is_mine && s.status === 'OPEN' && s.started_at_iso) {
+      var _wbStarted = new Date(s.started_at_iso);
+      var _wbTick = function () {
+        var elEl = document.getElementById('wb-shift-timer');
+        if (!elEl) { clearInterval(_wbShiftTimerInterval); _wbShiftTimerInterval = null; return; }
+        var secs = Math.max(0, Math.floor((Date.now() - _wbStarted.getTime()) / 1000));
+        var h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s2 = secs % 60;
+        function pad(n) { return n < 10 ? '0' + n : '' + n; }
+        elEl.textContent = h + 'h ' + pad(m) + 'm ' + pad(s2) + 's';
+      };
+      _wbTick();
+      _wbShiftTimerInterval = setInterval(_wbTick, 1000);
+    }
   }
+  var _wbShiftTimerInterval = null;
 
   // 2026-07-30 — "staff forgot to input cash at hand" fix: lets the shift's
   // own staffer (while OPEN) or owner/manager (any visible open shift) correct
@@ -5602,8 +5670,27 @@
       if (isCashOrMpesa && splitOtherLabel) {
         splitOtherLabel.textContent = this.value === 'cash' ? 'M-Pesa' : 'Cash';
       }
+      // 2026-08-12 — backdate toggle, same isCashOrMpesa gate as split
+      // payment (this cart has no standalone Deni/credit radio). Reset on
+      // every method change so a stale backdate never carries through.
+      var bdToggleRow = document.getElementById('keg-backdate-toggle-row');
+      var bdRow = document.getElementById('keg-backdate-row');
+      var bdInput = document.getElementById('keg-backdated-at');
+      if (bdInput) bdInput.value = '';
+      if (bdRow) bdRow.style.display = 'none';
+      if (bdToggleRow) bdToggleRow.style.display = isCashOrMpesa ? 'block' : 'none';
     });
   });
+
+  window.toggleBarBackdate = function () {
+    var row = document.getElementById('keg-backdate-row');
+    if (!row) return;
+    row.style.display = row.style.display === 'none' ? 'block' : 'none';
+    if (row.style.display === 'block') {
+      var input = document.getElementById('keg-backdated-at');
+      if (input) input.focus();
+    }
+  };
 
   window.toggleSplitPayment = function () {
     var fields = document.getElementById('split-fields');

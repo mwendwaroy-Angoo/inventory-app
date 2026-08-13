@@ -23103,7 +23103,12 @@ class StationRevenueWindowInfoTest(TestCase):
         self.assertIn('manane', info['anchor_label'])
 
     def test_todays_shift_appears_in_breakdown_with_correct_revenue(self):
+        # Anchored to a fixed `now` (not real wall-clock time) so this
+        # doesn't flake when the suite happens to run before the shift's
+        # own start hour — same bug class already documented elsewhere in
+        # this file (PettyCashReviewUndoTest, BarZReportOverlappingShiftsTest).
         from core.shift_views import station_revenue_window_info
+        fixed_now = self._midnight() + timedelta(hours=15)
         shift_start = self._midnight() + timedelta(hours=9)
         shift = Shift.objects.create(
             business=self.biz, store=self.bar_store, staff=self.staff,
@@ -23120,7 +23125,7 @@ class StationRevenueWindowInfoTest(TestCase):
             qty=Decimal('-1'), sale_amount=Decimal('770'), payment_method='mpesa',
             created_at=shift_start + timedelta(hours=2),
         )
-        info = station_revenue_window_info(self.biz, is_kitchen=False)
+        info = station_revenue_window_info(self.biz, is_kitchen=False, now=fixed_now)
         self.assertEqual(info['window_start'], self._midnight())
         self.assertEqual(len(info['pending_shifts']), 1)
         self.assertEqual(info['pending_shifts'][0]['id'], shift.id)
@@ -23153,8 +23158,12 @@ class StationRevenueWindowInfoTest(TestCase):
     def test_other_revenue_bucket_captures_sales_outside_any_shift(self):
         """A listed shift's own total doesn't have to match the tile total
         — direct sales with no shift open (owner/manager selling) must
-        surface as their own explicit bucket, not silently folded in."""
+        surface as their own explicit bucket, not silently folded in.
+        Anchored to a fixed `now` for the same reason as the test above —
+        never depend on the real wall-clock hour the suite happens to run
+        at."""
         from core.shift_views import station_revenue_window_info
+        fixed_now = self._midnight() + timedelta(hours=15)
         shift_start = self._midnight() + timedelta(hours=8)
         shift_end = self._midnight() + timedelta(hours=10)
         shift = Shift.objects.create(
@@ -23179,7 +23188,7 @@ class StationRevenueWindowInfoTest(TestCase):
             qty=Decimal('-1'), sale_amount=Decimal('900'), payment_method='mpesa',
             created_at=shift_end + timedelta(hours=1),
         )
-        info = station_revenue_window_info(self.biz, is_kitchen=False)
+        info = station_revenue_window_info(self.biz, is_kitchen=False, now=fixed_now)
         self.assertEqual(len(info['pending_shifts']), 1)
         self.assertEqual(info['pending_shifts'][0]['id'], shift.id)
         self.assertEqual(info['pending_shifts'][0]['revenue'], 870.0)
@@ -28175,6 +28184,243 @@ class OwnerConsumptionCorrectionAndSettlementTest(TestCase):
         self.assertTrue(r2.json().get('already_void'))
 
 
+class OwnerConsumptionPriceCaptureTest(TestCase):
+    """2026-08-12 live request (Roy) — "he gets to see every item, the
+    price, the quantities": record_owner_consumption() now captures a
+    price (auto-filled from item.selling_price × qty, editable), stored on
+    sale_amount — verified never to leak into revenue() since it gates on
+    type != 'Issue' first."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='OCP Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='ocp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Gin 750ml',
+            material_no='OCP-01', unit='pcs', selling_price=Decimal('1200'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.item, type='Receipt', qty=Decimal('10'))
+        self.client.force_login(self.owner)
+
+    def test_price_auto_fills_from_selling_price(self):
+        import uuid
+        self.client.post('/stock/owner-consumption/', {
+            'item_id': self.item.id, 'qty': '2',
+            'idempotency_token': f'ocp-{uuid.uuid4()}',
+        })
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='OwnerConsumption').latest('id')
+        self.assertEqual(txn.sale_amount, Decimal('2400'))
+
+    def test_price_editable(self):
+        import uuid
+        self.client.post('/stock/owner-consumption/', {
+            'item_id': self.item.id, 'qty': '1', 'price': '900',
+            'idempotency_token': f'ocp-{uuid.uuid4()}',
+        })
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='OwnerConsumption').latest('id')
+        self.assertEqual(txn.sale_amount, Decimal('900'))
+
+    def test_revenue_never_counts_owner_consumption(self):
+        import uuid
+        self.client.post('/stock/owner-consumption/', {
+            'item_id': self.item.id, 'qty': '3',
+            'idempotency_token': f'ocp-{uuid.uuid4()}',
+        })
+        txn = Transaction.objects.filter(business=self.biz, item=self.item, type='OwnerConsumption').latest('id')
+        self.assertEqual(txn.revenue(), 0)
+        self.assertEqual(txn.cost(), 0)
+
+
+class OwnerConsumptionTransferTest(TestCase):
+    """2026-08-12 live request (Roy) — the owner's own accountability
+    section, with transfers to/from a real customer's tab/debt, each side
+    needing an accept before anything moves. Verifies: in-place Transaction.
+    type reclassification (no new row, no double stock deduction), reject
+    leaves everything untouched, and both directions correctly appear/
+    disappear from the debt tracker and the owner's own ledger."""
+
+    def setUp(self):
+        self.biz, self.store, self.staff, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'OCT Biz'
+        )
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.owner = User.objects.create_user(username='oct_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='oct_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+
+    def _make_debt_txn(self, customer_name='Mary', amount='500'):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal(amount), payment_method='credit', recipient=customer_name,
+            date=timezone.localdate(),
+        )
+
+    def _make_owner_draw(self, amount='300'):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='OwnerConsumption', qty=Decimal('-1'),
+            sale_amount=Decimal(amount), payment_method='', recipient='Mmiliki',
+            date=timezone.localdate(),
+        )
+
+    # ── to_owner direction ──────────────────────────────────────────────
+
+    def test_propose_to_owner_and_accept_reclassifies_transaction(self):
+        txn = self._make_debt_txn()
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        req_id = resp.json()['request_id']
+
+        self.client.force_login(self.owner)
+        resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
+        self.assertTrue(resp2.json()['ok'], resp2.json())
+
+        txn.refresh_from_db()
+        self.assertEqual(txn.type, 'OwnerConsumption')
+        self.assertEqual(txn.payment_method, '')
+        self.assertEqual(txn.recipient, 'Mmiliki')
+        # Disappeared from revenue/debt aggregates by construction.
+        self.assertEqual(txn.revenue(), 0)
+
+    def test_reject_to_owner_leaves_debt_untouched(self):
+        txn = self._make_debt_txn()
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
+        req_id = resp.json()['request_id']
+
+        self.client.force_login(self.owner)
+        resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'reject'})
+        self.assertTrue(resp2.json()['ok'], resp2.json())
+
+        txn.refresh_from_db()
+        self.assertEqual(txn.type, 'Issue')
+        self.assertEqual(txn.payment_method, 'credit')
+        self.assertEqual(txn.recipient, 'Mary')
+
+    def test_to_owner_never_double_deducts_stock(self):
+        before = self.item.current_balance()
+        txn = self._make_debt_txn()
+        after_sale = self.item.current_balance()
+        self.assertEqual(before - after_sale, Decimal('1'))  # the original sale deducted once
+
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
+        req_id = resp.json()['request_id']
+        self.client.force_login(self.owner)
+        self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
+
+        self.assertEqual(self.item.current_balance(), after_sale)  # unchanged by reclassification
+
+    def test_staff_cannot_accept_to_owner_transfer(self):
+        txn = self._make_debt_txn()
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
+        req_id = resp.json()['request_id']
+        resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
+        self.assertEqual(resp2.status_code, 403)
+        txn.refresh_from_db()
+        self.assertEqual(txn.type, 'Issue')
+
+    def test_manager_can_accept_to_owner_transfer(self):
+        txn = self._make_debt_txn()
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
+        req_id = resp.json()['request_id']
+        self.client.force_login(self.manager)
+        resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
+        self.assertTrue(resp2.json()['ok'], resp2.json())
+
+    def test_cannot_propose_duplicate_pending_transfer(self):
+        txn = self._make_debt_txn()
+        self.client.force_login(self.staff)
+        self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
+        resp2 = self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
+        self.assertFalse(resp2.json()['ok'])
+
+    # ── from_owner direction ────────────────────────────────────────────
+
+    def test_propose_from_owner_and_accept_creates_tab_entry(self):
+        txn = self._make_owner_draw()
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/owner-consumption/transfer/from-owner/', {
+            'txn_ids': str(txn.id), 'dest_customer_name': 'Bosco',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        req_id = resp.json()['request_ids'][0]
+
+        resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
+        self.assertTrue(resp2.json()['ok'], resp2.json())
+
+        txn.refresh_from_db()
+        self.assertEqual(txn.type, 'Issue')
+        self.assertEqual(txn.payment_method, 'credit')
+        self.assertEqual(txn.recipient, 'Bosco')
+        tab = BarTab.objects.filter(business=self.biz, customer_name='Bosco', status='OPEN').first()
+        self.assertIsNotNone(tab)
+        self.assertTrue(BarTabEntry.objects.filter(tab=tab, transaction=txn).exists())
+
+    def test_from_owner_reuses_existing_open_tab_by_name(self):
+        existing_tab = BarTab.create_with_credentials(
+            business=self.biz, customer_name='Bosco', status='OPEN', source='bar',
+        )
+        txn = self._make_owner_draw()
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/owner-consumption/transfer/from-owner/', {
+            'txn_ids': str(txn.id), 'dest_customer_name': 'Bosco',
+        })
+        req_id = resp.json()['request_ids'][0]
+        self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
+
+        self.assertEqual(BarTab.objects.filter(business=self.biz, customer_name='Bosco').count(), 1)
+        self.assertTrue(BarTabEntry.objects.filter(tab=existing_tab, transaction=txn).exists())
+
+    def test_reject_from_owner_leaves_it_on_owner_ledger(self):
+        txn = self._make_owner_draw()
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/owner-consumption/transfer/from-owner/', {
+            'txn_ids': str(txn.id), 'dest_customer_name': 'Bosco',
+        })
+        req_id = resp.json()['request_ids'][0]
+        resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'reject'})
+        self.assertTrue(resp2.json()['ok'], resp2.json())
+        txn.refresh_from_db()
+        self.assertEqual(txn.type, 'OwnerConsumption')
+        self.assertFalse(BarTabEntry.objects.filter(transaction=txn).exists())
+
+    def test_whole_bill_transfer_resolves_as_one_decision(self):
+        txn1 = self._make_owner_draw('200')
+        txn2 = self._make_owner_draw('150')
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/owner-consumption/transfer/from-owner/', {
+            'txn_ids': f'{txn1.id},{txn2.id}', 'dest_customer_name': 'Bosco',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        req_ids = resp.json()['request_ids']
+        self.assertEqual(len(req_ids), 2)
+
+        # Accepting ONE row in the batch resolves both.
+        self.client.post(f'/stock/owner-consumption/transfer/{req_ids[0]}/respond/', {'action': 'accept'})
+        txn1.refresh_from_db()
+        txn2.refresh_from_db()
+        self.assertEqual(txn1.type, 'Issue')
+        self.assertEqual(txn2.type, 'Issue')
+
+    def test_owner_consumption_list_shows_pending_to_owner_section(self):
+        txn = self._make_debt_txn()
+        self.client.force_login(self.staff)
+        self.client.post('/stock/owner-consumption/transfer/to-owner/', {'txn_id': txn.id})
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/owner-consumption/list/')
+        self.assertContains(resp, 'Vinavyosubiri Uamuzi Wako')
+        self.assertContains(resp, 'Mary')
+
+
 class NegativeBalanceNeverAllowedTest(TestCase):
     """2026-08-07 live report (Roy: a bottled Soda showed "Out of Stock" in
     Quick Sell while physically present — balance had drifted to -99 even
@@ -29192,6 +29438,85 @@ class KitchenBackdatedCheckoutTest(TestCase):
             timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
             past_local.strftime('%Y-%m-%d %H:%M'),
         )
+
+
+class BarBoardBackdatedCheckoutTest(TestCase):
+    """2026-08-12 live request (Roy) — Kitchen Board and Quick Sell both have
+    a backdated-sale toggle at checkout; Bar Board's own keg-cart checkout
+    never had one. Mirrors KitchenBackdatedCheckoutTest's gate, adapted to
+    this board's own payment options — the keg-cart payment selector only
+    ever offers Cash/M-Pesa/Tab, no standalone Deni/credit radio, so there
+    is no direct-credit case to cover here (unlike Kitchen/Quick Sell)."""
+
+    def setUp(self):
+        self.biz, self.store, self.owner_user, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'BB Backdate Biz'
+        )
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.client.force_login(self.owner_user)
+
+    def test_backdated_cash_keg_pour_uses_the_given_timestamp(self):
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        cart = _json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
+        resp = self.client.post('/bar/', {
+            'keg_cart': cart, 'payment_method': 'cash',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+            'idempotency_token': 'bb-bd-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.filter(business=self.biz, keg_barrel=self.barrel, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
+        self.assertEqual(txn.date, past_local.date())
+
+    def test_backdated_mpesa_keg_pour_uses_the_given_timestamp(self):
+        import json as _json
+        past_local = timezone.localtime(timezone.now() - timedelta(days=3)).replace(microsecond=0)
+        cart = _json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
+        resp = self.client.post('/bar/', {
+            'keg_cart': cart, 'payment_method': 'mpesa',
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
+            'idempotency_token': 'bb-bd-2',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.filter(business=self.biz, keg_barrel=self.barrel, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
+
+    def test_backdate_ignored_for_tab(self):
+        # A Tab is an open, ongoing bill — never backdatable.
+        import json as _json
+        past = (timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        cart = _json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
+        resp = self.client.post('/bar/', {
+            'keg_cart': cart, 'payment_method': 'tab', 'tab_customer': 'Mary',
+            'backdated_at': past.strftime('%Y-%m-%dT%H:%M'),
+            'idempotency_token': 'bb-bd-3',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.filter(business=self.biz, keg_barrel=self.barrel, type='Issue').first()
+        self.assertIsNotNone(txn)
+        # created_at must be close to now, NOT the backdated timestamp.
+        self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+
+    def test_no_backdate_param_behaves_exactly_as_before(self):
+        import json as _json
+        cart = _json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
+        resp = self.client.post('/bar/', {
+            'keg_cart': cart, 'payment_method': 'cash',
+            'idempotency_token': 'bb-bd-4',
+        })
+        self.assertEqual(resp.status_code, 200)
+        txn = Transaction.objects.filter(business=self.biz, keg_barrel=self.barrel, type='Issue').first()
+        self.assertIsNotNone(txn)
+        self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
 
 
 class KitchenBatchOpenBatchReceivedOnTest(TestCase):
@@ -31510,9 +31835,15 @@ class CanManageKegsPermissionTest(TestCase):
     with no owner present, staff had no way to tap the next sealed barrel
     or close the finished one): UserProfile.can_manage_kegs lets a trusted
     staffer tap/deplete a barrel without full owner/manager status, still
-    gated on an open shift like every other staff stock action. Deliberately
-    does NOT extend to discard_barrel (Tupa) or receive_barrel (Pokea) —
-    those stay owner/manager-only real financial-loss/receiving decisions."""
+    gated on an open shift like every other staff stock action.
+
+    2026-08-12 (Roy, standing principle — "whenever we set a permission
+    toggle the function should be exactly as it is to the one who has it"):
+    discard_barrel (Tupa) and receive_barrel (Pokea) were originally kept
+    owner/manager-only, deliberately excluded from can_manage_kegs — that
+    exclusion is now REVERSED to match the same standard already applied to
+    Rekebisha's "not a real loss" checkbox. Both now accept a can_manage_kegs
+    staffer with an open shift, same two-step gate as tap/deplete."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='CMK Biz')
@@ -31646,25 +31977,60 @@ class CanManageKegsPermissionTest(TestCase):
         self.tapped.refresh_from_db()
         self.assertEqual(self.tapped.status, 'TAPPED')
 
-    # ── discard_barrel / receive_barrel stay owner/manager-only ──────────
+    # ── discard_barrel / receive_barrel — widened 2026-08-12 ──────────────
 
-    def test_can_manage_kegs_staff_still_blocked_from_discard(self):
+    def test_can_manage_kegs_staff_with_shift_may_discard(self):
         self.staff_profile.can_manage_kegs = True
         self.staff_profile.save(update_fields=['can_manage_kegs'])
         self.client.force_login(self.staff)
         self._open_shift(self.staff)
         resp = self.client.post(f'/stock/bar/discard/{self.tapped.id}/', {'reason': 'test'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.tapped.refresh_from_db()
+        self.assertEqual(self.tapped.status, 'RETURNED')
+
+    def test_can_manage_kegs_staff_without_shift_blocked_from_discard(self):
+        self.staff_profile.can_manage_kegs = True
+        self.staff_profile.save(update_fields=['can_manage_kegs'])
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/stock/bar/discard/{self.tapped.id}/', {'reason': 'test'})
         self.assertEqual(resp.status_code, 403)
         self.tapped.refresh_from_db()
         self.assertEqual(self.tapped.status, 'TAPPED')
 
-    def test_can_manage_kegs_staff_still_blocked_from_receive(self):
+    def test_plain_staff_still_blocked_from_discard(self):
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/bar/discard/{self.tapped.id}/', {'reason': 'test'})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_can_manage_kegs_staff_with_shift_may_receive(self):
         self.staff_profile.can_manage_kegs = True
         self.staff_profile.save(update_fields=['can_manage_kegs'])
         self.client.force_login(self.staff)
         self._open_shift(self.staff)
         resp = self.client.post('/stock/bar/receive/', {
-            'item_id': self.item.id, 'qty': '2', 'cost_price': '12000',
+            'item_id': self.item.id, 'count': '2', 'cost_per_barrel': '12000',
+            'idempotency_token': 'tok-cmk-recv-1',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_can_manage_kegs_staff_without_shift_blocked_from_receive(self):
+        self.staff_profile.can_manage_kegs = True
+        self.staff_profile.save(update_fields=['can_manage_kegs'])
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/bar/receive/', {
+            'item_id': self.item.id, 'count': '2', 'cost_per_barrel': '12000',
+            'idempotency_token': 'tok-cmk-recv-2',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_plain_staff_still_blocked_from_receive(self):
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post('/stock/bar/receive/', {
+            'item_id': self.item.id, 'count': '2', 'cost_per_barrel': '12000',
+            'idempotency_token': 'tok-cmk-recv-3',
         })
         self.assertEqual(resp.status_code, 403)
 
@@ -31705,8 +32071,12 @@ class AdjustStockPermissionTest(TestCase):
     owner is not around"): UserProfile.can_adjust_stock lets a trusted
     staffer use ⚖️ Rekebisha, closing a real pre-existing gap — the view had
     NO permission gate at all despite its own docstring's "owner/manager"
-    claim. Still requires an open shift; never extends the "not a real
-    loss" judgment call to a delegated staffer."""
+    claim. Still requires an open shift.
+
+    2026-08-12 (Roy, standing principle): the "not a real loss" judgment
+    call, originally kept owner/manager-only, is now ALSO honored from a
+    can_adjust_stock-delegated staffer — a granted toggle carries the full
+    function, not a restricted subset of it."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='ASP Biz')
@@ -31762,9 +32132,9 @@ class AdjustStockPermissionTest(TestCase):
         self.assertTrue(resp.json().get('shift_required'))
         self.assertEqual(self.item.current_balance(), Decimal('10'))
 
-    def test_no_real_loss_ignored_for_delegated_staff(self):
-        """The 'not a real loss' judgment stays owner/manager-only — a
-        delegated staffer's submission of this flag is silently ignored."""
+    def test_no_real_loss_honored_for_delegated_staff(self):
+        """2026-08-12: the 'not a real loss' judgment is now honored from a
+        can_adjust_stock-delegated staffer, exactly like owner/manager."""
         self.staff_profile.can_adjust_stock = True
         self.staff_profile.save(update_fields=['can_adjust_stock'])
         self.client.force_login(self.staff)
@@ -31774,7 +32144,19 @@ class AdjustStockPermissionTest(TestCase):
         })
         self.assertTrue(resp.json()['ok'], resp.json())
         txn = Transaction.objects.filter(item=self.item, type='Wastage').order_by('-id').first()
-        self.assertEqual(txn.invoice_no, '[ADJ]')
+        self.assertEqual(txn.invoice_no, '[ADJ-NOLOSS]')
+
+    def test_no_real_loss_still_ignored_without_toggle(self):
+        """A plain staffer somehow reaching this endpoint (shouldn't happen —
+        the main gate blocks them) still can't flag no_real_loss even if the
+        gate were bypassed; regression lock via a staffer with NEITHER
+        can_adjust_stock nor owner/manager status never reaching this far."""
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '6', 'no_real_loss': '1',
+        })
+        self.assertEqual(resp.status_code, 403)
 
     def test_owner_no_real_loss_still_works(self):
         self.client.force_login(self.owner)
@@ -31899,6 +32281,166 @@ class WaitressConvertToDebtPermissionTest(TestCase):
         self.assertFalse(
             BarTab.objects.filter(business=self.biz, customer_name='Waitress New Credit').exists()
         )
+
+
+class WaitressNavbarPettyCashAndShiftsLinksTest(TestCase):
+    """2026-08-12 live request (Roy): the waitress had no navbar link to
+    Petty Cash or Shifts, even though both underlying views already scope
+    correctly to her own entries/shifts once she can reach them. Matches
+    the same links is_kitchen_staff/is_staff_member already have."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WNav Biz')
+        Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.waitress = User.objects.create_user(username='wnav_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+
+    def test_waitress_sees_petty_cash_and_shifts_links(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/bar/orders/')
+        self.assertContains(resp, 'petty-cash')
+        self.assertContains(resp, 'Petty Cash')
+        self.assertContains(resp, 'Shifts')
+
+
+class WaitressLiveShiftTimerTest(TestCase):
+    """2026-08-12 live request (Roy): a NEW, plain wall-clock 'time since I
+    opened' figure for the waitress, deliberately separate from the
+    accountability elapsed/Muda figure (which stays reduced by any
+    overlapping custodian shift, per _shift_active_segments())."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WT Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.waitress = User.objects.create_user(username='wt_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+
+    def test_no_open_shift_no_started_at(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/bar/orders/')
+        self.assertIsNone(resp.context['my_open_shift_started_at'])
+
+    def test_own_open_shift_returns_started_at(self):
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/bar/orders/')
+        self.assertEqual(
+            resp.context['my_open_shift_started_at'], shift.started_at.isoformat(),
+        )
+
+    def test_accountability_elapsed_unaffected(self):
+        """Regression lock: adding the new timer must never touch what
+        active_shift_api()'s 'elapsed' field computes — still custodian-
+        overlap-subtracted for a waitress, per its own established design."""
+        bartender = User.objects.create_user(username='wt_bartender', password='x')
+        UserProfile.objects.create(user=bartender, business=self.biz, role='staff')
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=bartender,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/bar/shift/active/')
+        data = resp.json()
+        # Fully overlapped by the bartender's custodian shift — elapsed
+        # stays at 0h regardless of real wall-clock time, exactly the
+        # existing, deliberate accountability design.
+        self.assertEqual(data['shift']['elapsed'], '0h 00m')
+
+
+class ShiftHistorySearchTest(TestCase):
+    """2026-08-12 live request (Roy): shift_history() had zero filter params
+    — always the last 60 shifts. New preset/date-range/status/staff_id
+    filters, staff-grouping for owner/manager, and a raised cap (500) only
+    when a filter is actually active."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='SHS Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='shs_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_a = User.objects.create_user(username='shs_staff_a', password='x')
+        UserProfile.objects.create(user=self.staff_a, business=self.biz, role='staff')
+        self.staff_b = User.objects.create_user(username='shs_staff_b', password='x')
+        UserProfile.objects.create(user=self.staff_b, business=self.biz, role='staff')
+
+        today = timezone.localdate()
+        self.today_shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_a, status='CLOSED',
+            opening_float=Decimal('0'),
+            started_at=timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time().replace(hour=9))),
+        )
+        old_date = today - timezone.timedelta(days=20)
+        self.old_shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_b, status='CLOSED',
+            opening_float=Decimal('0'),
+            started_at=timezone.make_aware(timezone.datetime.combine(old_date, timezone.datetime.min.time().replace(hour=9))),
+        )
+
+    def test_preset_today_excludes_old_shift(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/history/?preset=today')
+        ids = [row['shift'].id for row in resp.context['rows'] if not row.get('is_group_header')]
+        self.assertIn(self.today_shift.id, ids)
+        self.assertNotIn(self.old_shift.id, ids)
+
+    def test_custom_date_range(self):
+        self.client.force_login(self.owner)
+        today = timezone.localdate()
+        old_date = today - timezone.timedelta(days=20)
+        resp = self.client.get(
+            f'/bar/shift/history/?date_from={old_date}&date_to={old_date}'
+        )
+        ids = [row['shift'].id for row in resp.context['rows'] if not row.get('is_group_header')]
+        self.assertIn(self.old_shift.id, ids)
+        self.assertNotIn(self.today_shift.id, ids)
+
+    def test_status_filter(self):
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_a, status='OPEN',
+            opening_float=Decimal('0'),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/history/?status=OPEN')
+        rows = [row for row in resp.context['rows'] if not row.get('is_group_header')]
+        self.assertTrue(all(row['shift'].status == 'OPEN' for row in rows))
+
+    def test_staff_id_filter_owner_only(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/bar/shift/history/?staff_id={self.staff_a.id}')
+        ids = [row['shift'].id for row in resp.context['rows'] if not row.get('is_group_header')]
+        self.assertIn(self.today_shift.id, ids)
+        self.assertNotIn(self.old_shift.id, ids)
+
+    def test_non_owner_staff_id_filter_ignored_stays_self_scoped(self):
+        """A non-owner passing a foreign staff_id must NOT widen their view
+        beyond their own shifts — regression lock on the existing identity
+        scoping."""
+        self.client.force_login(self.staff_a)
+        resp = self.client.get(f'/bar/shift/history/?staff_id={self.staff_b.id}')
+        ids = [row['shift'].id for row in resp.context['rows'] if not row.get('is_group_header')]
+        self.assertNotIn(self.old_shift.id, ids)  # staff_b's shift never leaks in
+        self.assertIn(self.today_shift.id, ids)   # staff_a's own shift still shows
+
+    def test_owner_view_grouped_by_staff(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/history/')
+        headers = list(resp.context['grouped_rows'].keys())
+        self.assertIn('shs_staff_a', headers)
+        self.assertIn('shs_staff_b', headers)
+
+    def test_default_view_unfiltered_unchanged(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/history/')
+        ids = [row['shift'].id for row in resp.context['rows'] if not row.get('is_group_header')]
+        self.assertIn(self.today_shift.id, ids)
+        self.assertIn(self.old_shift.id, ids)
 
 
 class NotificationTimeoutTest(TestCase):

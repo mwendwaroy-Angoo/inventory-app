@@ -44,6 +44,11 @@ _SHIFT_EXEMPT_PREFIXES = (
     '/kitchen/',      # kitchen/grill board — independent of bar shift system
     '/debt/',         # debt tracker — always accessible so staff can handle credit customers
     '/petty-cash/',   # petty cash recording — staff must be able to log during any shift state
+    '/stock/owner-consumption/',  # Mmiliki Alichukua — a manager oversight/correction
+                                   # action, not a sale; must never require the manager's
+                                   # own shift (2026-08-12 — found via a real test exercising
+                                   # a manager with no open shift; a pre-existing gap for
+                                   # the existing void/settle endpoints too, not new here).
     '/sw.js',
     '/manifest.json',
     '/offline/',

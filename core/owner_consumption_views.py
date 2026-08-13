@@ -80,6 +80,7 @@ def record_owner_consumption(request):
     item_id = request.POST.get('item_id')
     qty_str  = request.POST.get('qty', '').strip()
     note     = request.POST.get('note', '').strip()
+    price_str = request.POST.get('price', '').strip()
 
     if not item_id or not qty_str:
         return JsonResponse({'ok': False, 'error': 'Taja item na idadi.'}, status=400)
@@ -95,11 +96,26 @@ def record_owner_consumption(request):
     if not item:
         return JsonResponse({'ok': False, 'error': 'Item haikupatikana.'}, status=404)
 
+    # 2026-08-12 live request (Roy) — "he gets to see every item, the price,
+    # the quantities": a draw previously captured NO price at all. Defaults
+    # to the item's own selling_price × qty (editable — the modal sends
+    # whatever the staffer confirmed/edited), stored on sale_amount the same
+    # way every other sale records its value. Never touches revenue() —
+    # that gates on type != 'Issue' first, so this stays invisible to every
+    # revenue/analytics aggregate exactly as before.
+    try:
+        price = Decimal(price_str) if price_str else (item.selling_price or Decimal('0')) * qty
+        if price < 0:
+            price = Decimal('0')
+    except Exception:
+        price = (item.selling_price or Decimal('0')) * qty
+
     Transaction.objects.create(
         business=business,
         item=item,
         type='OwnerConsumption',
         qty=-qty,
+        sale_amount=price,
         date=timezone.localdate(),
         recorded_by=request.user,
         recipient=note or 'Mmiliki',
@@ -111,6 +127,7 @@ def record_owner_consumption(request):
         'ok': True,
         'item': item.description,
         'qty': str(qty),
+        'price': str(price),
         'unit': item.unit,
         'new_balance': str(new_balance),
     })
@@ -147,8 +164,23 @@ def owner_consumption_list(request):
             'settlement': settlement,
             'is_own': t.recorded_by_id == request.user.id,
         })
+
+    # 2026-08-12 live request (Roy) — "the ability to accept or reject" for
+    # a tab item/debt balance a staff member (or the owner himself) has
+    # proposed reclassifying as the owner's own draw. Owner/manager only,
+    # since this is a claim about who's actually financially responsible.
+    from .models import OwnerConsumptionTransferRequest as _OCTR
+    pending_to_owner = []
+    if getattr(up, 'is_owner_or_manager', False):
+        pending_to_owner = list(
+            _OCTR.objects.filter(
+                business=business, direction=_OCTR.DIRECTION_TO_OWNER, status='PENDING',
+            ).select_related('source_txn__item', 'requested_by').order_by('-requested_at')
+        )
+
     return render(request, 'core/owner_consumption_list.html', {
         'rows': rows,
+        'pending_to_owner': pending_to_owner,
         'is_owner_or_manager': getattr(up, 'is_owner_or_manager', False),
     })
 
@@ -274,3 +306,133 @@ def settle_owner_consumption(request, txn_id):
     return JsonResponse({
         'ok': True, 'message': msg, 'amount': str(amount), 'payment_method': pay_method,
     })
+
+
+# ── Transfers between a customer's tab/debt and the owner's own ledger ─────
+# 2026-08-12 live request (Roy): the owner needs his own accountability
+# section where an item/bill can move to or from a real customer's tab/debt,
+# with an accept/reject step — see OwnerConsumptionTransferRequest's own
+# docstring in core/models.py for the full design reasoning.
+
+@login_required
+@require_POST
+def propose_transfer_to_owner(request):
+    """Staff (or the owner himself) proposes that a customer's unpaid tab
+    item or debt balance is actually the owner's own — needs the owner's
+    accept before anything moves. Any staff with an open shift may propose
+    (matches Roy's "initiated by the staffs or him of course"); owner/
+    manager exempt from the shift requirement, same as recording a draw."""
+    up = _get_up(request)
+    if not up or not up.business:
+        return JsonResponse({'ok': False, 'error': 'Not authenticated.'}, status=403)
+    if not up.is_owner_or_manager:
+        shift = get_active_staff_shift(up, up.business)
+        if shift is False:
+            return JsonResponse({'ok': False, 'error': 'Hakuna shift iliyofunguliwa. Fungua shift kwanza.'}, status=403)
+
+    txn_id = request.POST.get('txn_id')
+    note = (request.POST.get('note') or '').strip()
+    if not txn_id:
+        return JsonResponse({'ok': False, 'error': 'Taja transaction.'}, status=400)
+
+    from .models import OwnerConsumptionTransferRequest as _OCTR
+    try:
+        req = _OCTR.propose_to_owner_locked(txn_id, up.business, request.user, note=note)
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    actor_name = request.user.get_full_name() or request.user.username
+    item_name = req.source_txn.item.description if req.source_txn.item_id else ''
+    msg = (
+        f"{actor_name} anapendekeza kwamba {req.source_txn.recipient} — "
+        f"{item_name} (KES {req.source_txn.sale_amount or 0:,.0f}) ni ya mmiliki. "
+        f"Inasubiri uamuzi wako."
+    )
+    _notify_owner_consumption_change(
+        up.business, request.user, '🏠 Ombi — Hamishia kwa Mmiliki', msg,
+        '/stock/owner-consumption/list/',
+    )
+    return JsonResponse({'ok': True, 'message': 'Ombi limetumwa kwa mmiliki.', 'request_id': req.id})
+
+
+@login_required
+@require_POST
+def propose_transfer_from_owner(request):
+    """Owner hands an item (or whole outstanding bill) to a customer
+    willing to cover it — creates a PENDING request per item, batched for
+    a whole-bill transfer. Any staff with an open shift may propose on the
+    owner's behalf (he confirms verbally, matching the to-owner direction's
+    same permission tier); accept/reject happens via respond_owner_transfer."""
+    up = _get_up(request)
+    if not up or not up.business:
+        return JsonResponse({'ok': False, 'error': 'Not authenticated.'}, status=403)
+    if not up.is_owner_or_manager:
+        shift = get_active_staff_shift(up, up.business)
+        if shift is False:
+            return JsonResponse({'ok': False, 'error': 'Hakuna shift iliyofunguliwa. Fungua shift kwanza.'}, status=403)
+
+    dest_name = (request.POST.get('dest_customer_name') or '').strip()
+    if not dest_name:
+        return JsonResponse({'ok': False, 'error': 'Taja jina la mteja.'}, status=400)
+    note = (request.POST.get('note') or '').strip()
+
+    txn_ids_raw = (request.POST.get('txn_ids') or request.POST.get('txn_id') or '').strip()
+    txn_ids = [t.strip() for t in txn_ids_raw.split(',') if t.strip()]
+    if not txn_ids:
+        return JsonResponse({'ok': False, 'error': 'Taja item(s) za kuhamisha.'}, status=400)
+
+    from .models import OwnerConsumptionTransferRequest as _OCTR
+    try:
+        requests_created = _OCTR.propose_from_owner_locked(
+            txn_ids, up.business, dest_name, request.user, note=note,
+        )
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    actor_name = request.user.get_full_name() or request.user.username
+    total = sum(float(r.source_txn.sale_amount or 0) for r in requests_created)
+    msg = (
+        f"{actor_name} anapendekeza {dest_name} alipe KES {total:,.0f} "
+        f"iliyokuwa ya mmiliki. Inasubiri uamuzi."
+    )
+    _notify_owner_consumption_change(
+        up.business, request.user, f'🔀 Ombi — Hamishia kwa {dest_name}', msg,
+        '/stock/owner-consumption/list/',
+    )
+    return JsonResponse({
+        'ok': True, 'message': f'Ombi limetumwa — linasubiri uthibitisho wa {dest_name}.',
+        'request_ids': [r.id for r in requests_created],
+    })
+
+
+@login_required
+@require_POST
+def respond_owner_transfer(request, request_id):
+    """Owner/manager accepts or rejects a pending transfer, either
+    direction. (The destination customer's own public accept/reject page
+    for a from_owner transfer is a documented fast-follow — for now staff/
+    owner confirm on the customer's behalf, same as the split-transfer
+    feature already allows.)"""
+    up = _get_up(request)
+    if not up or not up.business or not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
+
+    from .models import OwnerConsumptionTransferRequest as _OCTR
+    req = get_object_or_404(_OCTR, id=request_id, business=up.business, status='PENDING')
+    action = (request.POST.get('action') or '').strip()
+
+    if action == 'accept':
+        req.accept()
+        msg = 'Ombi limekubaliwa.'
+    elif action == 'reject':
+        req.reject()
+        msg = 'Ombi limekataliwa — hakuna kilichobadilika.'
+    else:
+        return JsonResponse({'ok': False, 'error': 'Invalid action.'}, status=400)
+
+    actor_name = request.user.get_full_name() or request.user.username
+    _notify_owner_consumption_change(
+        up.business, request.user, '🏠 Uamuzi wa Uhamisho', f"{actor_name}: {msg}",
+        '/stock/owner-consumption/list/',
+    )
+    return JsonResponse({'ok': True, 'message': msg})

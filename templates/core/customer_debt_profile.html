@@ -531,6 +531,18 @@
                             🔀 {% trans 'Hamisha' %}
                         </button>
                         {% endif %}
+                        {% if is_owner %}
+                        <!-- 2026-08-12 live request (Roy) — "a customer can transfer a
+                             bill to him even if that customer is in the debt tracker":
+                             propose this unpaid debt item as the owner's own draw
+                             instead — needs the owner's own accept on his Mmiliki
+                             Alichukua ledger before anything moves. -->
+                        <button onclick="window.ocDebtProposeToOwner({{ entry.txn.id }}, this)"
+                            style="background:rgba(232,124,150,0.06);border:1px solid rgba(232,124,150,0.25);border-radius:6px;
+                                   color:#e87c96;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;margin-right:0.3rem;">
+                            🏠 {% trans 'Mmiliki' %}
+                        </button>
+                        {% endif %}
                         <button onclick="openWriteOffModal({{ entry.txn.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
                             style="background:rgba(192,57,90,0.06);border:1px solid rgba(192,57,90,0.25);border-radius:6px;
                                    color:#c0395a;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;">
@@ -1114,6 +1126,29 @@ function _woUpdateMistakeHint() {
         ? 'Itasubiri idhini ya mmiliki/meneja kabla stock kurejeshwa.'
         : 'Itatekelezwa mara moja — stock itarejeshwa papo hapo.';
 }
+
+// 2026-08-12 live request (Roy) — propose this unpaid debt item as the
+// owner's own draw ("Mmiliki Alichukua") instead of the customer's debt;
+// needs the owner's own accept before anything actually moves.
+window.ocDebtProposeToOwner = function (txnId, btn) {
+    if (!confirm('Hamishia item hii kwenye orodha ya Mmiliki Alichukua? Itasubiri uamuzi wa mmiliki.')) return;
+    btn.disabled = true;
+    var body = new URLSearchParams({
+        txn_id: String(txnId),
+        csrfmiddlewaretoken: document.querySelector('[name=csrfmiddlewaretoken]').value,
+    });
+    fetch('/stock/owner-consumption/transfer/to-owner/', { method: 'POST', body: body, credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            btn.disabled = false;
+            if (d.ok) {
+                alert(d.message || 'Ombi limetumwa kwa mmiliki.');
+            } else {
+                alert(d.error || 'Imeshindikana');
+            }
+        })
+        .catch(function () { alert('Hitilafu ya mtandao'); btn.disabled = false; });
+};
 
 function openWriteOffModal(txnId, itemName, amount) {
     document.getElementById('woTxnId').value   = txnId;

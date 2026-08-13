@@ -59,13 +59,84 @@
     Shift History
   </h4>
 
+  <!-- 2026-08-12 live request (Roy) — search module: quick date presets,
+       custom range, status, and (owner/manager only) a staff picker. -->
+  <form method="get" style="background:var(--onyx-card); border:1px solid #333; border-radius:10px;
+              padding:.75rem 1rem; margin-bottom:1.25rem; display:flex; flex-wrap:wrap; gap:.5rem; align-items:flex-end;">
+    <div style="display:flex; gap:.4rem; flex-wrap:wrap;">
+      <a href="?preset=today{% if filter_staff_id %}&staff_id={{ filter_staff_id }}{% endif %}"
+         class="btn btn-sm" style="border:1px solid {% if filter_preset == 'today' %}var(--gold){% else %}#444{% endif %};
+                color:{% if filter_preset == 'today' %}var(--gold){% else %}#b0b0b0{% endif %};">Leo</a>
+      <a href="?preset=week{% if filter_staff_id %}&staff_id={{ filter_staff_id }}{% endif %}"
+         class="btn btn-sm" style="border:1px solid {% if filter_preset == 'week' %}var(--gold){% else %}#444{% endif %};
+                color:{% if filter_preset == 'week' %}var(--gold){% else %}#b0b0b0{% endif %};">Wiki Hii</a>
+      <a href="?preset=month{% if filter_staff_id %}&staff_id={{ filter_staff_id }}{% endif %}"
+         class="btn btn-sm" style="border:1px solid {% if filter_preset == 'month' %}var(--gold){% else %}#444{% endif %};
+                color:{% if filter_preset == 'month' %}var(--gold){% else %}#b0b0b0{% endif %};">Mwezi Huu</a>
+      {% if has_filter %}
+      <a href="?" class="btn btn-sm" style="border:1px solid #666; color:#888;">Futa Vichujio</a>
+      {% endif %}
+    </div>
+    <div>
+      <label style="display:block; color:#888; font-size:.72rem; margin-bottom:2px;">Tangu</label>
+      <input type="date" name="date_from" value="{{ filter_date_from }}"
+             style="background:#111; border:1px solid #444; color:var(--pearl); border-radius:6px; padding:.3rem .5rem; font-size:.8rem;">
+    </div>
+    <div>
+      <label style="display:block; color:#888; font-size:.72rem; margin-bottom:2px;">Hadi</label>
+      <input type="date" name="date_to" value="{{ filter_date_to }}"
+             style="background:#111; border:1px solid #444; color:var(--pearl); border-radius:6px; padding:.3rem .5rem; font-size:.8rem;">
+    </div>
+    <div>
+      <label style="display:block; color:#888; font-size:.72rem; margin-bottom:2px;">Hali</label>
+      <select name="status" style="background:#111; border:1px solid #444; color:var(--pearl); border-radius:6px; padding:.3rem .5rem; font-size:.8rem;">
+        <option value="">Zote</option>
+        <option value="OPEN" {% if filter_status == 'OPEN' %}selected{% endif %}>Open</option>
+        <option value="CLOSED" {% if filter_status == 'CLOSED' %}selected{% endif %}>Closed</option>
+        <option value="CONFIRMED" {% if filter_status == 'CONFIRMED' %}selected{% endif %}>Confirmed</option>
+      </select>
+    </div>
+    {% if is_owner and staff_choices %}
+    <div>
+      <label style="display:block; color:#888; font-size:.72rem; margin-bottom:2px;">Mfanyakazi</label>
+      <select name="staff_id" style="background:#111; border:1px solid #444; color:var(--pearl); border-radius:6px; padding:.3rem .5rem; font-size:.8rem;">
+        <option value="">Wote</option>
+        {% for sc in staff_choices %}
+        <option value="{{ sc.id }}" {% if filter_staff_id == sc.id|stringformat:"s" %}selected{% endif %}>{{ sc.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <button type="submit" class="btn btn-gold btn-sm">Tafuta</button>
+  </form>
+
+  {% if grouped_rows %}
+  <!-- 2026-08-12 live request (Roy) — "grouped by staff, period and data".
+       A separate summary (not the main detailed list below, which stays
+       flat/chronological exactly as before — a first attempt at inlining
+       group headers into that same list broke 4 pre-existing tests that
+       assume every row there has a 'shift' key). Jump-links scroll to each
+       staff's own rows in the list below via the existing #shift-<id> ids. -->
+  <div class="mb-4" style="background:var(--onyx-card); border:1px solid #333; border-radius:10px; padding:.75rem 1rem;">
+    <h6 style="color:var(--gold); margin-bottom:.5rem;">Kwa Mfanyakazi</h6>
+    <div style="display:flex; flex-wrap:wrap; gap:.5rem;">
+      {% for staff_name, staff_rows in grouped_rows.items %}
+      <a href="#shift-{{ staff_rows.0.shift.id }}" class="btn btn-sm"
+         style="border:1px solid #444; color:#b0b0b0;">
+        {{ staff_name }} <span style="color:#666;">({{ staff_rows|length }})</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   {% if not rows %}
-    <p style="color:#888; text-align:center; padding:3rem 0;">Hakuna shifts bado.</p>
+    <p style="color:#888; text-align:center; padding:3rem 0;">Hakuna shifts zilizopatikana.</p>
   {% endif %}
 
   {% for row in rows %}
   {% with s=row.shift r=row.rec vc=row.var_class can_confirm_shift=row.can_confirm needs_owner=row.needs_owner can_edit_float=row.can_edit_float %}
-  <div class="shift-card">
+  <div class="shift-card" id="shift-{{ s.id }}">
     <div class="shift-header">
       <div>
         <span style="font-weight:600; color:var(--pearl);">

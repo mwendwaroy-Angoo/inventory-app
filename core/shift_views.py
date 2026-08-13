@@ -1464,6 +1464,10 @@ def active_shift_api(request):
             'status':         my_shift.status,
             'staff_name':     my_shift.staff.get_full_name() or my_shift.staff.username,
             'started_at':     timezone.localtime(my_shift.started_at).strftime('%H:%M'),
+            # 2026-08-12 — full ISO timestamp for the waitress's own live
+            # wall-clock timer (see waitress_screen()'s own comment); a
+            # plain HH:MM string can't seed a client-side duration ticker.
+            'started_at_iso': my_shift.started_at.isoformat(),
             'opening_float':  float(my_shift.opening_float),
             'cash_sales':     rec['cash_sales'],
             'mpesa_sales':    rec['mpesa_sales'],
@@ -2630,7 +2634,64 @@ def shift_history(request):
     if not _is_owner:
         _base_qs = _base_qs.filter(staff=request.user)
 
-    shifts_qs = _base_qs.select_related('staff__userprofile', 'confirmed_by', 'closed_by').order_by('-started_at')[:60]
+    # 2026-08-12 live request (Roy) — a real search module: quick date presets
+    # (today/week/month) or a custom range, a status filter, and (owner/
+    # manager only — a non-owner/manager is already hard-scoped to
+    # themselves above, so a foreign staff_id would be meaningless/a scoping
+    # leak) a staff picker. Previously this view had zero filter params at
+    # all, always the last 60 shifts business-wide.
+    has_filter = False
+    preset = request.GET.get('preset', '').strip()
+    today = timezone.localdate()
+    date_from_str = request.GET.get('date_from', '').strip()
+    date_to_str = request.GET.get('date_to', '').strip()
+    date_from = date_to = None
+    if preset == 'today':
+        date_from = date_to = today
+        has_filter = True
+    elif preset == 'week':
+        date_from = today - timezone.timedelta(days=today.weekday())
+        date_to = today
+        has_filter = True
+    elif preset == 'month':
+        date_from = today.replace(day=1)
+        date_to = today
+        has_filter = True
+    else:
+        if date_from_str:
+            try:
+                date_from = timezone.datetime.strptime(date_from_str, '%Y-%m-%d').date()
+                has_filter = True
+            except ValueError:
+                date_from = None
+        if date_to_str:
+            try:
+                date_to = timezone.datetime.strptime(date_to_str, '%Y-%m-%d').date()
+                has_filter = True
+            except ValueError:
+                date_to = None
+
+    if date_from:
+        _base_qs = _base_qs.filter(started_at__date__gte=date_from)
+    if date_to:
+        _base_qs = _base_qs.filter(started_at__date__lte=date_to)
+
+    status_filter = request.GET.get('status', '').strip()
+    if status_filter in ('OPEN', 'CLOSED', 'CONFIRMED'):
+        _base_qs = _base_qs.filter(status=status_filter)
+        has_filter = True
+
+    staff_id_filter = request.GET.get('staff_id', '').strip()
+    if _is_owner and staff_id_filter:
+        _base_qs = _base_qs.filter(staff_id=staff_id_filter)
+        has_filter = True
+    # A non-owner/manager passing staff_id is silently ignored — they're
+    # already hard-scoped to staff=request.user above, never widened here.
+
+    # Default view (no filter active) keeps the original 60-row cap; a real
+    # search shouldn't be silently truncated at 60 rows.
+    row_cap = 500 if has_filter else 60
+    shifts_qs = _base_qs.select_related('staff__userprofile', 'confirmed_by', 'closed_by').order_by('-started_at')[:row_cap]
 
     rows = []
     for shift in shifts_qs:
@@ -2686,12 +2747,47 @@ def shift_history(request):
             'can_edit_float': _can_edit_opening_float(up, shift, request.user.id),
         })
 
+    # Owner/manager view: group rows by staff so the search results can be
+    # rendered per-person, per Roy's "grouped by staff, period and data" ask.
+    # `rows` itself is left completely unchanged (a plain flat list, exactly
+    # as before this sprint) — every pre-existing caller of this view reads
+    # `rows` directly assuming every entry has a 'shift' key; a first attempt
+    # at this feature inserted header marker dicts INTO `rows` and broke 4
+    # pre-existing tests that iterate it that way. `grouped_rows` is a
+    # SEPARATE, additive structure built only for the template's own
+    # rendering, never replacing `rows`.
+    grouped_rows = None
+    if _is_owner:
+        from collections import OrderedDict
+        groups = OrderedDict()
+        for row in rows:
+            staff_name = row['shift'].staff.get_full_name() or row['shift'].staff.username
+            groups.setdefault(staff_name, []).append(row)
+        grouped_rows = OrderedDict(sorted(groups.items()))
+
+    staff_choices = []
+    if _is_owner:
+        from accounts.models import UserProfile as _UP
+        staff_choices = [
+            {'id': p.user_id, 'name': p.user.get_full_name() or p.user.username}
+            for p in _UP.objects.filter(business=up.business).select_related('user').order_by('user__first_name', 'user__username')
+        ]
+
     return render(request, 'core/bar/shift_history.html', {
         'rows':     rows,
+        'grouped_rows': grouped_rows,
+        'staff_choices': staff_choices,
         # Owner-or-manager (matches the identity-scoping check above and this app's
         # established is_owner_or_manager convention) — a manager confirms shifts and
         # reviews cash-variance explanations the same as an owner would.
         'is_owner': _is_owner,
+        # Echo filter state back so the search form stays populated.
+        'filter_preset': preset,
+        'filter_date_from': date_from_str,
+        'filter_date_to': date_to_str,
+        'filter_status': status_filter,
+        'filter_staff_id': staff_id_filter,
+        'has_filter': has_filter,
     })
 
 

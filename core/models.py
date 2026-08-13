@@ -4446,11 +4446,19 @@ class KegBarrel(models.Model):
             if self.status == 'DEPLETED':
                 _refresh_keg_baseline(self)
 
-    def record_sale(self, preset, qty, payment_method, recorded_by, tab=None, server_name=''):
+    def record_sale(self, preset, qty, payment_method, recorded_by, tab=None, server_name='',
+                     created_at=None):
         """
         One pour. Creates Transaction(type=Issue) and updates the envelope.
         If tab is provided, payment_method is set to 'credit' and a BarTabEntry is created.
         Auto-DEPLETED when envelope reached AND latest weight ≤ tare + 0.5 kg.
+
+        created_at (2026-08-12 live request, Roy): catch-up/backdated posting
+        for a keg pour, mirroring ProduceBunch.record_sale()'s/KitchenBatch.
+        record_sale()'s own backdate support — previously Bar Board's
+        checkout had no backdate path at all, silently stamping "now"
+        regardless of what the checkout form was set to. None (the default)
+        behaves exactly as before.
         """
         ml = Decimal(str(float(preset.quantity_consumed) * qty))
         amount = Decimal(str(float(preset.price) * qty))
@@ -4477,6 +4485,8 @@ class KegBarrel(models.Model):
             keg_serving=serving,
             keg_qty=int(qty),
             recorded_by=recorded_by,
+            **({'created_at': created_at, 'date': timezone.localtime(created_at).date()}
+               if created_at else {}),
         )
 
         self.revenue_collected = (self.revenue_collected or Decimal('0')) + amount
@@ -4520,7 +4530,7 @@ class KegBarrel(models.Model):
 
     @classmethod
     def record_sale_locked(cls, barrel_id, business, preset, qty, payment_method,
-                           recorded_by, tab=None, server_name=''):
+                           recorded_by, tab=None, server_name='', created_at=None):
         """Thread-safe wrapper around record_sale using SELECT FOR UPDATE."""
         from django.db import transaction as _txn
         with _txn.atomic():
@@ -4531,7 +4541,7 @@ class KegBarrel(models.Model):
                 .get(id=barrel_id, business=business, status='TAPPED')
             )
             return barrel.record_sale(preset, qty, payment_method, recorded_by,
-                                      tab=tab, server_name=server_name)
+                                      tab=tab, server_name=server_name, created_at=created_at)
 
 
 class KegWeightReading(models.Model):
@@ -5459,6 +5469,194 @@ class TabTransferRequest(models.Model):
                 )
                 requests.append(tfr)
         return batch_id, requests
+
+
+class OwnerConsumptionTransferRequest(models.Model):
+    """Tracks a proposed reclassification of a single item/whole-bill
+    between a customer's tab/debt and the owner's own "Mmiliki Alichukua"
+    ledger (2026-08-12 live request, Roy) — either direction, with an
+    accept/reject step on whichever side receives it.
+
+    Deliberately NOT a reuse of TabTransferRequest (that model is tightly
+    coupled to BarTabEntry/BarTab on both ends) — mirrors its lifecycle
+    shape only. Deliberately whole-item/whole-bill only, no partial split,
+    matching Roy's own wording ("transfer an item or bill whether one or
+    all").
+
+    The move itself is a single in-place Transaction.type flip between
+    'Issue' and 'OwnerConsumption' (see accept() below) — the same
+    "excluded/included by construction" mechanism this app already trusts
+    for Draw/Transfer types, so the reclassified row instantly and
+    correctly disappears from (or appears in) every existing revenue/debt/
+    analytics aggregate with zero new exclusion logic to write or audit.
+    """
+    DIRECTION_TO_OWNER = 'to_owner'
+    DIRECTION_FROM_OWNER = 'from_owner'
+    DIRECTION_CHOICES = [
+        (DIRECTION_TO_OWNER, 'To Owner'),
+        (DIRECTION_FROM_OWNER, 'From Owner'),
+    ]
+    STATUS_CHOICES = [
+        ('PENDING',   'Pending'),
+        ('ACCEPTED',  'Accepted'),
+        ('REJECTED',  'Rejected'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
+    business  = models.ForeignKey('accounts.Business', on_delete=models.CASCADE,
+                                   related_name='owner_consumption_transfer_requests')
+    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
+    # to_owner: the customer's own Transaction (tab-linked or a plain debt
+    #           txn) being reclassified as the owner's draw.
+    # from_owner: the OwnerConsumption Transaction being handed to a customer.
+    source_txn = models.ForeignKey('Transaction', on_delete=models.CASCADE,
+                                    related_name='owner_transfer_requests')
+    # Only meaningful for from_owner — who it's being offered to. Resolved
+    # against an existing open tab by name (same auto-detect-by-name
+    # guarantee the cross-counter merge feature already established), or a
+    # brand-new tab is opened for them on accept.
+    dest_customer_name = models.CharField(max_length=100, blank=True)
+    status       = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    requested_by = models.ForeignKey('auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+                                      related_name='owner_consumption_transfer_requests_made')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    resolved_at  = models.DateTimeField(null=True, blank=True)
+    note         = models.CharField(max_length=80, blank=True)
+    batch_id     = models.CharField(
+        max_length=32, blank=True, default='', db_index=True,
+        help_text='Shared by every row created by one whole-bill transfer — '
+                  'blank for a single-item transfer. accept()/reject() '
+                  'cascade to every PENDING sibling sharing this id.',
+    )
+
+    class Meta:
+        ordering = ['-requested_at']
+
+    def __str__(self):
+        return f"OwnerTransfer #{self.id}: {self.direction} (KES {self.source_txn.sale_amount or 0}, {self.status})"
+
+    def _siblings(self):
+        if self.batch_id:
+            return OwnerConsumptionTransferRequest.objects.filter(
+                batch_id=self.batch_id, status='PENDING',
+            )
+        return OwnerConsumptionTransferRequest.objects.filter(id=self.id)
+
+    def accept(self, resolved_dest_tab=None):
+        """Resolve every PENDING sibling sharing batch_id (a whole-bill
+        transfer resolves as ONE decision), in one atomic block."""
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            siblings = list(self._siblings().select_for_update())
+            for req in siblings:
+                if req.direction == self.DIRECTION_TO_OWNER:
+                    req._accept_to_owner()
+                else:
+                    req._accept_from_owner(resolved_dest_tab)
+                req.status = 'ACCEPTED'
+                req.resolved_at = timezone.now()
+                req.save(update_fields=['status', 'resolved_at'])
+        self.refresh_from_db()
+
+    def reject(self):
+        """No reversal needed either direction — nothing moves until
+        accepted, matching the split-transfer feature's own contract."""
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            siblings = list(self._siblings().select_for_update())
+            for req in siblings:
+                req.status = 'REJECTED'
+                req.resolved_at = timezone.now()
+                req.save(update_fields=['status', 'resolved_at'])
+        self.refresh_from_db()
+
+    def cancel(self):
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            siblings = list(self._siblings().select_for_update())
+            for req in siblings:
+                req.status = 'CANCELLED'
+                req.resolved_at = timezone.now()
+                req.save(update_fields=['status', 'resolved_at'])
+        self.refresh_from_db()
+
+    def _accept_to_owner(self):
+        txn = Transaction.objects.select_for_update().get(id=self.source_txn_id)
+        try:
+            tab_entry = txn.tab_entry
+        except Exception:
+            tab_entry = None
+        txn.type = 'OwnerConsumption'
+        txn.payment_method = ''
+        txn.recipient = 'Mmiliki'
+        txn.save(update_fields=['type', 'payment_method', 'recipient'])
+        if tab_entry is not None:
+            # Same "close out an entry we're finished with" pattern
+            # remove_tab_entry uses — the item is leaving this tab's own
+            # unpaid-balance accounting entirely, not being paid on it.
+            tab_entry.is_paid = True
+            tab_entry.save(update_fields=['is_paid'])
+
+    def _accept_from_owner(self, resolved_dest_tab=None):
+        txn = Transaction.objects.select_for_update().get(id=self.source_txn_id)
+        dest_tab = resolved_dest_tab
+        if dest_tab is None:
+            dest_tab = BarTab.objects.filter(
+                business=self.business, customer_name__iexact=self.dest_customer_name,
+                status='OPEN',
+            ).first()
+            if dest_tab is None:
+                dest_tab = BarTab.create_with_credentials(
+                    business=self.business, customer_name=self.dest_customer_name,
+                    status='OPEN', source='qs',
+                )
+        txn.type = 'Issue'
+        txn.payment_method = 'credit'
+        txn.recipient = dest_tab.customer_name
+        txn.save(update_fields=['type', 'payment_method', 'recipient'])
+        BarTabEntry.objects.create(
+            tab=dest_tab, transaction=txn,
+            description=txn.item.description if txn.item_id else '',
+            amount=txn.sale_amount or Decimal('0'),
+        )
+
+    @classmethod
+    def propose_to_owner_locked(cls, txn_id, business, requested_by, note=''):
+        txn = Transaction.objects.filter(
+            id=txn_id, business=business, type='Issue', payment_method='credit',
+        ).first()
+        if not txn:
+            raise ValueError('Transaction haipatikani au si deni linaloweza kuhamishwa.')
+        if OwnerConsumptionTransferRequest.objects.filter(
+            source_txn=txn, status='PENDING',
+        ).exists():
+            raise ValueError('Ombi la kuhamisha item hii tayari lipo.')
+        return cls.objects.create(
+            business=business, direction=cls.DIRECTION_TO_OWNER,
+            source_txn=txn, requested_by=requested_by, note=note[:80],
+        )
+
+    @classmethod
+    def propose_from_owner_locked(cls, txn_ids, business, dest_customer_name, requested_by, note=''):
+        txns = list(Transaction.objects.filter(
+            id__in=txn_ids, business=business, type='OwnerConsumption',
+        ))
+        if not txns:
+            raise ValueError('Hakuna rekodi za Mmiliki Alichukua zilizopatikana.')
+        if OwnerConsumptionTransferRequest.objects.filter(
+            source_txn__in=txns, status='PENDING',
+        ).exists():
+            raise ValueError('Ombi la kuhamisha item hii tayari lipo.')
+        import uuid as _uuid
+        batch_id = _uuid.uuid4().hex if len(txns) > 1 else ''
+        requests = []
+        for txn in txns:
+            requests.append(cls.objects.create(
+                business=business, direction=cls.DIRECTION_FROM_OWNER,
+                source_txn=txn, dest_customer_name=dest_customer_name.strip(),
+                requested_by=requested_by, note=note[:80], batch_id=batch_id,
+            ))
+        return requests
 
 
 class TabPaymentRevocation(models.Model):

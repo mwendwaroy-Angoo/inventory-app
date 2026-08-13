@@ -6643,3 +6643,184 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   needed no changes — it already only asserted that a sale genuinely dated today counts,
   which stayed true under both designs. No migrations (pure function-body + template
   change, no schema touched).
+- Four live gaps + a standing permission-parity principle (2026-08-12/13). Roy: "the staff
+  never got a way of editing... counter cash entries before they get approved... even the
+  waitress"; "the reconciliation... no-loss checkbox does not include [delegated staff]...
+  whenever we set a permission toggle the function should be exactly as it is to the one
+  who has it"; "the waitress time shift count is not counting in real time... stays at 0";
+  "in the shifts section integrate a search module." **(1) Waitress navbar gap**: `petty_
+  cash_list()`/`shift_history()` already scoped correctly to a non-reviewer's own entries/
+  shifts — the actual gap was purely that `templates/base.html`'s `is_waitress` navbar
+  block (both mobile and desktop) was the ONLY role block missing the `petty_cash_list`/
+  `shift_history` links `is_kitchen_staff`/`is_staff_member` already had; she could already
+  open the Petty Cash modal from Bar Board, just had nowhere to go back and edit/respond.
+  Two links added, zero backend change. **(2) Standing principle, applied + audited**:
+  `adjust_stock_balance()`'s "not a real loss" flag was hard-restricted to
+  `is_owner_or_manager` even for a delegated `can_adjust_stock` staffer (2026-08-11's own
+  deliberate design, now reversed at Roy's explicit request) — widened both the backend
+  gate and the `#adj-noloss-row` template visibility to also honor `can_adjust_stock`.
+  Audited every other delegated toggle in the app
+  (`can_receive_stock`/`can_receive_kitchen_stock`/`can_confirm_shifts`/`can_review_petty_
+  cash`/`can_convert_tabs_to_debt`/`can_approve_debt_erase`/`can_input_cost_price`/
+  `can_override_restrictions`) for the same "toggle grants the action but silently
+  withholds part of it" shape — found exactly one more genuine match:
+  `can_manage_kegs` already let a delegated staffer `tap_barrel()`/`deplete_barrel()` but
+  `discard_barrel()` (Tupa)/`receive_barrel()` (Pokea) were hardcoded owner/manager-only
+  with no `can_manage_kegs` branch at all; widened both to the same two-step (owner/
+  manager always, else `can_manage_kegs` + open shift) gate already used by tap/deplete,
+  plus the "⋯" more-menu / "+ Pokea Barrel" button visibility in `bar_board.html`
+  (Hariri cost-edit stays strictly owner-only within the same menu — a genuine financial-
+  figure correction, not a withheld sub-part of "manage kegs"). Everything else audited
+  turned out to be a deliberate SEPARATION between two different actions (e.g.
+  `can_approve_debt_erase` only ever covers "erase a mistake," never a real write-off) —
+  left unchanged, reasoning recorded in the test class docstrings. **(3) Waitress live
+  shift timer**: `active_shift_api()`'s `elapsed`/"Muda" field (used for cash-variance
+  accountability) is deliberately reduced by any overlapping bar/kitchen custodian shift
+  for a waitress (2026-08-08 design) — since she typically works the whole time a
+  custodian shift is open, this sits near zero almost her entire shift, which is what Roy
+  was seeing as "stuck at 0." Rather than change what that number means (it protects her
+  from being blamed for a till she isn't holding), built a SEPARATE, plain wall-clock
+  "time since I opened" live-ticking timer: `waitress_screen()` (`core/order_views.py`)
+  now resolves her own open `Shift.started_at` and passes it as an ISO timestamp;
+  `waitress_screen.html` renders a client-side `setInterval` ticker from it (no polling
+  needed); `active_shift_api()` gained `started_at_iso` on the "my shift" JSON block so
+  `bar_board.html` can render the same live timer next to her existing accountability
+  "Muda" text when `IS_WAITRESS` — both numbers visible side by side, neither redefined.
+  Scoped to the waitress only per her own confirmation, not rolled out to every role.
+  **(4) Shift search module**: `shift_history()` had zero filter params — always the last
+  60 shifts, business-wide for owner or self-scoped for staff, with no date/staff/status
+  filter and no grouping. Added `preset` (today/week/month) or custom `date_from`/
+  `date_to`, a `status` filter, and an owner/manager-only `staff_id` filter (a non-owner/
+  manager passing a foreign staff_id is silently ignored — still hard-scoped to
+  `staff=request.user`, unchanged); raised the row cap from 60 to 500 only when a filter
+  is actually active. Owner/manager view also gets a `grouped_rows` (staff name → that
+  staff's own rows) built alongside — but deliberately kept SEPARATE from `rows` itself:
+  a first draft inlined `{'is_group_header': True, ...}` marker dicts directly into the
+  same flat `rows` list the template already loops (to avoid duplicating the ~200-line
+  per-shift card markup), and that broke 4 pre-existing tests across three other test
+  classes that iterate `resp.context['rows']` assuming every entry has a `'shift'` key —
+  caught by the full suite, not by the narrower tests written for this feature alone.
+  Fixed by leaving `rows` completely untouched (still the plain flat list every existing
+  caller expects) and rendering `grouped_rows` as its own separate "Kwa Mfanyakazi" jump-
+  link summary above the unchanged detailed list, each link anchoring to `#shift-<id>`
+  on the corresponding card. New filter form (quick presets + custom range + status +
+  staff dropdown) at the top of the page. 35 new/updated tests across
+  `WaitressNavbarPettyCashAndShiftsLinksTest`, `AdjustStockNoRealLossPermissionParityTest`
+  (rewritten from "ignored" to "honored" — a deliberate reversal, matching this file's own
+  convention for updating pre-existing tests on a design change), `CanManageKegsPermission
+  Test` (2 tests rewritten from "still blocked" to "now allowed" for discard/receive, 6 new),
+  `WaitressLiveShiftTimerTest`, `ShiftHistorySearchTest`. Also fixed, caught by the full
+  suite: two pre-existing `StationRevenueWindowInfoTest` tests hardcoded shift start times
+  to "today at 8am/9am," which flaked whenever the suite happened to run before that real
+  wall-clock hour (`started_at__lt=now` then filters out a shift that hasn't "started" yet
+  relative to the real test-execution moment) — same bug class already documented
+  repeatedly in this file (`PettyCashReviewUndoTest`, `BarZReportOverlappingShiftsTest`,
+  `AdHocExpenseDayReconciliationTest`). Fixed by anchoring both tests to an explicit `now=`
+  passed into `station_revenue_window_info()` instead of relying on real wall-clock time.
+  No migrations. 1852 tests pass.
+- Bar-side backdate-at-checkout, matching Kitchen/Quick Sell (2026-08-12/13). Roy's earlier
+  request, confirmed still wanted: "the same backfill mechanism that we did for kitchen,
+  create the exact same for the bar side but it should not be in the tabs drawers, put it
+  independently on both boards." Confirmed via direct code read that `KegBarrel.
+  record_sale()`/`record_sale_locked()` had no `created_at` param at all, unlike
+  `ProduceBunch`/`KitchenBatch` (both got one 2026-08-12) — Bar Board's own keg-cart
+  checkout never had ANY backdate support. Added the same `created_at=None` param,
+  mirroring the exact `{'created_at':..., 'date': timezone.localtime(created_at).date()}`
+  pattern from the date/created_at-drift fix. `bar_board()`'s checkout parses a new
+  `bb_backdated_at` field — but ADAPTED to this board's own payment options: the keg-cart
+  payment selector only ever offers Cash/M-Pesa/Tab (no standalone Deni/credit radio the
+  way Kitchen/Quick Sell have), so the gate is `payment_method in ('cash', 'mpesa')`, not
+  `('cash','mpesa','credit')`. Also confirmed Bar Board's checkout has NO separate "plain
+  non-keg item" branch at all (unlike the plan's original assumption, based on Kitchen's
+  shape) — the whole checkout is keg-cart only; non-keg items on a bar business sell via
+  Quick Sell instead, already fully backdate-capable. UI: same "⏰ Haya ni Mauzo ya Nyuma"
+  toggle + datetime-local input added to the checkout/cart panel itself (never the tabs
+  drawer), gated to cash/mpesa exactly like the existing ✂️ Gawanya split-payment toggle
+  it sits next to. 4 new tests (`BarBoardBackdatedCheckoutTest`). No migrations.
+- "Mmiliki Alichukua" — owner ledger, price capture, and tab/debt transfers
+  (2026-08-12/13). Roy's own framing: "the system can be able to know that a certain name
+  in either orders/tabs/debt tracker is the owner... that part of mmiliki alichukua could
+  have a section of its own... he gets to see every item the price the quantities...
+  transference... with an ability to accept or reject... this will help him to not be
+  affected by the credit window in place." Confirmed via direct code read that most of the
+  requested infrastructure already existed from the 2026-08-07 sprint (`/stock/owner-
+  consumption/list/`, void, cash/mpesa settle) — the genuine gaps were price capture,
+  tab/debt transfers, and (per Roy, deferred — see below) STK settle. **Design decision,
+  confirmed via AskUserQuestion**: built on top of the EXISTING `OwnerConsumption`
+  transaction type rather than giving the owner a real `Customer`/`BarTab` record — his
+  draws already live outside every `type='Issue'`-filtered revenue/debt/analytics
+  aggregate by construction (`Transaction.revenue()`/`.cost()` both gate on `type !=
+  'Issue'` first, same "excluded by construction" pattern as `type='Draw'`/`'Transfer'`);
+  routing him through a real tab would have risked the exact revenue-leakage class this
+  app's own 2026-08-02 stock-transfer redesign was built specifically to avoid. "The
+  system knowing a name is the owner" is therefore NOT a Customer-name-matching heuristic
+  (fragile — a real customer could share his first name) — every transfer entry point
+  simply offers "🏠 Mmiliki" as its own distinct, always-available destination, backed
+  directly by the OwnerConsumption mechanism. **Price capture**: `record_owner_
+  consumption()` now accepts an optional `price` field, auto-filled from `item.
+  selling_price × qty` when blank (editable — same pattern every other sale in this app
+  uses to capture its amount), stored on `Transaction.sale_amount`; `owner_consumption_
+  list.html` shows it per row. **The transfer mechanism — the key design insight that
+  keeps this low-risk**: reclassifying an item between "a customer's tab/debt" and "the
+  owner's draw" needs no new parallel Transaction at all — `Transaction.type` is a plain
+  CharField already read by every revenue/debt/analytics query via a `type=` filter, so
+  flipping an existing row's `type` between `'Issue'` and `'OwnerConsumption'` IN PLACE
+  (inside a locked, atomic block) is the same "safe by construction" mechanism this app
+  already trusts for Draw/Transfer types — the row instantly and correctly disappears
+  from (or appears in) every existing aggregate with zero new exclusion logic to write or
+  audit, and never touches `qty` (the physical item already left the shelf once, at
+  original sale time — nothing deducted twice, locked in by a dedicated regression test).
+  New `OwnerConsumptionTransferRequest` model (migration 0162) — deliberately NOT a reuse
+  of `TabTransferRequest` (tightly coupled to `BarTabEntry`/`BarTab` on both ends), mirrors
+  its lifecycle shape only (PENDING/ACCEPTED/REJECTED/CANCELLED, `batch_id` for whole-bill
+  transfers, accept()/reject() cascading to every PENDING sibling sharing it — a whole-
+  bill transfer resolves as ONE decision). Deliberately whole-item/whole-bill only, no
+  partial split, matching Roy's own wording ("an item or bill whether one or all") — a
+  materially simpler scope than the customer-to-customer split-transfer feature.
+  **Direction "to_owner"** (staff or the owner reclassifies a customer's unpaid tab item
+  or debt balance as the owner's own — needs the owner's own accept): `propose_to_owner_
+  locked()`/`_accept_to_owner()` flip `type` from `'Issue'` to `'OwnerConsumption'`,
+  clear `payment_method`, and close out the now-orphaned `BarTabEntry` (if tab-sourced)
+  the same way `remove_tab_entry` already closes an entry it's finished with — reused
+  `debt_views.py`'s own `txn.tab_entry` reverse-OneToOne try/except pattern (already
+  established for the 2026-08-11 debt-transfer feature) rather than inventing a second
+  way to detect a tab-linked transaction. **Direction "from_owner"** (owner hands an item/
+  bill to a customer willing to cover it): `propose_from_owner_locked()`/`_accept_from_
+  owner()` flip `type` back to `'Issue'`, set `payment_method='credit'`, and — per the
+  confirmed answer — resolve an existing open tab by name or open a brand-new one via the
+  existing `BarTab.create_with_credentials()` (same auto-detect-by-name guarantee the
+  cross-counter merge feature already established, so this can never silently duplicate a
+  customer's tab), attaching a new `BarTabEntry`. Confirmed and locked in by a dedicated
+  test: this never calls `evaluate_credit()` directly (consistent with the existing,
+  established rule that opening/adding to a tab is never a credit-issuance point — only
+  actual new-credit checkout points are) — the already-existing, non-blocking `notify_
+  owners_of_conversion_risk()` heads-up fires automatically the moment such a tab is
+  LATER genuinely converted to debt, with zero new wiring needed, since that conversion
+  path was never touched. **Views**: `propose_transfer_to_owner`/`propose_transfer_from_
+  owner` (any staff with an open shift, or owner/manager exempt — matches Roy's "initiated
+  by the staffs or him of course"), `respond_owner_transfer` (owner/manager only, either
+  direction — accept/reject). **A real, pre-existing latent bug found and fixed while
+  testing this** (not introduced by this feature): `ShiftEnforcementMiddleware`'s
+  `_SHIFT_EXEMPT_PREFIXES` had no entry for `/stock/owner-consumption/` at all — a manager
+  with no open shift hit a silent 302 redirect to `/bar/` on ANY owner-consumption action,
+  including the already-existing `void_owner_consumption`/`settle_owner_consumption`
+  endpoints from 2026-08-07, never just the new transfer endpoints. Found only because a
+  test exercised a manager with no shift open — this is exactly the kind of oversight/
+  correction action (`/debt/`, `/petty-cash/`, `/receipts/`) this middleware's own exempt
+  list already carves out for the identical reason; added `/stock/owner-consumption/` to
+  the same list. **UI**: `owner_consumption_list.html` gained a "⏳ Vinavyosubiri Uamuzi
+  Wako" pending-to-owner section (owner/manager-only accept/reject) and a "🔀 Hamishia kwa
+  Mteja" action per unsettled draw; `customer_debt_profile.html` gained a "🏠 Mmiliki"
+  button next to every unpaid debt line (owner/manager-only) to propose it as the owner's
+  draw — directly answers "a customer can transfer a bill to him even if that customer is
+  in the debt tracker." **Deliberately deferred, flagged explicitly rather than silently
+  dropped, given the scope already covered this session**: the destination customer's own
+  public accept/reject page for a from_owner transfer (staff/owner confirm on their behalf
+  for now, same tier the general split-transfer feature already allows when confirmed
+  verbally); wiring "🏠 Mmiliki" into the three tabs drawers' own existing split/whole-tab
+  transfer picker (only the debt profile and the owner's own ledger got the entry point
+  this pass); and the STK Push settle option for `settle_owner_consumption()` (still
+  cash/mpesa only) — explicitly the piece flagged in advance as needing its own careful
+  pass, since it's the one part touching the M-Pesa callback surface. 18 new tests
+  (`OwnerConsumptionPriceCaptureTest`, `OwnerConsumptionTransferTest`). One migration
+  (0162, additive).
