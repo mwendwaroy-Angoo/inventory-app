@@ -1148,6 +1148,20 @@ function homeForceCloseShift(shiftId, staffName) {
     var meter = document.getElementById('shift-meter');
     var heroShift = document.getElementById('bar-hero-shift');
     if (!meter && !heroShift) return;
+
+    // 2026-08-13 live report (Roy): the "Active Shifts" elapsed-time meter
+    // ("0h 00m") looked frozen/stuck — root cause was that this whole block
+    // only ever fetched /bar/shift/active/ ONCE, on page load, unlike the
+    // revenue tiles just below it which already poll every 30s. The elapsed
+    // figure itself (s.elapsed / "Muda") is deliberately capped near-zero
+    // for a waitress/cross-access staffer whose activity is covered by an
+    // overlapping custodian shift (see get_active_staff_shift's own
+    // docstring) — that part is correct by design — but the DISPLAY should
+    // still advance every poll like the rest of this dashboard, not sit on
+    // a stale snapshot from whenever the page happened to load. Wrapped the
+    // existing fetch+render in a named function and polled it, matching the
+    // exact cadence the revenue-tile poller below already uses.
+    function _homeRefreshShiftMeter() {
     fetch('/bar/shift/active/')
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -1217,6 +1231,10 @@ function homeForceCloseShift(shiftId, staffName) {
             meter.innerHTML = rows.join('');
         })
         .catch(function () {});
+    }
+
+    _homeRefreshShiftMeter();
+    setInterval(_homeRefreshShiftMeter, 30000);
 })();
 </script>
 <script>
