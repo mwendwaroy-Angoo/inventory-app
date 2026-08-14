@@ -7469,6 +7469,168 @@ class RevokePaymentAndRemoveEntryTest(TestCase):
         self.assertTrue(any(t['id'] == tab.id for t in open_tabs['tabs']), 'Reverted tab must reappear in the ordinary open-tabs drawer')
 
 
+class RemoveTabEntryEnvelopeReversalTest(TestCase):
+    """2026-08-14 bar-ops transactional audit finding: remove_tab_entry
+    ("✕ Futa") restored the Item's own stock balance correctly when voiding
+    a mistaken tab entry, but never reversed the source envelope model's
+    own counters (KegBarrel.revenue_collected/volume_dispensed_ml/serving
+    counts, ProduceBunch.revenue_collected, KitchenBatch.revenue_collected)
+    — unlike void_direct_transaction(), which already did this exact
+    reversal for the identical "the item was never actually served"
+    scenario on a direct (non-tab) sale. Reproduced directly against a real
+    KegBarrel.record_sale() output: the barrel's revenue_collected/
+    volume_dispensed_ml were left completely unchanged after Futa, silently
+    overstating every keg reconciliation surface that reads those STORED
+    fields (keg_metrics.py's book-vs-scale variance, keg_reconciliation,
+    keg_barrel_detail, Bar Performance analytics), since none of them
+    recompute live from Transaction sums.
+
+    Fixed via a shared _reverse_stock_movement_envelope() helper, now used
+    by both void_direct_transaction() and remove_tab_entry(). These tests
+    cover the keg case directly (the reported scope), plus the produce
+    bunch / kitchen batch cases sharing the same BarTabEntry code path, and
+    a regression lock that void_direct_transaction's own pre-existing
+    behaviour is unchanged by the refactor.
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Envelope Reversal Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='env_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='env_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+
+        self.keg_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Tusker Keg',
+            material_no='ENV-KEG-01', unit='Litre', is_keg=True,
+            selling_price=Decimal('0'), cost_price=Decimal('5000'),
+        )
+        self.preset = ItemPortionPreset.objects.create(
+            item=self.keg_item, label='Pint', price=Decimal('200'),
+            quantity_consumed=Decimal('500'), serving_type='pint',
+        )
+        self.barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.bar_store, item=self.keg_item,
+            gross_weight_kg=Decimal('60'), tare_weight_kg=Decimal('10'),
+            cost_price=Decimal('5000'), target_revenue=Decimal('10000'),
+            status='TAPPED',
+        )
+
+    def _make_keg_tab_entry(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source='bar', store=self.bar_store,
+        )
+        txn = self.barrel.record_sale(self.preset, 1, 'cash', self.staff, tab=tab)
+        entry = BarTabEntry.objects.get(transaction=txn)
+        return tab, entry
+
+    def test_remove_keg_tab_entry_reverses_barrel_revenue_and_volume(self):
+        tab, entry = self._make_keg_tab_entry()
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.revenue_collected, Decimal('200.00'))
+        self.assertEqual(self.barrel.volume_dispensed_ml, Decimal('500.00'))
+        self.assertEqual(self.barrel.pints_dispensed, 1)
+
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {'reason': 'Kosa'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+        self.barrel.refresh_from_db()
+        self.assertEqual(
+            self.barrel.revenue_collected, Decimal('0.00'),
+            'Futa on a keg tab entry must reverse the barrel envelope revenue, not just the item stock',
+        )
+        self.assertEqual(
+            self.barrel.volume_dispensed_ml, Decimal('0.00'),
+            'Futa on a keg tab entry must reverse the barrel volume_dispensed_ml (the keg reconciliation book figure)',
+        )
+        self.assertEqual(self.barrel.pints_dispensed, 0)
+        self.assertEqual(self.barrel.remaining_envelope(), 10000.0)
+
+    def test_remove_keg_tab_entry_still_restores_item_stock(self):
+        tab, entry = self._make_keg_tab_entry()
+        balance_before = self.keg_item.current_balance()  # -500 ml already issued
+        self.client.force_login(self.staff)
+        self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {})
+        self.assertEqual(
+            self.keg_item.current_balance(), balance_before + 500,
+            'The pre-existing item-stock restoration must keep working after the fix',
+        )
+
+    def test_remove_keg_tab_entry_floors_at_zero_when_barrel_already_corrected(self):
+        # If the barrel was independently corrected downward since the sale
+        # (e.g. Hariri Gharama on a different flow), the reversal must never
+        # go negative.
+        tab, entry = self._make_keg_tab_entry()
+        self.barrel.revenue_collected = Decimal('50.00')
+        self.barrel.volume_dispensed_ml = Decimal('100.00')
+        self.barrel.save(update_fields=['revenue_collected', 'volume_dispensed_ml'])
+
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {})
+        self.assertTrue(resp.json()['ok'])
+
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.revenue_collected, Decimal('0.00'))
+        self.assertEqual(self.barrel.volume_dispensed_ml, Decimal('0.00'))
+
+    def test_remove_produce_bunch_tab_entry_reverses_bunch_revenue(self):
+        from core.models import ProduceBunch
+        produce_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Sukuma',
+            material_no='ENV-PRD-01', unit='Bunch', is_produce=True,
+        )
+        bunch = ProduceBunch.objects.create(
+            business=self.biz, item=produce_item, size='MEDIUM',
+            cost_price=Decimal('50'), target_revenue=Decimal('150'),
+            status='OPEN',
+        )
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN', source='bar', store=self.bar_store,
+        )
+        # ProduceBunch.record_sale() doesn't itself attach a tab (no `tab`
+        # param) — mirror what the real produce-checkout call sites do:
+        # record the sale, then separately attach it to the open tab.
+        txn = bunch.record_sale(Decimal('20'), 'credit', tab.customer_name)
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=produce_item.description, amount=Decimal('20'),
+        )
+        bunch.refresh_from_db()
+        self.assertEqual(bunch.revenue_collected, Decimal('20'))
+
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/entries/{entry.id}/remove/', {})
+        self.assertTrue(resp.json()['ok'])
+
+        bunch.refresh_from_db()
+        self.assertEqual(
+            bunch.revenue_collected, Decimal('0'),
+            'Futa on a produce-bunch tab entry must reverse the bunch envelope revenue too',
+        )
+
+    def test_void_direct_transaction_keg_reversal_unaffected_by_refactor(self):
+        # Regression lock: void_direct_transaction's own pre-existing
+        # envelope reversal for a DIRECT (non-tab) keg sale must behave
+        # identically after being refactored onto the shared helper.
+        txn = self.barrel.record_sale(self.preset, 1, 'cash', self.staff, tab=None)
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.revenue_collected, Decimal('200.00'))
+        self.assertEqual(self.barrel.volume_dispensed_ml, Decimal('500.00'))
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {'reason': 'test'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.revenue_collected, Decimal('0.00'))
+        self.assertEqual(self.barrel.volume_dispensed_ml, Decimal('0.00'))
+
+
 class AnonymousKitchenTabTest(TestCase):
     def setUp(self):
         self.biz = Business.objects.create(name='Anon Kitchen Biz', has_kitchen=True)

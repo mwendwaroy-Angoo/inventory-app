@@ -6952,3 +6952,42 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `review_petty_cash` isn't wrapped in a transaction, so a partial write can't be ruled
   out; the message tells the user to reload and check instead of overclaiming. Pure
   template/JS fix — no backend change, no migration.
+- Bar-ops transactional audit (2026-08-14): a requested comprehensive debug pass over the
+  bar module's transactional flow and item balances, not a live-bug report. Traced
+  `KegBarrel.record_sale`/`record_sale_locked`, `Transaction.cost()`/`revenue()`/
+  `loss_value()`/`_stock_movement_cost()`, the full `BarTab`/`BarTabEntry` lifecycle
+  (settle, split-transfer, revoke, void, convert-to-debt, revert-from-debt), `bar_board()`'s
+  checkout (idempotency, backdating, split-payment), the newest `OwnerConsumptionTransfer
+  Request` reclassification mechanism, and `_reconcile()`/`till_expected_cash()` — most of
+  it checked out correct, including some non-obvious invariants (`void_tab` and the owner-
+  transfer reclassification deliberately leave `KegBarrel.revenue_collected`/
+  `volume_dispensed_ml` untouched, since those fields track "value poured," not "cash
+  collected" — confirmed by reading `record_sale()`'s own semantics before assuming either
+  was a bug). **Found and fixed one real, reproducible bug**: `remove_tab_entry()` ("✕ Futa",
+  the shared tab-entry-removal endpoint all three counters use) correctly restored the
+  `Item`'s own stock balance when voiding a mistaken keg-pour tab entry, but never reversed
+  the source `KegBarrel`'s own envelope counters (`revenue_collected`, `volume_dispensed_ml`,
+  cup/pint/jug serving counts) — unlike its sibling `void_direct_transaction()` (built later,
+  2026-08-02, for the identical "item was never actually served" scenario on a direct sale),
+  which already does this reversal correctly. Reproduced directly against a real `KegBarrel.
+  record_sale()` output before touching any code: `revenue_collected`/`volume_dispensed_ml`
+  were left completely unchanged after Futa, even though the item's own stock balance
+  correctly restored. Confirmed via grep that `keg_metrics.py` (book-vs-scale variance,
+  staff shrinkage), `keg_reconciliation`/`keg_barrel_detail`, and Bar Performance analytics
+  all read these as STORED fields, never a live Transaction sum — so this silently,
+  permanently overstated the barrel's envelope (and therefore the sell-modal's "target
+  reached" gate, keg reconciliation's wastage %, and barrel P&L/markup in analytics) for
+  every voided keg tab entry. Existing tests for `remove_tab_entry` (`RevokePaymentAndRemove
+  EntryTest`) only ever used a hand-built plain `Transaction` with no `keg_barrel_id` set, so
+  this gap was never exercised. Same `BarTabEntry` code path is shared by produce/kitchen
+  tab entries too, so the fix covers `ProduceBunch`/`KitchenBatch` envelopes identically.
+  Fixed by extracting the existing envelope-reversal logic out of `void_direct_transaction`
+  into a new shared `_reverse_stock_movement_envelope(txn)` helper, called from both — zero
+  behavior change to `void_direct_transaction` itself (regression-locked by a dedicated
+  test), `remove_tab_entry` wrapped in `select_for_update()`/`atomic()` for the first time to
+  safely lock the barrel/bunch/batch row during the decrement, matching the locking
+  convention already used everywhere else in this file. 5 new tests
+  (`RemoveTabEntryEnvelopeReversalTest`) — keg revenue/volume/serving-count reversal, the
+  item-stock restoration still works, a `max(0, ...)` floor when the barrel was already
+  independently corrected, the produce-bunch case, and the `void_direct_transaction`
+  regression lock. No migrations. 1879 tests pass (core + accounts).

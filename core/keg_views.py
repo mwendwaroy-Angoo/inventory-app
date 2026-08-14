@@ -2102,6 +2102,70 @@ def split_transaction_payment_method(request, txn_id):
     })
 
 
+def _reverse_stock_movement_envelope(txn):
+    """Reverse the source envelope's own counters for a Transaction whose
+    stock effect is about to be fully undone (qty zeroed) because the item
+    was never actually served — a genuine correction, not a real loss.
+
+    For a keg pour: decrements KegBarrel.revenue_collected and
+    volume_dispensed_ml, plus whichever of cups_dispensed/pints_dispensed/
+    jugs_dispensed the pour incremented. For a produce bunch / kitchen
+    batch sale: decrements the envelope's own revenue_collected.
+
+    Shared by void_direct_transaction() (a direct/walk-up sale) and
+    remove_tab_entry() (a tab entry "✕ Futa") — both zero txn.qty for the
+    identical reason and must both reverse the source envelope the same
+    way. Found 2026-08-14 (bar-ops transactional audit): remove_tab_entry
+    already restored the Item's own stock balance correctly, but never
+    reversed the KegBarrel's own envelope counters at all — reproduced
+    directly (KegBarrel.record_sale → Futa → barrel.revenue_collected/
+    volume_dispensed_ml left completely unchanged). Every keg reconciliation
+    surface (keg_metrics.py's book-vs-scale variance, keg_reconciliation,
+    keg_barrel_detail, Bar Performance analytics) reads these as STORED
+    fields, never a live Transaction sum, so a voided keg tab entry
+    silently, permanently overstated the barrel's envelope. void_direct_
+    transaction already had this exact reversal for the direct-sale case;
+    it just never got carried over to the tab-entry case built earlier.
+
+    Caller must already hold txn's own row lock (select_for_update) and
+    call this BEFORE zeroing txn.qty — the ml/qty reversal below reads the
+    transaction's still-original qty. Uses max(0, ...) floors — same
+    defensive floor void_direct_transaction already used — since the
+    barrel/bunch/batch may have been independently corrected (e.g. Hariri
+    Gharama) since this transaction was created.
+    """
+    sale_amt = txn.sale_amount or Decimal('0')
+    if txn.keg_barrel_id:
+        barrel = KegBarrel.objects.select_for_update().get(id=txn.keg_barrel_id)
+        barrel.revenue_collected = max(Decimal('0'), (barrel.revenue_collected or Decimal('0')) - sale_amt)
+        update_fields = ['revenue_collected']
+        ml = abs(txn.qty or Decimal('0'))
+        barrel.volume_dispensed_ml = max(Decimal('0'), (barrel.volume_dispensed_ml or Decimal('0')) - ml)
+        update_fields.append('volume_dispensed_ml')
+        serving = (txn.keg_serving or '').strip()
+        qty_int = int(txn.keg_qty or 0)
+        if serving == 'jug' and qty_int:
+            barrel.jugs_dispensed = max(0, (barrel.jugs_dispensed or 0) - qty_int)
+            update_fields.append('jugs_dispensed')
+        elif serving == 'pint' and qty_int:
+            barrel.pints_dispensed = max(0, (barrel.pints_dispensed or 0) - qty_int)
+            update_fields.append('pints_dispensed')
+        elif qty_int:
+            barrel.cups_dispensed = max(0, (barrel.cups_dispensed or 0) - qty_int)
+            update_fields.append('cups_dispensed')
+        barrel.save(update_fields=update_fields)
+    elif txn.produce_bunch_id:
+        from .models import ProduceBunch
+        bunch = ProduceBunch.objects.select_for_update().get(id=txn.produce_bunch_id)
+        bunch.revenue_collected = max(Decimal('0'), (bunch.revenue_collected or Decimal('0')) - sale_amt)
+        bunch.save(update_fields=['revenue_collected'])
+    elif txn.kitchen_batch_id:
+        from .models import KitchenBatch
+        batch = KitchenBatch.objects.select_for_update().get(id=txn.kitchen_batch_id)
+        batch.revenue_collected = max(Decimal('0'), (batch.revenue_collected or Decimal('0')) - sale_amt)
+        batch.save(update_fields=['revenue_collected'])
+
+
 @login_required
 @require_POST
 def void_direct_transaction(request, txn_id):
@@ -2178,36 +2242,7 @@ def void_direct_transaction(request, txn_id):
         if txn.payment_method == 'void':
             return JsonResponse({'ok': False, 'error': 'Tayari imefutwa.'}, status=400)
 
-        sale_amt = txn.sale_amount or Decimal('0')
-        if txn.keg_barrel_id:
-            barrel = KegBarrel.objects.select_for_update().get(id=txn.keg_barrel_id)
-            barrel.revenue_collected = max(Decimal('0'), (barrel.revenue_collected or Decimal('0')) - sale_amt)
-            update_fields = ['revenue_collected']
-            ml = abs(txn.qty or Decimal('0'))
-            barrel.volume_dispensed_ml = max(Decimal('0'), (barrel.volume_dispensed_ml or Decimal('0')) - ml)
-            update_fields.append('volume_dispensed_ml')
-            serving = (txn.keg_serving or '').strip()
-            qty_int = int(txn.keg_qty or 0)
-            if serving == 'jug' and qty_int:
-                barrel.jugs_dispensed = max(0, (barrel.jugs_dispensed or 0) - qty_int)
-                update_fields.append('jugs_dispensed')
-            elif serving == 'pint' and qty_int:
-                barrel.pints_dispensed = max(0, (barrel.pints_dispensed or 0) - qty_int)
-                update_fields.append('pints_dispensed')
-            elif qty_int:
-                barrel.cups_dispensed = max(0, (barrel.cups_dispensed or 0) - qty_int)
-                update_fields.append('cups_dispensed')
-            barrel.save(update_fields=update_fields)
-        elif txn.produce_bunch_id:
-            from .models import ProduceBunch
-            bunch = ProduceBunch.objects.select_for_update().get(id=txn.produce_bunch_id)
-            bunch.revenue_collected = max(Decimal('0'), (bunch.revenue_collected or Decimal('0')) - sale_amt)
-            bunch.save(update_fields=['revenue_collected'])
-        elif txn.kitchen_batch_id:
-            from .models import KitchenBatch
-            batch = KitchenBatch.objects.select_for_update().get(id=txn.kitchen_batch_id)
-            batch.revenue_collected = max(Decimal('0'), (batch.revenue_collected or Decimal('0')) - sale_amt)
-            batch.save(update_fields=['revenue_collected'])
+        _reverse_stock_movement_envelope(txn)
 
         txn.qty = Decimal('0')
         txn.payment_method = 'void'
@@ -2672,6 +2707,18 @@ def remove_tab_entry(request, tab_id, entry_id):
     OPEN tabs with unpaid entries; a PAID entry must be reverted first (see
     revoke_entry_payment) before it can be removed this way. Returns the
     updated unpaid total for the tab.
+
+    2026-08-14 fix (bar-ops transactional audit): now also reverses the
+    source keg barrel's / produce bunch's / kitchen batch's own envelope
+    via the shared _reverse_stock_movement_envelope() helper (see its
+    docstring) — void_direct_transaction() already did this for a direct
+    sale, but this older, tab-entry version of the identical "the item was
+    never actually served" correction never got the same fix. Before this,
+    voiding a keg tab entry restored the Item's own stock balance correctly
+    but left KegBarrel.revenue_collected/volume_dispensed_ml permanently
+    overstated — corrupting keg reconciliation, Bar Performance analytics,
+    and the sell-modal's own remaining-envelope gate, none of which
+    recompute those figures live from Transaction sums.
     """
     up = _get_up(request)
     if not up:
@@ -2701,15 +2748,22 @@ def remove_tab_entry(request, tab_id, entry_id):
 
     reason = (request.POST.get('reason') or '').strip()
 
+    from django.db import transaction as db_txn
     now = timezone.now()
-    entry.is_paid = True
-    entry.paid_at = now
-    entry.payment_method = 'void'
-    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+    with db_txn.atomic():
+        entry = BarTabEntry.objects.select_for_update().select_related('tab', 'transaction').get(id=entry.id)
+        txn = entry.transaction
 
-    entry.transaction.payment_method = 'void'
-    entry.transaction.qty = Decimal('0')  # nullify stock effect — item was never given to customer
-    entry.transaction.save(update_fields=['payment_method', 'qty'])
+        _reverse_stock_movement_envelope(txn)
+
+        entry.is_paid = True
+        entry.paid_at = now
+        entry.payment_method = 'void'
+        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+
+        txn.payment_method = 'void'
+        txn.qty = Decimal('0')  # nullify stock effect — item was never given to customer
+        txn.save(update_fields=['payment_method', 'qty'])
 
     who = request.user.get_full_name() or request.user.username
     when = timezone.localtime(now).strftime('%d %b %Y, %H:%M')
