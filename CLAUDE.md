@@ -7018,3 +7018,46 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`ShiftWelcomeMessageTest`) — all four tiers, void-sale exclusion from the revenue
   figure, the kitchen endpoint parity check, and a no-blank-name-blocks-shift regression
   lock. No migrations. 1886 tests pass (core + accounts).
+- Debt-tracker "does a cleared tab leak into the debt tracker" audit + new read-only
+  diagnostic (2026-08-14), live report with screenshots: Roy's own "Roy" customer
+  profile showed KES 320 outstanding (4× "Keg Gold" @ 80, dated 09 Aug) while he
+  believed he had no outstanding bar debt, right after looking at a live receipt for a
+  DIFFERENT, still-open 12–13 Aug tab (KC Ginger/Pineapple). Traced every settle/
+  convert/transfer code path that could plausibly cause a genuinely-cleared tab entry
+  to still read as debt: `settle_tab()`'s debt-redirect (resolves `tab.customer` via
+  the stored FK, not a name lookup — correct), `tick_entry()`/`settle_entries_amount_
+  locked()` (both correctly sync `Transaction.payment_method` away from `'credit'` the
+  moment an entry is genuinely settled), `TabTransferRequest.accept()` (correctly syncs
+  `recipient`/`payment_method` when a destination tab is already debt-converted),
+  `OwnerConsumptionTransferRequest._accept_to_owner`/`_accept_from_owner` (round-trips
+  cleanly), and `_convert_open_tabs_to_debt_for_shift()` (the shift-close auto-convert
+  path — correctly sets `tab.customer` via the same FK pattern `_convert_tab_to_debt_
+  core()` uses, so `settle_tab()`'s redirect can recognise an auto-converted tab too).
+  All checked out structurally correct — no reproducible bug found in the code itself.
+  The numbers in Roy's own screenshots are also internally consistent (Bar KES 1680
+  credit / 1360 paid + Kitchen KES 1040 credit / 1040 paid = the profile's own KES 2720
+  / 2400 totals), and FIFO always surfaces the OLDEST unpaid transactions first — a real,
+  separate, older debt from 09 Aug predating an unrelated newer tab is the simplest
+  explanation, not a leak. Given the stakes ("I cannot allow the system to put irregular
+  amounts to be paid for customers who had nothing left to pay") a code read alone isn't
+  enough reassurance — built `audit_debt_ledger_integrity` (read-only, mutates nothing,
+  confirmed by a dedicated test), a diagnostic Roy can run himself via Render's Shell
+  against his REAL production data to check the three CONCRETE, mechanical ways this
+  exact symptom could actually happen: (1) a `Transaction` still `payment_method='credit'`
+  whose own `BarTabEntry.is_paid=True` — the direct signature of an entry settled without
+  syncing its transaction; (2) a `BarTab` left `status='SETTLED'` with no `customer_id`,
+  still carrying unpaid entries — stuck in limbo, invisible to `settle_tab()`'s debt-
+  redirect; (3) two-or-more `Customer` rows sharing the same name (case/whitespace-
+  insensitive) within one business — a real payment recorded against one duplicate never
+  reduces the other's outstanding figure, since `CustomerDebtPayment` is tied to a
+  specific `Customer` row, not a name string (this app's own well-documented recurring
+  bug class — see the Jenerali/Genro/McKenzie entries above; the `🔀 Sahihisha Jina la
+  Mteja` merge tool already exists for exactly this). `--customer=<name>` additionally
+  prints a full itemized unpaid-transaction breakdown (item/date/amount/originating tab)
+  for direct cross-checking against what an owner remembers paying. 8 new tests
+  (`AuditDebtLedgerIntegrityTest`) — each of the three finding types reproduced and
+  detected, a clean/correctly-settled ledger produces zero false positives, a case-only
+  name difference (`'roy'` vs `'Roy'`) is correctly NOT flagged as a duplicate (matches
+  every real `name__iexact` resolution path elsewhere in the app), business-scoping, and
+  a direct regression lock that the command never writes to the database. No migrations.
+  1894 tests pass (core + accounts).

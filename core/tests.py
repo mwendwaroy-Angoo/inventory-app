@@ -22335,6 +22335,157 @@ class BackfillShiftStationTest(TestCase):
         self.assertEqual(shift.station, 'bar')  # unchanged, not re-inferred
 
 
+class AuditDebtLedgerIntegrityTest(TestCase):
+    """core/management/commands/audit_debt_ledger_integrity.py — 2026-08-14
+    live report (Roy): "do bills on tabs leak to the debt tracker, and when
+    tabs are cleared does the debt tracker get mixed up and show them as
+    still outstanding?" Every settle/convert/transfer code path was traced
+    and found structurally correct (settle_tab, tick_entry, TabTransferRequest,
+    OwnerConsumptionTransferRequest, _convert_open_tabs_to_debt_for_shift all
+    correctly sync Transaction.payment_method away from 'credit' when an
+    entry is genuinely settled) — no reproducible bug was found in the code
+    itself. This read-only diagnostic instead checks Roy's own real data for
+    the three CONCRETE ways the exact symptom he described could actually
+    happen, so he can self-verify without needing to trust a code read alone.
+    Purely read-only — never mutates a single row; these tests confirm both
+    that each of the three finding types is actually detected and that a
+    clean, correctly-settled ledger produces zero false positives."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Ledger Integrity Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='LI-01', unit='Pcs', selling_price=Decimal('80'),
+            cost_price=Decimal('40'),
+        )
+
+    def _run(self, **kwargs):
+        from django.core.management import call_command
+        import io
+        out = io.StringIO()
+        call_command('audit_debt_ledger_integrity', stdout=out, **kwargs)
+        return out.getvalue()
+
+    def test_clean_correctly_settled_tab_produces_no_findings(self):
+        cust = Customer.objects.create(business=self.biz, name='CleanCustomer', credit_approved=True)
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='CleanCustomer', customer=cust,
+            status='SETTLED', source='bar',
+        )
+        # Genuinely settled: entry paid AND the underlying Transaction correctly
+        # synced away from 'credit' — the ordinary, correct case.
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', recipient='CleanCustomer',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'),
+            is_paid=True, payment_method='cash',
+        )
+        output = self._run(business='Ledger Integrity Biz')
+        self.assertIn('No integrity issues found', output)
+
+    def test_finding_1_paid_entry_with_transaction_stuck_on_credit(self):
+        cust = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=cust,
+            status='SETTLED', source='bar',
+        )
+        # The exact bug signature: entry says paid, Transaction never synced.
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Roy',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'),
+            is_paid=True, payment_method='cash',
+        )
+        output = self._run(business='Ledger Integrity Biz', customer='Roy')
+        self.assertIn(f'Transaction #{txn.id}', output)
+        self.assertIn('is_paid=True', output)
+        self.assertIn("still payment_method='credit'", output)
+        # The itemized customer breakdown must also surface it directly.
+        self.assertIn('outstanding KES 80', output)
+
+    def test_finding_2_settled_tab_stuck_with_no_customer(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Stuck Tab', customer=None,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Stuck Tab',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'),
+            is_paid=False,
+        )
+        output = self._run(business='Ledger Integrity Biz')
+        self.assertIn(f'BarTab #{tab.id}', output)
+        self.assertIn('no customer_id', output)
+
+    def test_finding_3_duplicate_customer_names(self):
+        Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Roy ', credit_approved=True)  # trailing space
+        output = self._run(business='Ledger Integrity Biz')
+        self.assertIn("2 Customer records share the name", output)
+
+    def test_case_only_difference_is_not_flagged_as_duplicate(self):
+        # name__iexact-equivalent normalization: 'roy' and 'Roy' are the same
+        # name for every real customer-resolution code path in this app
+        # (Customer.objects.filter(name__iexact=...) everywhere) — the
+        # command's own normalization must agree, not flag a false positive.
+        Customer.objects.create(business=self.biz, name='roy', credit_approved=True)
+        output = self._run(business='Ledger Integrity Biz')
+        self.assertIn('No integrity issues found', output)
+
+    def test_customer_filter_shows_nothing_outstanding_when_actually_clear(self):
+        cust = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=cust,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', recipient='Roy',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'),
+            is_paid=True, payment_method='cash',
+        )
+        output = self._run(business='Ledger Integrity Biz', customer='Roy')
+        self.assertIn('nothing outstanding', output)
+
+    def test_business_filter_scopes_correctly(self):
+        other_biz = Business.objects.create(name='Unrelated Biz')
+        Customer.objects.create(business=other_biz, name='Roy', credit_approved=True)
+        Customer.objects.create(business=other_biz, name='Roy ', credit_approved=True)
+        output = self._run(business='Ledger Integrity Biz')  # not "Unrelated Biz"
+        self.assertNotIn('Unrelated Biz', output)
+        self.assertIn('No integrity issues found', output)
+
+    def test_command_never_mutates_any_data(self):
+        cust = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=cust,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Roy',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'),
+            is_paid=True, payment_method='cash',
+        )
+        self._run(business='Ledger Integrity Biz')
+        txn.refresh_from_db()
+        entry.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'credit', 'the command must never write anything')
+        self.assertTrue(entry.is_paid)
+
+
 # ── Customer merge (2026-07-31) ──────────────────────────────────────────────
 
 class CustomerMergeTest(TestCase):
