@@ -7061,3 +7061,15 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   every real `name__iexact` resolution path elsewhere in the app), business-scoping, and
   a direct regression lock that the command never writes to the database. No migrations.
   1894 tests pass (core + accounts).
+- `audit_debt_ledger_integrity` — `--all-customers` flag (2026-08-14, same-day follow-up):
+  Roy asked to run the diagnostic for every customer at once rather than one name at a
+  time, for "something conclusive." The 3 structural findings (unsynced payment_method,
+  stuck SETTLED tabs, duplicate names) already scanned the whole business by default —
+  only the itemized per-transaction breakdown was single-customer. New `--all-customers`
+  iterates every `Customer` in the matched business(es), skips anyone with `outstanding
+  <= 0` (keeps the output focused on real balances, not a wall of zeros), and prints a
+  grand-total line (customer count + combined KES) at the end. `--customer` is ignored
+  when `--all-customers` is also passed (documented in both flags' help text). 2 new
+  tests (`AuditDebtLedgerIntegrityTest`) — a mixed owing/clear-balance business correctly
+  lists only the owing customer with the right total, and the flag-precedence case. No
+  migrations. 1896 tests pass (core + accounts).

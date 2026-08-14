@@ -22465,6 +22465,48 @@ class AuditDebtLedgerIntegrityTest(TestCase):
         self.assertNotIn('Unrelated Biz', output)
         self.assertIn('No integrity issues found', output)
 
+    def test_all_customers_flag_lists_everyone_with_a_balance_and_skips_clear_ones(self):
+        owing = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        clear = Customer.objects.create(business=self.biz, name='Amina', credit_approved=True)
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=owing,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Roy',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'),
+            is_paid=False,
+        )
+        # Amina has a fully-settled history — must be skipped entirely, keeping
+        # the "conclusive" all-customers output focused on real balances only.
+        clear_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Amina', customer=clear,
+            status='SETTLED', source='bar',
+        )
+        clear_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', recipient='Amina',
+        )
+        BarTabEntry.objects.create(
+            tab=clear_tab, transaction=clear_txn, description='Keg Gold',
+            amount=Decimal('80'), is_paid=True, payment_method='cash',
+        )
+        output = self._run(business='Ledger Integrity Biz', all_customers=True)
+        self.assertIn("Customer #{} 'Roy'".format(owing.id), output)
+        self.assertNotIn('Amina', output)
+        self.assertIn('TOTAL: 1 customer(s) with an outstanding balance', output)
+        self.assertIn('KES 80', output)
+
+    def test_all_customers_flag_ignores_the_customer_name_filter(self):
+        Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        # No outstanding balance anywhere — --all-customers should report a
+        # clean zero, not fall back to --customer's narrower behaviour.
+        output = self._run(business='Ledger Integrity Biz', customer='Roy', all_customers=True)
+        self.assertIn('TOTAL: 0 customer(s) with an outstanding balance, KES 0', output)
+
     def test_command_never_mutates_any_data(self):
         cust = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
         tab = BarTab.objects.create(

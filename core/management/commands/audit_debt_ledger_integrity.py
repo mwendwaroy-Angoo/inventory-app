@@ -46,7 +46,16 @@ class Command(BaseCommand):
             help='Also print a full itemized unpaid-transaction breakdown for '
                  'every customer whose name contains this (case-insensitive) — '
                  'item, date, amount, originating tab id/status — so the owner '
-                 'can cross-check it directly against what they remember.',
+                 'can cross-check it directly against what they remember. '
+                 'Ignored when --all-customers is also given.',
+        )
+        parser.add_argument(
+            '--all-customers', action='store_true',
+            help='Print the same itemized breakdown for EVERY customer in the '
+                 'matched business(es) who has a nonzero outstanding balance — '
+                 'the whole business at once, not just one name, plus a grand '
+                 'total at the end. Customers with nothing owed are skipped to '
+                 'keep the output focused on what actually needs reviewing.',
         )
 
     def handle(self, *args, **options):
@@ -61,7 +70,10 @@ class Command(BaseCommand):
             return
 
         customer_filter = options['customer'].strip()
+        all_customers = options['all_customers']
         total_findings = 0
+        grand_total_outstanding = 0.0
+        grand_total_customers = 0
 
         for business in businesses:
             findings_here = []
@@ -104,10 +116,10 @@ class Command(BaseCommand):
                 key = ' '.join((cust.name or '').split()).lower()
                 if key:
                     by_norm_name[key].append(cust)
-            for key, custs in by_norm_name.items():
-                if len(custs) > 1:
-                    lines = [f"  ⚠ {len(custs)} Customer records share the name '{custs[0].name}':"]
-                    for c in custs:
+            for key, dupe_custs in by_norm_name.items():
+                if len(dupe_custs) > 1:
+                    lines = [f"  ⚠ {len(dupe_custs)} Customer records share the name '{dupe_custs[0].name}':"]
+                    for c in dupe_custs:
                         d = _get_customer_debt_data(c, business, scope='all')
                         lines.append(
                             f"      · Customer #{c.id} (phone={c.phone or '—'}): "
@@ -122,37 +134,52 @@ class Command(BaseCommand):
                     self.stdout.write(f)
                 total_findings += len(findings_here)
 
-            # ── optional: itemized breakdown for named customer(s) ───────────
-            if customer_filter:
+            # ── optional: itemized breakdown for one/many customer(s) ────────
+            if all_customers:
+                custs = Customer.objects.filter(business=business).order_by('name')
+            elif customer_filter:
                 custs = Customer.objects.filter(
                     business=business, name__icontains=customer_filter,
                 )
-                for cust in custs:
-                    d = _get_customer_debt_data(cust, business, scope='all')
-                    self.stdout.write(self.style.MIGRATE_HEADING(
-                        f"\n--- {business.name} / Customer #{cust.id} '{cust.name}' "
-                        f"— outstanding KES {d['outstanding']:,.0f} ---"
-                    ))
-                    if not d['unpaid_transactions']:
-                        self.stdout.write('  (nothing outstanding)')
-                        continue
-                    for row in d['unpaid_transactions']:
-                        txn = row['txn']
-                        entry = _txn_tab_entry(txn)
-                        if entry is not None:
-                            tab = entry.tab
-                            opened = (
-                                timezone.localtime(tab.opened_at).date()
-                                if tab.opened_at else '?'
-                            )
-                            tab_info = f"tab #{tab.id} ({tab.status}, opened {opened})"
-                        else:
-                            tab_info = 'no tab (direct sale)'
-                        self.stdout.write(
-                            f"  · {txn.date} — {txn.item.description} — "
-                            f"KES {row['amount']:,.0f} — {row['days_outstanding']} "
-                            f"days outstanding — {tab_info}"
+            else:
+                custs = Customer.objects.none()
+
+            for cust in custs:
+                d = _get_customer_debt_data(cust, business, scope='all')
+                if all_customers and d['outstanding'] <= 0:
+                    continue  # whole-business mode: skip anyone with nothing owed
+                self.stdout.write(self.style.MIGRATE_HEADING(
+                    f"\n--- {business.name} / Customer #{cust.id} '{cust.name}' "
+                    f"— outstanding KES {d['outstanding']:,.0f} ---"
+                ))
+                if not d['unpaid_transactions']:
+                    self.stdout.write('  (nothing outstanding)')
+                    continue
+                grand_total_customers += 1
+                grand_total_outstanding += d['outstanding']
+                for row in d['unpaid_transactions']:
+                    txn = row['txn']
+                    entry = _txn_tab_entry(txn)
+                    if entry is not None:
+                        tab = entry.tab
+                        opened = (
+                            timezone.localtime(tab.opened_at).date()
+                            if tab.opened_at else '?'
                         )
+                        tab_info = f"tab #{tab.id} ({tab.status}, opened {opened})"
+                    else:
+                        tab_info = 'no tab (direct sale)'
+                    self.stdout.write(
+                        f"  · {txn.date} — {txn.item.description} — "
+                        f"KES {row['amount']:,.0f} — {row['days_outstanding']} "
+                        f"days outstanding — {tab_info}"
+                    )
+
+        if all_customers:
+            self.stdout.write(self.style.MIGRATE_HEADING(
+                f'\n=== TOTAL: {grand_total_customers} customer(s) with an '
+                f'outstanding balance, KES {grand_total_outstanding:,.0f} combined ==='
+            ))
 
         if total_findings:
             self.stdout.write(self.style.WARNING(
