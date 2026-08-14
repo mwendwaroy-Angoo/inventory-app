@@ -18671,6 +18671,126 @@ class OpenShiftVarianceTest(TestCase):
         self.assertEqual(shift.banked_amount, Decimal('300'))
 
 
+class ShiftWelcomeMessageTest(TestCase):
+    """2026-08-14 live request (Roy): "welcome back (staff name) motivational
+    message when staff logs in and opens shift". Hooked into open_shift()'s
+    JSON response (welcome_message) — rendered on both boards' shared
+    open-shift success screen, per _build_shift_welcome_message()'s own
+    docstring for why shift-open (not login itself) is the right moment.
+
+    Covers all four message tiers: first-ever shift, a round-number shift-
+    count milestone, this-month attributed revenue, and the plain generic
+    fallback — plus that the field is present on both the bar and kitchen
+    open-shift endpoints (they share one view).
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Welcome Msg Biz', has_kitchen=True)
+        self.owner = User.objects.create_user(username='wm_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='wm_staff', password='x', first_name='Amina')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='wm_kstaff', password='x', first_name='Otieno')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+
+    def _prior_confirmed_shift(self, staff):
+        # CONFIRMED (not OPEN/CLOSED) so it never blocks a new shift from
+        # opening for the same staffer — same fixture pattern as
+        # OpenShiftVarianceTest above.
+        Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=staff,
+            opening_float=Decimal('0'), status='CONFIRMED',
+            started_at=timezone.now() - timedelta(days=1, hours=3),
+            ended_at=timezone.now() - timedelta(days=1, hours=2),
+            closing_cash_counted=Decimal('0'),
+        )
+
+    def test_first_ever_shift_gets_first_shift_greeting(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertIn('Amina', data['welcome_message'])
+        self.assertIn('kwanza', data['welcome_message'])
+
+    def test_milestone_shift_count_gets_milestone_greeting(self):
+        for _ in range(4):
+            self._prior_confirmed_shift(self.staff)
+        self.client.force_login(self.staff)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertIn('Hongera', data['welcome_message'])
+        self.assertIn('5', data['welcome_message'])
+        shift = Shift.objects.get(business=self.biz, staff=self.staff, status='OPEN')
+        self.assertEqual(
+            Shift.objects.filter(business=self.biz, staff=self.staff).count(), 5,
+        )
+
+    def test_non_milestone_with_month_revenue_mentions_the_figure(self):
+        self._prior_confirmed_shift(self.staff)  # shift_count becomes 2 — not a milestone
+        Transaction.objects.create(
+            business=self.biz, item=Item.objects.create(
+                business=self.biz, store=self.bar_store, description='Tusker',
+                material_no='WM-01', unit='Pcs', selling_price=Decimal('200'),
+            ),
+            type='Issue', qty=Decimal('-3'), sale_amount=Decimal('1500'),
+            payment_method='cash', recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertIn('Amina', data['welcome_message'])
+        self.assertIn('1,500', data['welcome_message'])
+
+    def test_non_milestone_no_revenue_gets_plain_generic_greeting(self):
+        self._prior_confirmed_shift(self.staff)  # shift_count becomes 2 — not a milestone
+        self.client.force_login(self.staff)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertIn('Karibu', data['welcome_message'])
+        self.assertNotIn('KES', data['welcome_message'])
+
+    def test_void_sale_excluded_from_month_revenue_greeting(self):
+        self._prior_confirmed_shift(self.staff)
+        Transaction.objects.create(
+            business=self.biz, item=Item.objects.create(
+                business=self.biz, store=self.bar_store, description='Tusker',
+                material_no='WM-02', unit='Pcs', selling_price=Decimal('200'),
+            ),
+            type='Issue', qty=Decimal('0'), sale_amount=Decimal('9999'),
+            payment_method='void', recorded_by=self.staff, date=timezone.localdate(),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertNotIn('9,999', data['welcome_message'])
+
+    def test_kitchen_open_shift_endpoint_also_returns_welcome_message(self):
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post('/kitchen/shift/open/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertIn('Otieno', data['welcome_message'])
+
+    def test_welcome_message_never_blocks_shift_creation(self):
+        # A broken/odd staff record (blank first/last name, falling back to
+        # username) must still open the shift and still return SOME message.
+        no_name_staff = User.objects.create_user(username='wm_noname', password='x')
+        UserProfile.objects.create(user=no_name_staff, business=self.biz, role='staff')
+        self.client.force_login(no_name_staff)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '0'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data['welcome_message'])
+        self.assertIn('wm_noname', data['welcome_message'])
+
+
 class ActiveShiftApiTillTest(TestCase):
     """active_shift_api()'s float suggestion must be station-wide (any staff
     opening on this counter), not scoped to the same staff member's own

@@ -6991,3 +6991,30 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   item-stock restoration still works, a `max(0, ...)` floor when the barrel was already
   independently corrected, the produce-bunch case, and the `void_direct_transaction`
   regression lock. No migrations. 1879 tests pass (core + accounts).
+- Personalized shift-open welcome message (2026-08-14), live request: "welcome back
+  (staff name) motivational message when staff logs in and opens shift." Hooked into
+  `open_shift()` — not login itself — since that's the one moment every staffer's daily
+  flow already funnels through on both counters, and it already has a dedicated success
+  screen (`_showOpenShiftDoneScreen`, shown after every open-shift exit path: no tapped
+  barrels, barrel-confirm skipped, or barrel weights confirmed). New
+  `_build_shift_welcome_message(user, business, shift)` (`core/shift_views.py`) —
+  deliberately NOT built from `haki_views._staff_contribution()`, which is a heavy,
+  multi-query report meant for an on-demand page load and mixes in negative
+  accountability figures (wastage, rejected petty cash, keg loss) that have no place in
+  a welcome message; this is a couple of cheap, always-positive queries instead; every
+  branch is failure-safe (a query error here must never block opening the shift, only
+  cost the staffer a nicer greeting — falls back to a bare "Karibu, {name}!"). Priority:
+  a round-number shift-count milestone (5/10/25/50/100/250/500/1000) > a first-ever
+  shift > this month's own `recorded_by`-attributed revenue (cash+mpesa+credit, `.exclude
+  (payment_method='void')`) if any > a plain generic greeting — the last two tiers each
+  have two phrasings, picked off the new shift's own id (cheap, deterministic per shift)
+  for variety. Added `welcome_message` to `open_shift()`'s JSON response (shared by both
+  `/bar/shift/open/` and `/kitchen/shift/open/`, one view). `bar_board.html` and
+  `kitchen_board.html` — counter-parity — both gained `_justOpenedWelcomeMessage`
+  (module-level, set in `submitOpenShift`'s success handler; read by
+  `_showOpenShiftDoneScreen` rather than threaded through inline `onclick` handlers,
+  since the text itself may contain quotes/apostrophes) and render it as a gold banner
+  above the existing "✓ Umefungua shift" line. 7 new tests
+  (`ShiftWelcomeMessageTest`) — all four tiers, void-sale exclusion from the revenue
+  figure, the kitchen endpoint parity check, and a no-blank-name-blocks-shift regression
+  lock. No migrations. 1886 tests pass (core + accounts).

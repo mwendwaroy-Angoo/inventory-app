@@ -4852,6 +4852,7 @@
 
   var _prevClosing = null;
   var _justOpenedShiftId = null;  // 2026-07-30 — see bar_board.html's identical comment.
+  var _justOpenedWelcomeMessage = null;  // 2026-08-14 — see bar_board.html's identical comment.
 
   function _resetOpenShiftModal() {
     document.getElementById('open-shift-float').value = '0';
@@ -4865,6 +4866,8 @@
 
   // 2026-07-30 — counter-parity with bar_board.html's identical helper: offer
   // the same opening-time "Hesabu Stock" after every successful open-shift exit.
+  // 2026-08-14 — also shows the personalized welcome/motivational greeting,
+  // same as bar_board.html's identical function.
   function _showOpenShiftDoneScreen(openingFloat) {
     var modalBody  = document.querySelector('#openShiftModal .modal-body');
     var modalTitle = document.querySelector('#openShiftModal .modal-title');
@@ -4872,6 +4875,9 @@
     if (modalTitle) modalTitle.textContent = 'Shift Imefunguliwa';
     if (modalBody) {
       modalBody.innerHTML =
+        (_justOpenedWelcomeMessage ?
+          '<div style="color:#c9a84c; font-size:.85rem; font-weight:600; margin-bottom:.5rem;">' +
+          _justOpenedWelcomeMessage + '</div>' : '') +
         '<div style="color:#4caf50; font-size:.9rem; font-weight:600;">✓ Umefungua shift na float ya KES ' +
         Math.round(parseFloat(openingFloat)) + '</div>' +
         '<p style="font-size:.78rem; color:#888; margin-top:.5rem;">Unaweza hesabu bidhaa zilizopo sasa kama ' +
@@ -5059,6 +5065,7 @@
         btn.disabled = false; btn.textContent = 'Fungua Shift';
         if (d.ok) {
           _justOpenedShiftId = d.shift_id;
+          _justOpenedWelcomeMessage = d.welcome_message || null;
           if (d.tapped_barrels && d.tapped_barrels.length > 0) {
             _showBarrelConfirmStep(d.tapped_barrels, d.opening_float);
           } else {

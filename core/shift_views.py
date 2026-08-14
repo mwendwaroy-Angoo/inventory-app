@@ -1495,6 +1495,73 @@ def active_shift_api(request):
 
 # ── Open shift ────────────────────────────────────────────────────────────────
 
+def _build_shift_welcome_message(user, business, shift):
+    """Personalized, motivational greeting for the open-shift success screen
+    (2026-08-14 live request, Roy: "welcome back (staff name) motivational
+    message when staff logs in and opens shift"). Hooked into shift-open —
+    not login itself — since that's the one moment every staffer's daily
+    flow already funnels through on both counters, and it already has a
+    dedicated success screen (_showOpenShiftDoneScreen) to put this on.
+
+    Deliberately NOT built from haki_views._staff_contribution() — that's a
+    heavy, multi-query report meant for an on-demand page load, and mixes
+    in negative accountability figures (wastage, rejected petty cash, keg
+    loss) that have no place in a welcome message. This is a couple of
+    cheap, always-positive queries instead, and every branch is
+    failure-safe — a query error here must never block opening the shift
+    itself, only cost the staffer a nicer greeting.
+
+    Priority: a round-number shift-count milestone > a first-ever shift >
+    this month's own attributed revenue (if any) > a plain generic
+    greeting. Each of the last two tiers has two phrasings, picked off the
+    new shift's own id (cheap, deterministic per shift) so the same
+    staffer doesn't see byte-identical text every single day.
+    """
+    try:
+        name = user.get_full_name() or user.username
+        shift_count = Shift.objects.filter(business=business, staff=user).count()
+
+        if shift_count <= 1:
+            return f'👋 Karibu {name}! Hii ni shift yako ya kwanza — tuko pamoja, uliza chochote unapohitaji.'
+
+        for milestone in (1000, 500, 250, 100, 50, 25, 10, 5):
+            if shift_count == milestone:
+                return f'🎉 Hongera {name}! Hii ni shift yako ya {milestone} — asante kwa kujitolea kwako.'
+
+        pick = shift.id % 2
+        today = timezone.localdate()
+        month_start = today.replace(day=1)
+        _rev = Case(
+            When(sale_amount__isnull=False, then=F('sale_amount')),
+            default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
+            output_field=DecimalField(max_digits=12, decimal_places=2),
+        )
+        month_revenue = float(Transaction.objects.filter(
+            business=business, type='Issue', recorded_by=user,
+            date__gte=month_start, date__lte=today,
+        ).exclude(payment_method='void').aggregate(t=Sum(_rev))['t'] or 0)
+
+        if month_revenue > 0:
+            return (
+                f'👋 Karibu tena, {name}! Mwezi huu tayari umesaidia biashara kupata '
+                f'KES {month_revenue:,.0f} — endelea hivyo!'
+                if pick == 0 else
+                f'💪 Karibu {name}! KES {month_revenue:,.0f} mwezi huu ni kazi nzuri — leo tuongeze zaidi.'
+            )
+
+        return (
+            f'👋 Karibu tena, {name}! Tuko tayari kwa siku nzuri ya mauzo.'
+            if pick == 0 else
+            f'☀️ Karibu {name}! Leo ni siku mpya — tufanye iwe nzuri.'
+        )
+    except Exception:
+        logger.exception('_build_shift_welcome_message failed for shift %s', getattr(shift, 'id', None))
+        try:
+            return f'👋 Karibu, {user.get_full_name() or user.username}!'
+        except Exception:
+            return '👋 Karibu!'
+
+
 @login_required
 @require_POST
 def open_shift(request):
@@ -1693,6 +1760,8 @@ def open_shift(request):
     else:
         tapped = _tapped_barrels_for_business(up.business)
 
+    welcome_message = _build_shift_welcome_message(request.user, up.business, shift)
+
     return JsonResponse({
         'ok': True,
         'shift_id': shift.id,
@@ -1703,6 +1772,7 @@ def open_shift(request):
         'started_at': timezone.localtime(shift.started_at).strftime('%H:%M'),
         'tapped_barrels': tapped,
         'overlap_warning': overlap_warning,
+        'welcome_message': welcome_message,
     })
 
 

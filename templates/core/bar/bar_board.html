@@ -4883,6 +4883,10 @@
   var _justOpenedShiftId = null;  // 2026-07-30 — set as soon as open response arrives, so the
                                     // Hesabu Stock offer below can reach it regardless of which
                                     // exit path (no barrels / skip / confirmed weights) is taken.
+  var _justOpenedWelcomeMessage = null;  // 2026-08-14 — personalized greeting from the open-shift
+                                          // response, read by _showOpenShiftDoneScreen the same
+                                          // way (module-level, not threaded through inline onclick
+                                          // handlers, since the text itself may contain quotes).
 
   function _resetOpenShiftModal() {
     document.getElementById('open-shift-float').value = '0';
@@ -4904,6 +4908,11 @@
   // equivalent of close-shift's post-success "📦 Hesabu Stock" button —
   // shown after EVERY successful open-shift exit path (no tapped barrels,
   // barrel-confirm skipped, or barrel weights confirmed).
+  //
+  // 2026-08-14 — also shows the personalized welcome/motivational greeting
+  // from open_shift()'s own welcome_message field (_justOpenedWelcomeMessage,
+  // set in submitOpenShift's success handler) — for the same reason every
+  // other open-shift exit path already converges here.
   function _showOpenShiftDoneScreen(openingFloat) {
     var modalBody  = document.querySelector('#openShiftModal .modal-body');
     var modalTitle = document.querySelector('#openShiftModal .modal-title');
@@ -4911,6 +4920,9 @@
     if (modalTitle) modalTitle.textContent = 'Shift Imefunguliwa';
     if (modalBody) {
       modalBody.innerHTML =
+        (_justOpenedWelcomeMessage ?
+          '<div style="color:#c9a84c; font-size:.85rem; font-weight:600; margin-bottom:.5rem;">' +
+          _justOpenedWelcomeMessage + '</div>' : '') +
         '<div style="color:#4caf50; font-size:.9rem; font-weight:600;">✓ Umefungua shift na float ya KES ' +
         Math.round(parseFloat(openingFloat)) + '</div>' +
         '<p style="font-size:.78rem; color:#888; margin-top:.5rem;">Unaweza hesabu bidhaa zilizopo sasa kama ' +
@@ -5104,6 +5116,7 @@
         btn.disabled = false; btn.textContent = 'Fungua Shift';
         if (d.ok) {
           _justOpenedShiftId = d.shift_id;
+          _justOpenedWelcomeMessage = d.welcome_message || null;
           // If there are tapped barrels, show step 2 — confirm barrel weights
           if (d.tapped_barrels && d.tapped_barrels.length > 0) {
             _showBarrelConfirmStep(d.tapped_barrels, d.opening_float);
