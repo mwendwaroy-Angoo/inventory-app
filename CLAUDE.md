@@ -7124,3 +7124,67 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   preview) on Render's Shell to repair every historical stuck-credit transaction, then
   re-run `audit_debt_ledger_integrity --business="Monsoon Inn" --all-customers` to confirm
   zero findings.
+- App icon redesign — glossy 3D gold "D" monogram (2026-08-14). Live request, inspired by
+  Apple Music's 3D icon (Roy's own screenshot reference): replaced the flat gold-ring
+  favicon/PWA icon with a layered, glossy design (radial gold gradient ring, onyx
+  glass-effect center, gradient "D" letterform with drop shadow, raspberry accent
+  underline), rendered via Playwright + headless Chromium (no rasterization tools
+  available in this environment — SVG/HTML rendered directly at each target pixel size to
+  avoid resampling artifacts) at every declared manifest size (72/96/128/144/152/192/
+  384/512). Since every icon reference in the app (favicon, apple-touch-icon, manifest,
+  and the Android/Chrome auto-generated PWA install splash screen) funnels through the
+  same `static/icons/icon-*.png` files, replacing all 8 covers everything with zero other
+  code changes. Explained to Roy: an already-installed PWA icon does NOT update
+  automatically on iOS (no update mechanism at all — must remove and re-add "Add to Home
+  Screen" to see it) but DOES update itself within a few days on Android/Chrome (WebAPK
+  periodically re-checks the manifest in the background) — this is a real OS-level
+  limitation on both platforms, not something fixable from the app side. Confirmed for
+  Roy that reinstalling the PWA icon is unrelated to login/session behavior — it only
+  changes the home-screen shortcut, never touches cookies or server-side session state.
+- Single-session AJAX-aware kick (2026-08-14), live report: Roy and the Monsoon Inn
+  owner share one login (Roy logs into the owner's account directly to check progress),
+  so `SingleSessionMiddleware`'s one-session-per-user enforcement — correct, intended
+  behavior — mutually boots whichever side isn't the most recent login. Roy's ask: the
+  boot itself should be smooth on both sides, not "a hard time," and not slow. Root
+  cause of the asymmetry: `SingleSessionMiddleware` always did a raw `redirect('login')`
+  on a stale session, which is clean for a real page navigation but WRONG for this app's
+  many background `fetch()` polls (notifications count, tab lists, dashboard revenue,
+  shift status) — fetch() follows redirects by default, so the booted party's next poll
+  silently received the login page's HTML instead of JSON, which every JSON-parsing
+  handler in the app then fails on with a confusing generic error, not a clear "you were
+  logged out" message. Whoever logs in LAST is never the one hitting this path — Roy,
+  who initiates the check-in, always got a clean fresh login; the owner, sitting on an
+  already-open screen, is the one who'd hit a silently-broken poll until his next full
+  page navigation. Fixed with `_is_ajax_request()` (Sec-Fetch-Mode header — sent by every
+  modern browser including iOS Safari since ~2021 — as the primary signal, falling back
+  to X-Requested-With/Accept for the rare browser without it, defaulting to the original
+  safe "treat as navigation" behavior otherwise) — a stale-session AJAX request now gets
+  a plain JSON 401 (`{"error":"logged_out","redirect":"/accounts/login/"}`) instead of an
+  HTML redirect. Paired with a small global `window.fetch` interceptor added once in
+  `base.html` (loaded on every page, no per-template sweep needed) that watches every
+  fetch() response for this exact shape and immediately forces a full-page redirect —
+  the booted side now gets an instant, clear kick the moment ANY background call
+  notices, not a silently broken UI. **Real, separate pre-existing bug found and fixed
+  in the same file while writing this fix's own tests**: the neighboring "deactivated
+  mid-session" branch (`if not request.user.is_active`) has been DEAD CODE since the day
+  it was added (2026-07-25) — Django's own `AuthenticationMiddleware` already resolves a
+  deactivated user's session to `AnonymousUser` via `ModelBackend.user_can_authenticate()`
+  *before* this middleware ever runs, so `request.user.is_authenticated` was always
+  already False by the time the check executed, meaning it could never fire; the
+  existing regression test only asserted `is_authenticated == False` afterward, which
+  Django's own middleware already guaranteed independent of this code, so the dead
+  branch was never caught. A deactivated staffer was landing on the public page with
+  zero explanation and no explicit server-side session flush (self-healing only once
+  the cookie's own `SESSION_COOKIE_AGE` eventually expired). Fixed by checking
+  `request.session.get(SESSION_KEY)` (the raw, unresolved session data Django's own auth
+  stack leaves behind) whenever `request.user` comes back anonymous — narrowly scoped:
+  a genuinely-new anonymous visitor never has this key at all, and a password-change
+  elsewhere already gets its own session flush inside Django's `auth.get_user()` before
+  this middleware would ever see it, so this can't misfire for either of those cases.
+  7 new tests (`SingleSessionAjaxKickTest`) — plain-navigation regression lock, AJAX
+  gets JSON 401 (both Sec-Fetch-Mode and bare Accept-header detection), the session is
+  genuinely ended either way (not just told it's ended), the now-actually-reachable
+  deactivation-AJAX case, and both bypasses (`allow_concurrent_sessions`, superuser)
+  confirmed unaffected regardless of request shape — plus the pre-existing
+  `DeactivatedStaffMiddlewareTest` re-run and confirmed passing (now for the right
+  reason). No migrations.

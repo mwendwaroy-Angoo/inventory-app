@@ -928,6 +928,33 @@
     </div>
 
     <script>
+        // ── Single-session kick: catch it the instant ANY fetch() notices ──
+        // accounts.middleware.SingleSessionMiddleware returns a plain JSON 401
+        // (not an HTML redirect) for a fetch()/XHR request once this session has
+        // been logged out from another device. Without this, a background poll
+        // (notifications, tab lists, dashboard revenue, etc.) would just fail to
+        // parse silently and the user would see nothing happen until they
+        // eventually did a real page navigation. This makes it instant and clear
+        // for both sides of a shared login.
+        (function() {
+            var _dukaKicked = false;
+            var _origFetch = window.fetch;
+            window.fetch = function() {
+                return _origFetch.apply(this, arguments).then(function(response) {
+                    if (!_dukaKicked && response.status === 401) {
+                        var clone = response.clone();
+                        clone.json().then(function(data) {
+                            if (!_dukaKicked && data && data.error === 'logged_out') {
+                                _dukaKicked = true;
+                                window.location.href = data.redirect || '/accounts/login/';
+                            }
+                        }).catch(function() {});
+                    }
+                    return response;
+                });
+            };
+        })();
+
         // ── Notification polling ──
         function checkNotifications() {
             fetch('/notifications/count/')

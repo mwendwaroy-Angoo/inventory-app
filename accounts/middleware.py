@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import logout
+from django.contrib.auth import SESSION_KEY, logout
+from django.http import JsonResponse
 from django.shortcuts import redirect
 from django.utils import translation
 
@@ -47,6 +48,29 @@ class UserLanguageMiddleware:
         return response
 
 
+def _is_ajax_request(request):
+    """
+    Best-effort "is this a fetch()/XHR call, not a real page navigation" check.
+
+    Sec-Fetch-Mode (sent by every modern browser, including iOS Safari since
+    ~2021) is 'navigate' for a real top-level page load/form submit and
+    'cors'/'same-origin'/'no-cors' for a fetch()/XHR resource request — the
+    most reliable signal available, since this app's own fetch() calls don't
+    consistently set an Accept or X-Requested-With header (confirmed by grep
+    before relying on either as the primary signal). Falls back to those two
+    anyway for the rare browser that omits Sec-Fetch-Mode, and finally to
+    "treat as a real navigation" (the original, safe default) if none apply.
+    """
+    sec_fetch_mode = request.headers.get('Sec-Fetch-Mode', '')
+    if sec_fetch_mode:
+        return sec_fetch_mode != 'navigate'
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return True
+    if 'application/json' in request.headers.get('Accept', ''):
+        return True
+    return False
+
+
 class SingleSessionMiddleware:
     """
     Enforces one active session per user.
@@ -57,36 +81,74 @@ class SingleSessionMiddleware:
     Bypass: set UserProfile.allow_concurrent_sessions = True via Django admin
     (intended for the developer who tests across multiple devices simultaneously).
     Django superusers are also always exempt.
+
+    2026-08-14: a real page navigation gets a clean redirect('login') (unchanged,
+    the message shows immediately). But most of this app's screens are driven by
+    background fetch() polls (notifications count, tab lists, dashboard revenue,
+    shift status, etc.) with no central JS wrapper to catch a redirect — a kicked
+    party sitting on one of those screens would silently receive an HTML login
+    page back from their next poll (fetch() follows redirects by default), which
+    every JSON-parsing handler in the app then fails on with a confusing generic
+    error instead of a clean "you were logged out" message — reported live as one
+    of two people sharing a login (an owner + the developer checking in on their
+    account) "getting a hard time" being booted while the other never noticed a
+    problem, since whoever logs in LAST is never the one hitting this path. Fixed
+    by detecting an AJAX/fetch request (_is_ajax_request) and returning a plain
+    JSON 401 instead of an HTML redirect — paired with a small global fetch()
+    interceptor in base.html that watches for this exact shape and immediately
+    forces a full-page redirect to the login page (which still shows the same
+    bilingual message, since logout()+messages.warning() already ran on this
+    same request/response cycle before either response is built) — so the
+    booted side gets an instant, clear redirect the moment ANY background call
+    notices, not a silently broken poll.
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
+    def _kick(self, request, message):
+        logout(request)
+        messages.warning(request, message)
+        if _is_ajax_request(request):
+            return JsonResponse(
+                {'ok': False, 'error': 'logged_out', 'message': message, 'redirect': '/accounts/login/'},
+                status=401,
+            )
+        return redirect('login')
+
     def __call__(self, request):
+        # 2026-07-25 / found 2026-08-14: Django's AuthenticationForm only checks
+        # User.is_active at LOGIN — a staffer deactivated (accounts.views.
+        # deactivate_staff) mid-session was meant to be caught here on their very
+        # next request. But Django's own AuthenticationMiddleware ALREADY resolves
+        # request.user to AnonymousUser for a deactivated account before this
+        # middleware ever runs (ModelBackend.user_can_authenticate() rejects an
+        # inactive user), so `if not request.user.is_active` below was silently
+        # unreachable the whole time — the check for "is_authenticated" always
+        # failed first, meaning the deactivated staffer just landed on the public
+        # page with zero explanation and their session was never actually flushed
+        # server-side (only self-healed the next time the cookie expired). Caught
+        # while adding the 2026-08-14 AJAX-kick fix above, whose own test exposed
+        # it. request.session still carries the raw _auth_user_id even though
+        # AuthenticationMiddleware refused to resolve it to a real user — that's
+        # the one reliable signal available at this point to tell "deactivated
+        # mid-session" apart from "never logged in" or "password changed elsewhere"
+        # (the latter already gets its own session flush inside Django's own
+        # auth.get_user(), so _auth_user_id is already gone by the time we'd see it).
+        if not request.user.is_authenticated and request.session.get(SESSION_KEY):
+            return self._kick(
+                request,
+                'Akaunti yako haipatikani tena. Wasiliana na mmiliki wa biashara.',
+            )
         if request.user.is_authenticated and not request.user.is_superuser:
-            # 2026-07-25: Django's AuthenticationForm only checks User.is_active at
-            # LOGIN — a staffer deactivated (accounts.views.deactivate_staff) mid-session
-            # would otherwise keep working normally for up to SESSION_COOKIE_AGE (24h).
-            # This middleware already runs on every request for exactly this class of
-            # "kick them out now" enforcement (stale-session logout below), so it's the
-            # natural place to also enforce deactivation taking effect immediately.
-            if not request.user.is_active:
-                logout(request)
-                messages.warning(
-                    request,
-                    'Akaunti yako haipatikani tena. Wasiliana na mmiliki wa biashara.',
-                )
-                return redirect('login')
             profile = getattr(request.user, 'userprofile', None)
             if profile and not profile.allow_concurrent_sessions:
                 stored = profile.current_session_key
                 current = request.session.session_key
                 if stored and current and stored != current:
-                    logout(request)
-                    messages.warning(
+                    return self._kick(
                         request,
                         'Umefunguliwa nje — akaunti yako imefunguliwa kwenye kifaa kingine. '
                         'Logged out: your account was signed in on another device.',
                     )
-                    return redirect('login')
         return self.get_response(request)

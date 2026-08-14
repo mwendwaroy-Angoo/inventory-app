@@ -396,6 +396,91 @@ class DeactivatedStaffMiddlewareTest(TestCase):
         self.assertFalse(resp2.wsgi_request.user.is_authenticated)
 
 
+class SingleSessionAjaxKickTest(TestCase):
+    """2026-08-14: a real page navigation must keep getting the existing clean
+    redirect('login') + bilingual message (regression lock). A fetch()/XHR
+    request (Sec-Fetch-Mode != 'navigate', or an explicit Accept: application/
+    json / X-Requested-With header) must instead get a plain JSON 401 —
+    otherwise a background poll on the kicked-out side silently receives an
+    HTML login page it can't parse, with no clear signal anything happened.
+    Both shapes must still genuinely end the session either way."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Session Kick Biz')
+        self.user = User.objects.create_user(username='sk_user', password='x')
+        self.profile = UserProfile.objects.create(user=self.user, business=self.biz, role='owner')
+
+    def _kick_via_new_login(self):
+        # Simulate a second device logging into the SAME account, which is
+        # what accounts.signals._on_user_logged_in does on a real login —
+        # here we just stamp a different session key directly.
+        self.profile.current_session_key = 'a-different-session-key'
+        self.profile.save(update_fields=['current_session_key'])
+
+    def test_plain_navigation_still_gets_html_redirect(self):
+        self.client.force_login(self.user)
+        self.client.get('/')  # establishes current_session_key as this session
+        self._kick_via_new_login()
+        resp = self.client.get('/', follow=False)
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/login', resp.url)
+
+    def test_ajax_request_gets_json_401_not_html_redirect(self):
+        self.client.force_login(self.user)
+        self.client.get('/')
+        self._kick_via_new_login()
+        resp = self.client.get('/', HTTP_SEC_FETCH_MODE='cors')
+        self.assertEqual(resp.status_code, 401)
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        self.assertEqual(data['error'], 'logged_out')
+        self.assertIn('redirect', data)
+
+    def test_accept_json_header_alone_is_also_treated_as_ajax(self):
+        self.client.force_login(self.user)
+        self.client.get('/')
+        self._kick_via_new_login()
+        resp = self.client.get('/', HTTP_ACCEPT='application/json')
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()['error'], 'logged_out')
+
+    def test_ajax_kick_still_actually_ends_the_session(self):
+        self.client.force_login(self.user)
+        self.client.get('/')
+        self._kick_via_new_login()
+        resp = self.client.get('/', HTTP_SEC_FETCH_MODE='cors')
+        self.assertEqual(resp.status_code, 401)
+        # The session must be genuinely dead now, not just told it's dead.
+        resp2 = self.client.get('/', follow=True)
+        self.assertFalse(resp2.wsgi_request.user.is_authenticated)
+
+    def test_deactivated_user_ajax_request_gets_json_401(self):
+        self.client.force_login(self.user)
+        self.client.get('/')
+        self.user.is_active = False
+        self.user.save(update_fields=['is_active'])
+        resp = self.client.get('/', HTTP_SEC_FETCH_MODE='cors')
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp.json()['error'], 'logged_out')
+
+    def test_allow_concurrent_sessions_bypasses_regardless_of_request_shape(self):
+        self.profile.allow_concurrent_sessions = True
+        self.profile.save(update_fields=['allow_concurrent_sessions'])
+        self.client.force_login(self.user)
+        self.client.get('/')
+        self._kick_via_new_login()
+        resp = self.client.get('/', HTTP_SEC_FETCH_MODE='cors')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_superuser_bypasses_regardless_of_request_shape(self):
+        su = User.objects.create_superuser(username='sk_super', email='s@example.com', password='x')
+        self.client.force_login(su)
+        self.client.get('/')
+        # Even with a mismatched session key (superuser has no UserProfile at all here)
+        resp = self.client.get('/', HTTP_SEC_FETCH_MODE='cors')
+        self.assertEqual(resp.status_code, 200)
+
+
 class SafeBusinessDeleteTest(TestCase):
     """2026-08-01: Django admin (/admin/) previously had no way to remove a
     business, and Django's default bulk delete would have destructively
