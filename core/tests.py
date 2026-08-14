@@ -1,5 +1,5 @@
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch, MagicMock
 
@@ -10504,6 +10504,19 @@ class SettleTabRedirectsToDebtPaymentTest(TestCase):
         # a normal debt-tracker-page payment already relies on.
         entry.refresh_from_db()
         self.assertTrue(entry.is_paid)
+        # 2026-08-14 fix regression lock: the entry's own Transaction must be
+        # synced too, not just the entry — this assertion is the one this
+        # test was missing before the bug was found, which is exactly why a
+        # widespread, real-money mismatch (dozens of transactions across
+        # many customers, confirmed via audit_debt_ledger_integrity
+        # --all-customers) went undetected for so long.
+        entry.transaction.refresh_from_db()
+        self.assertEqual(
+            entry.transaction.payment_method, 'cash',
+            "the underlying Transaction must be synced off 'credit' too, "
+            "not just the BarTabEntry — otherwise the debt tracker keeps "
+            "counting an already-paid transaction as still-owed credit",
+        )
 
     def test_settle_on_debt_converted_tab_honors_partial_amount(self):
         from core.debt_views import _get_customer_debt_data
@@ -10595,6 +10608,127 @@ class SettleTabRedirectsToDebtPaymentTest(TestCase):
         self.client.post(f'/bar/tabs/{tab.id}/settle/', {'payment_method': 'cash'})
         entry.refresh_from_db()
         self.assertEqual(entry.transaction.qty, original_qty)
+
+
+class DoSettleDebtPaymentTransactionSyncTest(TestCase):
+    """2026-08-14 live report (Roy, via `audit_debt_ledger_integrity
+    --all-customers` against real production data): dozens of real
+    transactions across many real customers, all `payment_method='credit'`
+    despite their own `BarTabEntry.is_paid=True` (settled via mpesa/cash on
+    a real, dated tab). Root cause: `_do_settle_debt_payment()`'s "FIFO
+    BarTabEntry reconciliation" block — which fires whenever a debt payment
+    fully covers an entry on a tab that's already been converted to debt —
+    used a bulk `BarTabEntry.objects.filter(...).update(...)` that only
+    ever touched the `BarTabEntry` row, never the `Transaction` it points
+    at. Every OTHER settle path in this app (`tick_entry`, `settle_tab`,
+    `BarTab.settle_entries_amount_locked`, `_settle_tab_from_payment`,
+    `_settle_receipt_entries_from_payment`) syncs both together — this was
+    the one place that didn't, and it's the single most heavily-used path
+    for a business that relies on shift-close auto-convert + later debt-
+    tracker payments to close out tabs.
+
+    These tests exercise `_do_settle_debt_payment()` directly (the shared
+    core also used by `record_debt_payment`, the M-Pesa debt-payment
+    callback, and `settle_tab`'s/`_settle_tab_from_payment`'s own debt-
+    redirects — fixing it here covers all of them at once)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Sync Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ds_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='DS-01', unit='Pcs', selling_price=Decimal('80'),
+            cost_price=Decimal('40'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Roy', credit_approved=True,
+        )
+
+    def _debt_converted_tab_with_entry(self, amount, date=None):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=amount, payment_method='credit', recipient='Roy',
+            **({'date': date} if date else {}),
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=amount,
+            is_paid=False,
+        )
+        return tab, entry, txn
+
+    def test_fully_covered_entry_syncs_transaction_off_credit(self):
+        from core.debt_views import _do_settle_debt_payment
+        _tab, entry, txn = self._debt_converted_tab_with_entry(Decimal('80'))
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('80'), 'mpesa', 'bar')
+        entry.refresh_from_db()
+        txn.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(
+            txn.payment_method, 'mpesa',
+            'a fully-covered entry must sync its own Transaction to the real '
+            'payment method, not leave it stuck on credit',
+        )
+
+    def test_partially_covered_entry_is_never_marked_paid_or_synced(self):
+        from core.debt_views import _do_settle_debt_payment
+        _tab, entry, txn = self._debt_converted_tab_with_entry(Decimal('80'))
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('50'), 'cash', 'bar')
+        entry.refresh_from_db()
+        txn.refresh_from_db()
+        self.assertFalse(entry.is_paid, 'a partial payment must never mark the entry fully paid')
+        self.assertEqual(txn.payment_method, 'credit', 'an uncovered entry must stay credit')
+
+    def test_fifo_across_multiple_entries_syncs_only_the_covered_ones(self):
+        # Reproduces the real pattern from Roy's own data: several separate
+        # debt-converted tabs/entries for one customer, one payment that
+        # covers the oldest ones (FIFO, by date) but not all of them.
+        from core.debt_views import _do_settle_debt_payment
+        _t1, e1, txn1 = self._debt_converted_tab_with_entry(Decimal('80'), date=date(2026, 8, 1))
+        _t2, e2, txn2 = self._debt_converted_tab_with_entry(Decimal('80'), date=date(2026, 8, 5))
+        _t3, e3, txn3 = self._debt_converted_tab_with_entry(Decimal('80'), date=date(2026, 8, 9))
+
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('160'), 'mpesa', 'bar')
+
+        e1.refresh_from_db(); e2.refresh_from_db(); e3.refresh_from_db()
+        txn1.refresh_from_db(); txn2.refresh_from_db(); txn3.refresh_from_db()
+
+        self.assertTrue(e1.is_paid)
+        self.assertEqual(txn1.payment_method, 'mpesa')
+        self.assertTrue(e2.is_paid)
+        self.assertEqual(txn2.payment_method, 'mpesa')
+        # The 08-09 entry (newest, oldest-first FIFO leaves it for last) must
+        # stay genuinely unpaid and untouched — exactly Roy's own real KES
+        # 320 outstanding, dated 08-09, from the live report.
+        self.assertFalse(e3.is_paid)
+        self.assertEqual(txn3.payment_method, 'credit')
+
+    def test_open_tab_entry_never_touched_by_debt_reconciliation(self):
+        # Only SETTLED (debt-converted) tabs are in scope for this
+        # reconciliation — a still-OPEN tab's entries are a completely
+        # separate, unrelated running bill and must never be marked paid by
+        # someone else's debt payment.
+        from core.debt_views import _do_settle_debt_payment
+        open_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.customer,
+            status='OPEN', source='bar',
+        )
+        open_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Roy',
+        )
+        open_entry = BarTabEntry.objects.create(
+            tab=open_tab, transaction=open_txn, description='Keg Gold',
+            amount=Decimal('80'), is_paid=False,
+        )
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('1000'), 'cash', 'bar')
+        open_entry.refresh_from_db()
+        self.assertFalse(open_entry.is_paid, "an OPEN tab's own entries are not debt yet")
 
 
 class DebtConvertedTabsPanelPaymentExclusionTest(TestCase):

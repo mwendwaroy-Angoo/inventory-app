@@ -7073,3 +7073,54 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   tests (`AuditDebtLedgerIntegrityTest`) — a mixed owing/clear-balance business correctly
   lists only the owing customer with the right total, and the flag-precedence case. No
   migrations. 1896 tests pass (core + accounts).
+- **CRITICAL FIX** — `_do_settle_debt_payment()` never synced `Transaction.payment_method`
+  off `'credit'` when its FIFO reconciliation marked a `BarTabEntry` paid (2026-08-14,
+  found LIVE via `audit_debt_ledger_integrity --all-customers` against Monsoon Inn's real
+  production data — dozens of genuinely-settled transactions across 25 different
+  customers, still permanently tagged as outstanding credit). Root cause, in
+  `core/debt_views.py`: the "FIFO BarTabEntry reconciliation" block — which fires whenever
+  a debt payment (`record_debt_payment`, the M-Pesa debt-payment callback, or `settle_tab`'s
+  /`_settle_tab_from_payment`'s own debt-redirect for an already-converted-to-debt tab)
+  fully covers an entry — used a bulk `BarTabEntry.objects.filter(...).update(is_paid=True,
+  payment_method=payment_method)` that only ever touched the `BarTabEntry` row, never the
+  `Transaction` it points at. Every OTHER settle path in this app (`tick_entry`,
+  `settle_tab`'s own main loop, `BarTab.settle_entries_amount_locked`, `_settle_tab_from_
+  payment`, `_settle_receipt_entries_from_payment`) already syncs both together in the
+  same step — this was the ONE place that didn't, and it happens to be the single most
+  heavily-used closing path for a business that relies on shift-close auto-convert +
+  later debt-tracker payments (exactly Monsoon Inn's real usage pattern) to close out
+  tabs. Consequence: `_get_customer_debt_data()`'s `total_credit`/`outstanding` AGGREGATE
+  math was never actually wrong (`total_credit`/`total_paid` never read `BarTabEntry.
+  is_paid` at all — both are computed independent of it), but the PER-LINE "which specific
+  transaction is still owed" breakdown, `settle_tab()`'s own "already fully covered, nothing
+  to redirect" guard (`tab.entries.filter(is_paid=False).exists()`), and anything else
+  reading `Transaction.payment_method` directly (e.g. `promo_views.py`'s "customers with
+  debt" segment) all silently, permanently treated an already-paid transaction as still-
+  owed credit forever — exactly the "leak" Roy suspected, now confirmed and fixed. Also
+  separately audited `Customer.merge_locked()`/`rename_locked()`/`_propagate_name_change()`
+  (Roy's own follow-up question — "could merging names cause a similar bug?") and confirmed
+  clean: they correctly reassign `Transaction.recipient`, `BarTab` FK+name,
+  `CustomerDebtPayment.customer`, `Payment.debt_customer`, and `Receipt.customer_name`+
+  `linked_tab_ids` — none of them touch `payment_method` at all, so no equivalent sync gap
+  exists there. Fixed by syncing `txn.payment_method` in the same loop, right after the
+  `BarTabEntry` bulk update, using the already-loaded `txn` object from `_get_customer_
+  debt_data()`'s own FIFO walk (`unpaid_before`) — no new query needed. Retroactive
+  repair: `backfill_split_paid_txn_payment_method` (originally built 2026-07-31 for a
+  DIFFERENT bug — `BarTabEntry.split_paid_unpaid_locked()`'s own, separate sync gap) turned
+  out to already have the EXACT right repair query for this identical broken-row signature
+  (`BarTabEntry.is_paid=True, payment_method in (cash, mpesa), transaction__payment_method
+  ='credit'`) — docstring updated to document both root causes it now covers rather than
+  writing a confusingly-duplicate command; no logic change needed, safe to re-run. 5 tests
+  added/extended (`DoSettleDebtPaymentTransactionSyncTest` — full coverage syncs, partial
+  coverage never marks paid/never syncs, multi-entry FIFO walk syncs only the covered ones
+  and leaves the genuinely-newer-and-still-unpaid one untouched — matching Roy's own real
+  KES 320 outstanding figure exactly, and an OPEN tab's entries are never touched by
+  someone else's debt payment; plus the pre-existing `SettleTabRedirectsToDebtPaymentTest.
+  test_settle_on_debt_converted_tab_records_real_debt_payment` gained the missing
+  Transaction-sync assertion it should have had from the start — confirmed by temporarily
+  reverting the fix and re-running: 3 tests fail without it, all pass with it). No
+  migrations. 1900 tests pass (core + accounts). **Action for Roy**: once this deploys,
+  run `python manage.py backfill_split_paid_txn_payment_method` (add `--dry-run` first to
+  preview) on Render's Shell to repair every historical stuck-credit transaction, then
+  re-run `audit_debt_ledger_integrity --business="Monsoon Inn" --all-customers` to confirm
+  zero findings.

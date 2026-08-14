@@ -611,6 +611,26 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
                         transaction=txn,
                         is_paid=False,
                     ).update(is_paid=True, paid_at=now, payment_method=payment_method)
+                    # 2026-08-14 live report (Roy, via audit_debt_ledger_integrity
+                    # --all-customers): the BarTabEntry .update() above never
+                    # touched the underlying Transaction — every OTHER settle
+                    # path in this app (tick_entry, settle_tab, settle_entries_
+                    # amount_locked, _settle_tab_from_payment, _settle_receipt_
+                    # entries_from_payment) syncs BOTH the entry AND its
+                    # Transaction together; this one only fixed the entry side,
+                    # leaving the Transaction permanently stuck at
+                    # payment_method='credit' even though it was now genuinely
+                    # paid off. Confirmed live: dozens of real transactions
+                    # across many customers, all routed through a debt payment
+                    # against a tab that had already been converted to debt —
+                    # the debt tracker (and anything else reading Transaction.
+                    # payment_method directly, e.g. promo_views.py's "has debt"
+                    # segment) kept counting each one as still-owed credit
+                    # forever. See backfill_settled_debt_txn_payment_method for
+                    # the retroactive repair of every already-corrupted row.
+                    if txn.payment_method != payment_method:
+                        txn.payment_method = payment_method
+                        txn.save(update_fields=['payment_method'])
     except Exception:
         pass
 
