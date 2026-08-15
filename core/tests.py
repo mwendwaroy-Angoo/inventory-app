@@ -11135,23 +11135,29 @@ class DiagnoseCustomerDebtCommandTest(TestCase):
         self.assertIn('0 customer(s) still mismatched', out.getvalue())
 
 
-class BackfillWasCreditCommandTest(TestCase):
-    """2026-08-15 — one-time repair for historical data affected by the
-    Paid-exceeds-Credit bug, predating the fix. Recovers was_credit=True for
-    any tab-linked transaction whose tab was EVER debt-converted
-    (BarTab.customer set is a permanent signal, unlike the mutable
-    Transaction.payment_method)."""
+class BackfillWasCreditRetiredTest(TestCase):
+    """2026-08-15, same day it shipped — RETIRED. Live report (Roy, with
+    screenshots): running this command resurrected EVERY customer's ENTIRE
+    historical tab total as currently owed, including Bosco's own tab
+    (already transferred to his Mmiliki section) and every genuinely
+    already-cleared debt. Root cause: `tab.customer_id is not null` is NOT
+    a reliable "was this genuinely debt" signal — BarTab settle code
+    auto-attaches a Customer record to ANY tab the moment it fully settles,
+    completely unrelated to real debt conversion (see the 'auto-create
+    Customer record on any settlement, not just credit' comment in
+    keg_views.py). The command is now a documented no-op; see
+    revert_bad_was_credit_backfill for the undo."""
 
     def setUp(self):
-        self.biz = Business.objects.create(name='Backfill WC Biz')
+        self.biz = Business.objects.create(name='Retired Backfill Biz')
         self.store = Store.objects.create(business=self.biz, name='Bar')
         self.item = Item.objects.create(
             business=self.biz, store=self.store, description='Keg Gold',
-            material_no='BWC-01', unit='Pcs', selling_price=Decimal('80'), cost_price=Decimal('40'),
+            material_no='RB-01', unit='Pcs', selling_price=Decimal('80'), cost_price=Decimal('40'),
         )
         self.customer = Customer.objects.create(business=self.biz, name='Eugene')
 
-    def test_backfills_tab_linked_transaction_already_resolved_pre_fix(self):
+    def test_command_is_a_documented_noop(self):
         from io import StringIO
         from django.core.management import call_command
 
@@ -11166,78 +11172,113 @@ class BackfillWasCreditCommandTest(TestCase):
         BarTabEntry.objects.create(
             tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
         )
-        self.assertFalse(txn.was_credit)
 
         out = StringIO()
         call_command('backfill_was_credit', stdout=out)
         txn.refresh_from_db()
+        self.assertFalse(txn.was_credit, 'retired command must never touch anything')
+        self.assertIn('retired', out.getvalue().lower())
+
+
+class RevertBadWasCreditBackfillTest(TestCase):
+    """2026-08-15 emergency undo, built and shipped the same session the
+    over-broad backfill was caught doing real damage on Roy's live
+    production data. Clears was_credit for every transaction matching the
+    same over-broad signal the retired command used, restoring the debt
+    tracker to a sane state."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Revert Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='RV-01', unit='Pcs', selling_price=Decimal('80'), cost_price=Decimal('40'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='Eugene')
+
+    def _ordinary_settled_tab_txn(self):
+        """The exact shape the bad backfill wrongly resurrected: a tab that
+        settled completely normally (cash, same visit) — never real debt —
+        but STILL ends up with tab.customer set, per BarTab's own
+        auto-create-Customer-on-any-settlement behavior."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Eugene', customer=self.customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', recipient='Eugene',
+            was_credit=True,  # simulates the bad backfill's damage directly
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
+        )
+        return txn
+
+    def test_reverts_the_wrongly_stamped_ordinary_tab_transaction(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        txn = self._ordinary_settled_tab_txn()
         self.assertTrue(txn.was_credit)
-        self.assertIn('Backfilled', out.getvalue())
+
+        out = StringIO()
+        call_command('revert_bad_was_credit_backfill', stdout=out)
+        txn.refresh_from_db()
+        self.assertFalse(txn.was_credit)
+        self.assertIn('Reverted', out.getvalue())
+
+    def test_reverting_makes_the_debt_tracker_correct_again(self):
+        """End-to-end: the exact live report shape — after revert, an
+        ordinary settled tab's item must NOT appear as outstanding debt."""
+        from io import StringIO
+        from django.core.management import call_command
+        from core.debt_views import _get_customer_debt_data
+
+        self._ordinary_settled_tab_txn()
+        data_before = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data_before['outstanding'], 80.0, 'the bug: ordinary paid tab showing as owed')
+
+        call_command('revert_bad_was_credit_backfill', stdout=StringIO())
+        data_after = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data_after['outstanding'], 0.0)
 
     def test_dry_run_changes_nothing(self):
         from io import StringIO
         from django.core.management import call_command
 
-        tab = BarTab.objects.create(
-            business=self.biz, customer_name='Eugene', customer=self.customer,
-            status='SETTLED', source='bar',
-        )
-        txn = Transaction.objects.create(
-            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
-            sale_amount=Decimal('80'), payment_method='cash', recipient='Eugene',
-        )
-        BarTabEntry.objects.create(
-            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
-        )
-
+        txn = self._ordinary_settled_tab_txn()
         out = StringIO()
-        call_command('backfill_was_credit', '--dry-run', stdout=out)
+        call_command('revert_bad_was_credit_backfill', '--dry-run', stdout=out)
         txn.refresh_from_db()
-        self.assertFalse(txn.was_credit)
+        self.assertTrue(txn.was_credit)
         self.assertIn('DRY RUN', out.getvalue())
 
-    def test_leaves_a_tab_never_converted_to_debt_untouched(self):
-        """A tab that was fully paid in the ordinary way (never had a
-        customer set, never debt-converted) must never be backfilled."""
+    def test_leaves_a_tab_less_direct_credit_sale_untouched(self):
+        """Population-B (no tab at all) was_credit=True stamps are NEVER
+        touched by this revert — they were never part of the bad backfill's
+        query (which required a tab_entry) and remain correctly protected."""
         from io import StringIO
         from django.core.management import call_command
 
-        tab = BarTab.objects.create(
-            business=self.biz, customer_name='Eugene', customer=None,
-            status='SETTLED', source='bar',
-        )
         txn = Transaction.objects.create(
             business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
-            sale_amount=Decimal('80'), payment_method='cash', recipient='Eugene',
+            sale_amount=Decimal('100'), payment_method='cash', recipient='Eugene',
+            was_credit=True,
         )
-        BarTabEntry.objects.create(
-            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
-        )
-
-        call_command('backfill_was_credit', stdout=StringIO())
+        call_command('revert_bad_was_credit_backfill', stdout=StringIO())
         txn.refresh_from_db()
-        self.assertFalse(txn.was_credit)
+        self.assertTrue(txn.was_credit)
 
     def test_idempotent_rerun_is_safe(self):
         from io import StringIO
         from django.core.management import call_command
 
-        tab = BarTab.objects.create(
-            business=self.biz, customer_name='Eugene', customer=self.customer,
-            status='SETTLED', source='bar',
-        )
-        txn = Transaction.objects.create(
-            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
-            sale_amount=Decimal('80'), payment_method='cash', recipient='Eugene',
-        )
-        BarTabEntry.objects.create(
-            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
-        )
-
-        call_command('backfill_was_credit', stdout=StringIO())
+        self._ordinary_settled_tab_txn()
+        call_command('revert_bad_was_credit_backfill', stdout=StringIO())
         out2 = StringIO()
-        call_command('backfill_was_credit', stdout=out2)
-        self.assertIn('Backfilled was_credit on 0 transaction', out2.getvalue())
+        call_command('revert_bad_was_credit_backfill', stdout=out2)
+        self.assertIn('Reverted was_credit on 0 transaction', out2.getvalue())
 
 
 class DebtConvertedTabsPanelPaymentExclusionTest(TestCase):

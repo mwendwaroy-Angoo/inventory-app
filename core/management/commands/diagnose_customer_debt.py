@@ -15,9 +15,12 @@ class Command(BaseCommand):
         "--customer=NAME shows one customer, full detail.\n"
         "--all-customers scans every customer in the matched business(es): a brief "
         "one-line summary for each, full detail printed ONLY for anyone still showing "
-        "a mismatch (Total Paid exceeding the fixed Total Credit) — most likely "
-        "someone with a tab-less direct credit sale resolved before the fix existed, "
-        "which the backfill_was_credit command cannot reliably recover on its own."
+        "a mismatch (Total Paid exceeding the fixed Total Credit) — genuine, "
+        "already-resolved historical debt from before this fix existed, which is NOT "
+        "automatically repaired (backfill_was_credit, which tried to, has been "
+        "retired — it could not reliably tell genuine debt apart from an ordinary "
+        "tab). Anyone still flagged here needs manual reconciliation via "
+        "record_debt_payment's own backdate field."
     )
 
     def add_arguments(self, parser):
@@ -88,11 +91,10 @@ class Command(BaseCommand):
         ))
         if flagged:
             self.stdout.write(
-                "Run backfill_was_credit first if you haven't yet (safe to re-run). Anyone "
-                "still flagged after that most likely has a tab-less direct credit sale "
-                "(e.g. a plain Quick Sell 'Deni') that was resolved before the fix existed — "
-                "see the full detail printed above for each, and reconcile manually via "
-                "record_debt_payment's own backdate field if needed."
+                "No automatic repair for these — reconcile each manually using the raw "
+                "detail printed above and record_debt_payment's own backdate field if "
+                "needed. These are all genuine, already-resolved historical debt from "
+                "before the fix existed; there's no safe way to auto-recover them."
             )
 
     def _diagnose_one(self, business, customer, verbose=True):
@@ -144,10 +146,9 @@ class Command(BaseCommand):
         ))
         if total_paid > data['total_credit'] + 0.01:
             self.stdout.write(self.style.ERROR(
-                "  ⚠️  Total Paid still exceeds Total Credit — most likely a tab-less "
-                "direct credit sale (no BarTab at all) resolved before this fix existed, "
-                "which backfill_was_credit cannot recover automatically. Reconcile "
-                "manually with the raw transaction list above."
+                "  ⚠️  Total Paid still exceeds Total Credit — genuine historical debt "
+                "resolved before this fix existed, with no safe automatic repair. "
+                "Reconcile manually with the raw transaction list above."
             ))
 
         open_tabs = BarTab.objects.filter(business=business, customer=customer, status='OPEN')
