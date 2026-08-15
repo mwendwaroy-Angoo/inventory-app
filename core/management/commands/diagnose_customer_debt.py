@@ -1,21 +1,29 @@
 from django.core.management.base import BaseCommand
 
 from accounts.models import Business
-from core.models import Customer, CustomerDebtPayment, Transaction
+from core.models import BarTab, Customer, CustomerDebtPayment, Transaction
 
 
 class Command(BaseCommand):
     help = (
-        "READ-ONLY. Emergency diagnostic for the 2026-08-14 'Paid exceeds Credit' "
-        "live report — shows the RAW, underlying transaction and payment history "
-        "for one customer, bypassing _get_customer_debt_data()'s aggregate math "
-        "entirely, so a human can see the true picture directly while the "
-        "aggregate-computation bug is being fixed. Changes NOTHING."
+        "READ-ONLY. Diagnostic for the 2026-08-15 'Paid exceeds Credit' live report "
+        "(see Transaction.was_credit's own docstring for the full mechanism) — shows "
+        "the RAW, underlying transaction and payment history for a customer, alongside "
+        "the debt tracker's own CURRENT (post-fix) Total Credit figure, so a human can "
+        "verify the fix actually repaired a given customer or spot one it didn't. "
+        "Changes NOTHING.\n\n"
+        "--customer=NAME shows one customer, full detail.\n"
+        "--all-customers scans every customer in the matched business(es): a brief "
+        "one-line summary for each, full detail printed ONLY for anyone still showing "
+        "a mismatch (Total Paid exceeding the fixed Total Credit) — most likely "
+        "someone with a tab-less direct credit sale resolved before the fix existed, "
+        "which the backfill_was_credit command cannot reliably recover on its own."
     )
 
     def add_arguments(self, parser):
         parser.add_argument('--business', type=str, required=True, help='Business name substring.')
-        parser.add_argument('--customer', type=str, required=True, help='Customer name (exact, case-insensitive).')
+        parser.add_argument('--customer', type=str, help='Customer name (exact, case-insensitive).')
+        parser.add_argument('--all-customers', action='store_true', help='Scan every customer instead of one.')
 
     def handle(self, *args, **options):
         businesses = Business.objects.filter(name__icontains=options['business'])
@@ -23,70 +31,131 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR('No matching business.'))
             return
 
+        if options['all_customers']:
+            self._scan_all(businesses)
+            return
+
+        if not options['customer']:
+            self.stdout.write(self.style.ERROR('Pass --customer=NAME or --all-customers.'))
+            return
+
         for business in businesses:
             customers = Customer.objects.filter(business=business, name__iexact=options['customer'])
             if not customers.exists():
                 self.stdout.write(f"[{business.name}] No customer named '{options['customer']}'.")
                 continue
-
             for customer in customers:
-                self.stdout.write(self.style.WARNING(
-                    f"\n=== [{business.name}] Customer #{customer.id}: {customer.name} ==="
-                ))
+                self._diagnose_one(business, customer, verbose=True)
 
-                txns = (
-                    Transaction.objects.filter(business=business, recipient=customer.name, type='Issue')
-                    .select_related('item', 'item__store')
-                    .order_by('date', 'created_at')
+    def _scan_all(self, businesses):
+        from core.debt_views import _get_customer_debt_data
+
+        flagged = 0
+        clean = 0
+        for business in businesses:
+            customers = Customer.objects.filter(business=business).order_by('name')
+            if not customers.exists():
+                self.stdout.write(f"[{business.name}] No customers.")
+                continue
+            self.stdout.write(self.style.WARNING(f"\n=== [{business.name}] Scanning {customers.count()} customer(s) ==="))
+            for customer in customers:
+                raw_paid = sum(
+                    float(p.amount_paid)
+                    for p in CustomerDebtPayment.objects.filter(business=business, customer=customer)
                 )
-                self.stdout.write(f"\n-- Every Issue transaction ever recorded for this name ({txns.count()}) --")
-                for t in txns:
-                    station = 'kitchen' if (t.item and t.item.store and t.item.store.is_kitchen) else 'bar'
-                    tab_entry = None
-                    try:
-                        tab_entry = t.tab_entry
-                    except Exception:
-                        pass
-                    tab_state = ''
-                    if tab_entry is not None:
-                        tab_state = f" | tab#{tab_entry.tab_id} status={tab_entry.tab.status} entry.is_paid={tab_entry.is_paid}"
-                    self.stdout.write(
-                        f"  txn#{t.id} {t.date} [{station}] {t.item.description if t.item else '?'} "
-                        f"KES {t.revenue()} payment_method={t.payment_method!r}{tab_state}"
-                    )
-
-                payments = CustomerDebtPayment.objects.filter(
-                    business=business, customer=customer,
-                ).order_by('paid_at')
-                self.stdout.write(f"\n-- Every CustomerDebtPayment ever recorded ({payments.count()}) --")
-                total_paid = 0.0
-                for p in payments:
-                    total_paid += float(p.amount_paid)
-                    self.stdout.write(
-                        f"  {p.paid_at} [{p.source}] KES {p.amount_paid} recorded_by="
-                        f"{p.recorded_by.username if p.recorded_by_id else '-'} notes={p.notes!r}"
-                    )
-                self.stdout.write(f"  TOTAL PAID (raw sum): KES {total_paid:.2f}")
-
-                still_credit_total = sum(
-                    float(t.revenue()) for t in txns if t.payment_method == 'credit'
-                )
-                self.stdout.write(self.style.WARNING(
-                    f"\n-- Sum of transactions STILL currently payment_method='credit': KES {still_credit_total:.2f} --"
-                ))
-                self.stdout.write(
-                    "  (This is what the debt tracker's 'Total Credit' figure currently shows — "
-                    "it does NOT include transactions resolved directly at the counter without "
-                    "a matching payment record, even though those were genuinely paid.)"
-                )
-
-                from core.models import BarTab
-                open_tabs = BarTab.objects.filter(business=business, customer=customer, status='OPEN')
-                if open_tabs.exists():
+                if raw_paid == 0:
+                    continue  # never made a debt payment — nothing to check
+                data = _get_customer_debt_data(customer, business)
+                fixed_total_credit = data['total_credit']
+                mismatch = raw_paid > fixed_total_credit + 0.01  # small float-rounding tolerance
+                if mismatch:
+                    flagged += 1
                     self.stdout.write(self.style.ERROR(
-                        f"\n-- {open_tabs.count()} OPEN tab(s) not yet converted to debt (correctly excluded above) --"
+                        f"  ⚠️  #{customer.id} {customer.name}: Total Paid KES {raw_paid:.2f} "
+                        f"still EXCEEDS fixed Total Credit KES {fixed_total_credit:.2f} — "
+                        f"gap KES {raw_paid - fixed_total_credit:.2f}"
                     ))
-                    for tab in open_tabs:
-                        unpaid = tab.entries.filter(is_paid=False)
-                        for e in unpaid:
-                            self.stdout.write(f"  tab#{tab.id} entry: {e.description} KES {e.amount} (still OPEN, not debt yet)")
+                    self._diagnose_one(business, customer, verbose=True)
+                else:
+                    clean += 1
+                    self.stdout.write(
+                        f"  ✓ #{customer.id} {customer.name}: Total Credit KES {fixed_total_credit:.2f}, "
+                        f"Total Paid KES {raw_paid:.2f}, Outstanding KES {data['outstanding']:.2f}"
+                    )
+
+        self.stdout.write(self.style.WARNING(
+            f"\n=== TOTAL: {flagged} customer(s) still mismatched, {clean} clean ==="
+        ))
+        if flagged:
+            self.stdout.write(
+                "Run backfill_was_credit first if you haven't yet (safe to re-run). Anyone "
+                "still flagged after that most likely has a tab-less direct credit sale "
+                "(e.g. a plain Quick Sell 'Deni') that was resolved before the fix existed — "
+                "see the full detail printed above for each, and reconcile manually via "
+                "record_debt_payment's own backdate field if needed."
+            )
+
+    def _diagnose_one(self, business, customer, verbose=True):
+        from core.debt_views import _get_customer_debt_data
+
+        self.stdout.write(self.style.WARNING(
+            f"\n=== [{business.name}] Customer #{customer.id}: {customer.name} ==="
+        ))
+
+        txns = (
+            Transaction.objects.filter(business=business, recipient=customer.name, type='Issue')
+            .select_related('item', 'item__store')
+            .order_by('date', 'created_at')
+        )
+        self.stdout.write(f"\n-- Every Issue transaction ever recorded for this name ({txns.count()}) --")
+        for t in txns:
+            station = 'kitchen' if (t.item and t.item.store and t.item.store.is_kitchen) else 'bar'
+            tab_entry = None
+            try:
+                tab_entry = t.tab_entry
+            except Exception:
+                pass
+            tab_state = ''
+            if tab_entry is not None:
+                tab_state = f" | tab#{tab_entry.tab_id} status={tab_entry.tab.status} entry.is_paid={tab_entry.is_paid}"
+            self.stdout.write(
+                f"  txn#{t.id} {t.date} [{station}] {t.item.description if t.item else '?'} "
+                f"KES {t.revenue()} payment_method={t.payment_method!r} was_credit={t.was_credit}{tab_state}"
+            )
+
+        payments = CustomerDebtPayment.objects.filter(
+            business=business, customer=customer,
+        ).order_by('paid_at')
+        self.stdout.write(f"\n-- Every CustomerDebtPayment ever recorded ({payments.count()}) --")
+        total_paid = 0.0
+        for p in payments:
+            total_paid += float(p.amount_paid)
+            self.stdout.write(
+                f"  {p.paid_at} [{p.source}] KES {p.amount_paid} recorded_by="
+                f"{p.recorded_by.username if p.recorded_by_id else '-'} notes={p.notes!r}"
+            )
+        self.stdout.write(f"  TOTAL PAID (raw sum): KES {total_paid:.2f}")
+
+        data = _get_customer_debt_data(customer, business)
+        self.stdout.write(self.style.WARNING(
+            f"\n-- Debt tracker's CURRENT (post-fix) figures: Total Credit KES "
+            f"{data['total_credit']:.2f}, Total Paid KES {data['total_paid']:.2f}, "
+            f"Outstanding KES {data['outstanding']:.2f} --"
+        ))
+        if total_paid > data['total_credit'] + 0.01:
+            self.stdout.write(self.style.ERROR(
+                "  ⚠️  Total Paid still exceeds Total Credit — most likely a tab-less "
+                "direct credit sale (no BarTab at all) resolved before this fix existed, "
+                "which backfill_was_credit cannot recover automatically. Reconcile "
+                "manually with the raw transaction list above."
+            ))
+
+        open_tabs = BarTab.objects.filter(business=business, customer=customer, status='OPEN')
+        if open_tabs.exists():
+            self.stdout.write(self.style.ERROR(
+                f"\n-- {open_tabs.count()} OPEN tab(s) not yet converted to debt (correctly excluded above) --"
+            ))
+            for tab in open_tabs:
+                unpaid = tab.entries.filter(is_paid=False)
+                for e in unpaid:
+                    self.stdout.write(f"  tab#{tab.id} entry: {e.description} KES {e.amount} (still OPEN, not debt yet)")

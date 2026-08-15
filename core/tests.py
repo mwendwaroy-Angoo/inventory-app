@@ -11076,6 +11076,64 @@ class DiagnoseCustomerDebtCommandTest(TestCase):
         call_command('diagnose_customer_debt', business='Diagnose', customer='Nobody', stdout=out)
         self.assertIn('No customer named', out.getvalue())
 
+    def test_neither_customer_nor_all_customers_errors_cleanly(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_customer_debt', business='Diagnose', stdout=out)
+        self.assertIn('--customer', out.getvalue())
+
+    def test_all_customers_flags_only_the_mismatched_one(self):
+        """2026-08-15 same-day follow-up (Roy): 'i am sure it might not only
+        be Eugene affected, so i need to do it for all customers.' A second,
+        genuinely CLEAN customer (never had a mismatch) must be summarized
+        in one line, not dumped in full — only a customer whose raw Total
+        Paid still exceeds the fixed Total Credit gets the full detail
+        block and counts toward the flagged total."""
+        from io import StringIO
+        from django.core.management import call_command
+
+        # Eugene: genuinely still mismatched (simulates a tab-less credit
+        # sale resolved before the fix existed — backfill_was_credit can't
+        # recover this one, so it stays flagged even after the fix).
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('160'), payment_method='cash', recipient='Eugene',
+        )
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('160'), source='bar',
+        )
+
+        # A second, CLEAN customer — real credit, correctly resolved, was_credit
+        # correctly stamped (a normal transition, not simulated raw data).
+        clean_customer = Customer.objects.create(business=self.biz, name='Clean Carol')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Clean Carol',
+        )
+        txn.payment_method = 'cash'
+        txn.save(update_fields=['payment_method'])
+        # Not a real debt resolution (no tab, so was_credit didn't stamp per
+        # the model's own tab-status rule for tab-less direct sales — this
+        # transaction was never actually converted to real tracked debt in
+        # this fixture) — skip creating a payment for it, so it's correctly
+        # excluded from the scan (raw_paid == 0 for this customer).
+
+        out = StringIO()
+        call_command('diagnose_customer_debt', business='Diagnose', all_customers=True, stdout=out)
+        output = out.getvalue()
+        self.assertIn('1 customer(s) still mismatched', output)
+        self.assertIn('Eugene', output)
+        self.assertIn('⚠️', output)
+        self.assertNotIn('Clean Carol', output)  # never had a payment — correctly skipped entirely
+
+    def test_all_customers_no_mismatches_reports_zero(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_customer_debt', business='Diagnose', all_customers=True, stdout=out)
+        self.assertIn('0 customer(s) still mismatched', out.getvalue())
+
 
 class BackfillWasCreditCommandTest(TestCase):
     """2026-08-15 — one-time repair for historical data affected by the
