@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.http import JsonResponse
 from django.utils import timezone
@@ -218,15 +219,26 @@ def _get_customer_debt_data(customer, business, scope='all'):
         }
 
     credit_qs = Transaction.objects.filter(
+        Q(payment_method='credit') | Q(was_credit=True),
         business=business,
         recipient=customer.name,
-        payment_method='credit',
         type='Issue',
     ).exclude(
         # Transactions linked to an OPEN tab are tab charges, not standalone debt.
         # They enter the debt ledger only after the tab is settled as credit / converted.
         tab_entry__tab__status='OPEN',
     ).order_by('date').select_related('item__store')
+    # 2026-08-15: was_credit=True (see Transaction model) keeps a transaction
+    # counted here PERMANENTLY once it's ever been genuinely debt-tracked, even
+    # after it's later resolved via a settle path that flips payment_method away
+    # from 'credit' — see the field's own docstring for the full mechanism this
+    # fixes (Total Paid silently exceeding Total Credit). The FIFO walk below is
+    # completely unchanged by this — it naturally, correctly treats an
+    # already-resolved (payment_method != 'credit') transaction as "already
+    # spoken for" the moment total_paid's cumulative consumption reaches it in
+    # date order, since that's exactly the same oldest-first logic
+    # _do_settle_debt_payment used to decide which transaction to resolve in the
+    # first place — the two can never drift apart.
 
     payment_qs = CustomerDebtPayment.objects.filter(
         customer=customer,
@@ -327,9 +339,9 @@ def _calc_avg_payment_days(customer, business, scope='all'):
     ).order_by('paid_at')
 
     txn_qs = Transaction.objects.filter(
+        Q(payment_method='credit') | Q(was_credit=True),
         business=business,
         recipient=customer.name,
-        payment_method='credit',
         type='Issue',
     ).select_related('item__store')
 
@@ -1476,8 +1488,15 @@ def debtors_list_api(request):
     scope = _debt_scope(up, business)
     q = (request.GET.get('q') or '').strip()
 
+    # 2026-08-15: widened to was_credit=True alongside the live payment_method
+    # check — same fix, same reasoning as _get_customer_debt_data's own
+    # credit_qs (see Transaction.was_credit's docstring). Without this, a
+    # customer whose credit got resolved via a settle path (rather than a
+    # recorded CustomerDebtPayment) would be silently under-counted here too,
+    # potentially hiding real outstanding debt from this staff-facing panel.
     credit_qs = Transaction.objects.filter(
-        business=business, payment_method='credit', type='Issue',
+        Q(payment_method='credit') | Q(was_credit=True),
+        business=business, type='Issue',
     ).exclude(tab_entry__tab__status='OPEN').select_related('item__store')
     if scope == 'kitchen':
         credit_qs = credit_qs.filter(item__store__is_kitchen=True)

@@ -2549,6 +2549,49 @@ def tick_entry(request, entry_id):
     if pay not in ('cash', 'mpesa'):
         pay = 'cash'
 
+    tab = entry.tab
+
+    # 2026-08-15 live report (Roy) — a single-entry "tick" on a tab that has
+    # ALREADY been converted to debt (Geuza Deni) used to flip this entry's
+    # Transaction.payment_method off 'credit' directly, with NO matching
+    # CustomerDebtPayment ever created — unlike settle_tab's own debt-redirect
+    # (fixed 2026-08-10), which was never applied here. This silently drained
+    # money out of _get_customer_debt_data()'s "Total Credit" figure (which
+    # only counts transactions still currently payment_method='credit') while
+    # "Total Paid" (a separate, append-only CustomerDebtPayment ledger) never
+    # shrank to match — over enough ticks, Paid visibly exceeds Credit and
+    # genuinely still-owed items vanish from "Unpaid Credit Transactions."
+    # Same fix as settle_tab: route through the canonical _do_settle_debt_
+    # payment() so every resolution mechanism always creates a matching
+    # payment record, never a silent, untracked payment_method flip.
+    if _is_debt_converted_tab(tab):
+        if tab.source not in _allowed_tab_sources(up):
+            return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kulipa deni hili.'}, status=403)
+        source = tab.source if tab.source in ('bar', 'kitchen') else 'bar'
+        try:
+            from core.debt_views import _do_settle_debt_payment
+            rcpt, _post_data = _do_settle_debt_payment(
+                tab.customer, up.business, entry.amount, pay, source,
+                notes=f'Malipo kwenye tab #{tab.id} (ilishageuzwa deni) — kipengele: {entry.description}',
+                recorded_by=request.user,
+            )
+        except Exception:
+            logger.exception('tick_entry: debt-redirect payment failed tab=%s entry=%s', tab.id, entry.id)
+            return JsonResponse({
+                'ok': False,
+                'error': 'Imeshindikana kurekodi malipo — jaribu tena au tumia ukurasa wa Deni.',
+            }, status=500)
+        return JsonResponse({
+            'ok': True,
+            'redirected_to_debt': True,
+            'message': (
+                f'ℹ️ Tab hii ilishageuzwa deni — KES {entry.amount:,.0f} '
+                f'imerekodiwa kama malipo ya deni ya {tab.customer.name}.'
+            ),
+            'receipt_url': f'/r/{rcpt.token}/',
+            'total': float(tab.total()),
+        })
+
     now = timezone.now()
     entry.is_paid = True
     entry.paid_at = now
@@ -2558,8 +2601,6 @@ def tick_entry(request, entry_id):
 
     entry.transaction.payment_method = pay
     entry.transaction.save(update_fields=['payment_method'])
-
-    tab = entry.tab
     tab_settled = not tab.entries.filter(is_paid=False).exists()
     receipt_url = None
     receipt_id = None
@@ -3264,6 +3305,16 @@ def _finish_settle_tab(request, up, tab, pay, entries_to_settle, now):
     })
 
 
+def _is_debt_converted_tab(tab):
+    """SETTLED status but still carrying an unpaid balance is the fingerprint
+    of a tab that went through Geuza Deni (or the shift-close/auto-close
+    sweep) rather than a genuinely fully-paid tab — same discriminator
+    settle_tab's debt-redirect (below) and _debt_converted_tabs_qs/
+    _findable_tabs_qs already use. Factored out 2026-08-15 so tick_entry can
+    share the identical check rather than drifting from it."""
+    return tab.status == 'SETTLED' and tab.customer_id and tab.entries.filter(is_paid=False).exists()
+
+
 @login_required
 @require_POST
 def settle_tab(request, tab_id):
@@ -3308,7 +3359,7 @@ def settle_tab(request, tab_id):
         # Fix: redirect the payment into a REAL debt payment via the same
         # canonical _do_settle_debt_payment() used by record_debt_payment and
         # the M-Pesa debt-payment callback — never silently discard it.
-        if tab.status == 'SETTLED' and tab.customer_id and tab.entries.filter(is_paid=False).exists():
+        if _is_debt_converted_tab(tab):
             if tab.source not in _allowed_tab_sources(up):
                 return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kulipa deni hili.'}, status=403)
 

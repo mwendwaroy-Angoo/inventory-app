@@ -186,6 +186,7 @@ def _count_late_repayments(customer, business, scope, window, threshold):
     this, a customer who paid off old debt and then took new debt would accumulate unfair
     strikes from the paid-off balance appearing in every subsequent payment check.
     """
+    from django.db.models import Q
     from core.models import CustomerDebtPayment, Transaction
 
     payments = list(
@@ -196,10 +197,16 @@ def _count_late_repayments(customer, business, scope, window, threshold):
     if not payments:
         return 0
 
+    # 2026-08-15: was_credit=True (see Transaction model) keeps a resolved
+    # transaction in this FIFO simulation permanently, same reasoning and same
+    # fix as core.debt_views._get_customer_debt_data's own credit_qs — a plain
+    # payment_method='credit' filter here would silently drop a transaction the
+    # instant some OTHER settle path resolves it, corrupting cumulative_paid's
+    # own running total below against what CustomerDebtPayment actually shows.
     credit_qs = Transaction.objects.filter(
+        Q(payment_method='credit') | Q(was_credit=True),
         business=business,
         recipient=customer.name,
-        payment_method='credit',
         type='Issue',
     ).order_by('date').select_related('item')
 

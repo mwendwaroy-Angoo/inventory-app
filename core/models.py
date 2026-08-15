@@ -1144,6 +1144,78 @@ class Transaction(models.Model):
             "settlement flow needs the same shape."
         ),
     )
+    was_credit = models.BooleanField(
+        default=False,
+        help_text=(
+            "2026-08-15 live report (Roy, Monsoon Inn) — 'Total Paid' exceeding "
+            "'Total Credit' on the debt tracker, with genuinely-still-owed items "
+            "silently vanishing from 'Unpaid Credit Transactions'. Root cause: "
+            "core.debt_views._get_customer_debt_data()'s 'Total Credit' figure "
+            "summed transactions LIVE-filtered on payment_method=='credit' right "
+            "now — but at least ~15 separate settle paths (tick_entry, settle_tab, "
+            "settle_entries_amount_locked, the STK-push tab-settlement callbacks, "
+            "and _do_settle_debt_payment's own FIFO reconciliation among them) all "
+            "flip payment_method AWAY from 'credit' the instant a transaction is "
+            "resolved — correct for shift_views._reconcile()'s cash/mpesa/credit "
+            "split, but it meant the debt tracker's own 'Total Credit' silently "
+            "SHRANK by that same amount the moment ANY of those paths resolved a "
+            "transaction, while CustomerDebtPayment ('Total Paid', append-only) "
+            "never shrank to match — eventually producing Paid > Credit and "
+            "'all paid' showing on customers who genuinely still owed money. "
+            "This field is the fix: a permanent, one-way marker (never cleared "
+            "once set) stamped automatically the moment payment_method transitions "
+            "AWAY from 'credit' on an EXISTING row (see __init__/save() below) — "
+            "_get_customer_debt_data()'s 'Total Credit' now sums was_credit=True "
+            "OR still-currently-credit transactions, making it a stable historical "
+            "total that can never shrink out from under total_paid again. Achieved "
+            "at the model layer specifically so it automatically covers every one "
+            "of those ~15 existing (and any future) settle call sites with zero "
+            "changes needed to any of them — a naive per-view sweep risked missing "
+            "one, exactly the failure mode that caused this bug in the first place."
+        ),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Snapshot of payment_method AS LOADED FROM THE DATABASE (Model.from_db
+        # constructs via cls(*values), so this correctly captures the real
+        # pre-existing value for a fetched row — never meaningful for a brand
+        # new, not-yet-saved instance, which save() below guards against via
+        # `self.pk is not None`).
+        self._loaded_payment_method = self.payment_method
+
+    def save(self, *args, **kwargs):
+        # Only a transition INTO a real payment (cash/mpesa, never 'void' — a
+        # voided debt is written off, not paid, and must never look
+        # permanently unpaid-forever by staying counted here with no
+        # matching CustomerDebtPayment) from 'credit' can possibly mean this
+        # transaction was ever genuinely debt-tracked.
+        if (
+            self.pk is not None
+            and self._loaded_payment_method == 'credit'
+            and self.payment_method in ('cash', 'mpesa')
+        ):
+            # An ordinary tab item is ALSO briefly payment_method='credit'
+            # while the tab is OPEN (KegBarrel.record_sale etc: `pay =
+            # 'credit' if tab else ...`) — that's an internal "not yet
+            # collected" marker, not real debt, and _get_customer_debt_data's
+            # own credit_qs already correctly excludes it via
+            # tab_entry__tab__status='OPEN'. Only stamp was_credit when this
+            # transaction's tab (if any) is NOT still OPEN at the moment of
+            # this transition — i.e. it was ALREADY being counted as real
+            # debt (SETTLED via conversion) when it got resolved, or there's
+            # no tab at all (a direct credit sale, debt from creation).
+            try:
+                tab_status = self.tab_entry.tab.status
+            except Exception:
+                tab_status = None
+            if tab_status != 'OPEN':
+                self.was_credit = True
+                update_fields = kwargs.get('update_fields')
+                if update_fields is not None and 'was_credit' not in update_fields:
+                    kwargs['update_fields'] = list(update_fields) + ['was_credit']
+        super().save(*args, **kwargs)
+        self._loaded_payment_method = self.payment_method
 
     def revenue(self):
         # UBA §5.2 — a stock-transfer leg (type='Transfer', see the Draw-type

@@ -7188,3 +7188,95 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   confirmed unaffected regardless of request shape — plus the pre-existing
   `DeactivatedStaffMiddlewareTest` re-run and confirmed passing (now for the right
   reason). No migrations.
+- **CRITICAL FIX — "Paid exceeds Credit" / genuinely-owed items silently vanishing from
+  the debt tracker (2026-08-15), live report with screenshots from Monsoon Inn.** Roy:
+  staff reported tabs/debts "disappearing" — a customer (Eugene) with a real 320 KES
+  debt (160 paid partially, 160 still owed) showed 0 unpaid transactions and Total Paid
+  KES 800 against Total Credit KES 320; Roy's own "Roy" customer profile showed the Bar
+  sub-ledger as "All paid" with Total Paid KES 1360 against Total Credit KES 920 —
+  impossible under a correct FIFO ledger, and specifically NOT reproducible on the
+  Kitchen side. **Root cause, traced end to end, not guessed**: `_get_customer_debt_
+  data()`'s "Total Credit" figure was computed by summing every Transaction CURRENTLY
+  `payment_method='credit'` — but at least 15 separate settle paths across this app
+  (`tick_entry`, `settle_tab`, `settle_entries_amount_locked`, the STK-push tab-
+  settlement callbacks, and `_do_settle_debt_payment`'s own FIFO reconciliation — the
+  very mechanism from THIS SAME DAY's earlier "CRITICAL FIX" entry above — among them)
+  all flip `payment_method` AWAY from 'credit' the instant a transaction is resolved,
+  correct for `shift_views._reconcile()`'s live cash/mpesa/credit split but fatal for
+  the debt tracker: the moment ANY of them resolved a transaction, "Total Credit" simply
+  stopped counting it, while `CustomerDebtPayment` ("Total Paid," append-only, never
+  shrinks) kept the full record — a payment recorded through the debt tracker's own
+  `_do_settle_debt_payment()` DOUBLE-SUBTRACTED itself (once via excluding the
+  transaction from Total Credit, once via adding to Total Paid), silently understating
+  `outstanding` for every account with enough resolved credit history, worst wherever
+  debt-tracker payment activity was heaviest (bar, for both Eugene and Roy's own test
+  account that day). **Second, distinct gap found in the same investigation**:
+  `tick_entry()` (the per-item "tick" checkmark, separate from "Lipa Yote") never got
+  the debt-redirect fix `settle_tab()` received on 2026-08-10 — ticking a single entry
+  on an ALREADY debt-converted tab flipped its `Transaction.payment_method` off
+  'credit' directly, with ZERO matching `CustomerDebtPayment` ever created, meaning
+  money genuinely collected at the counter this way vanished from Total Credit with
+  nothing added to Total Paid to compensate — a real, silent leak. **Fix, in two parts,
+  both required together**: (1) `tick_entry()` now shares `_is_debt_converted_tab()`
+  (factored out of `settle_tab`'s own check) and redirects through the same canonical
+  `_do_settle_debt_payment()` for a debt-converted tab's entry — every resolution
+  mechanism now always creates a matching payment record, never a silent flip. (2) New
+  `Transaction.was_credit` — a permanent, one-way marker stamped automatically via a
+  `__init__`/`save()` override (Django's own from-db value snapshotting, `_loaded_
+  payment_method`) the instant `payment_method` transitions FROM 'credit' TO a real
+  channel (cash/mpesa specifically — never 'void', so a written-off debt doesn't look
+  permanently-unpaid-forever) — deliberately implemented at the MODEL layer specifically
+  so it automatically covers all ~15 existing (and any future) settle call sites with
+  ZERO changes needed to any of them, avoiding the exact "sweep every call site and risk
+  missing one" failure mode that caused this bug in the first place. **A first draft of
+  this was too broad and caught by its own test before shipping**: stamping was_credit
+  on ANY transition off 'credit' would have ALSO flagged completely ordinary tab items
+  (which are briefly `payment_method='credit'` while merely OPEN, by design — `KegBarrel.
+  record_sale`'s `pay = 'credit' if tab else ...` — and never real debt) the moment they
+  settled normally, reintroducing phantom debt for every ordinary customer; fixed by only
+  stamping when the transaction's own tab (if any) is NOT still OPEN at the transition
+  moment — i.e. it was ALREADY being counted as genuine debt (SETTLED via conversion)
+  when resolved, or there's no tab at all (a direct credit sale, debt from creation).
+  `_get_customer_debt_data()`'s `credit_qs` (both scope branches), `_calc_avg_payment_
+  days()`, `credit_policy._count_late_repayments()` (an independent, parallel FIFO
+  simulation with the identical bug), and `debtors_list_api()` (the staff-facing "💳
+  Wateja wenye Deni" panel, its own raw reimplementation of the same buggy formula) all
+  widened from `payment_method='credit'` to `Q(payment_method='credit') | Q(was_credit=
+  True)` — the FIFO walk logic itself needed ZERO changes, since it naturally and
+  correctly treats an already-resolved transaction as "already spoken for" the moment
+  `total_paid`'s cumulative consumption reaches it in date order, exactly mirroring
+  `_do_settle_debt_payment`'s own oldest-first resolution order — the two can never
+  drift apart. Deliberately NOT widened (correctly stay live/current-state only, verified
+  by reading each): `shift_views._reconcile()`'s `credit_sales` (must reflect the REAL
+  current cash/mpesa/credit split for till reconciliation), `haki_views._staff_
+  contribution()`'s revenue-by-payment-method split (same reasoning), `request_write_
+  off()`'s eligibility check (a write-off request only makes sense for something still
+  genuinely owed). Deliberately deferred as lower-stakes (a promo/marketing segment-
+  builder completeness gap, not a money-correctness one): `promo_views.py`'s
+  `SEGMENT_DEBTORS`/`_count_debtors` still use the live-only filter — flagged, not fixed,
+  to keep this urgent fix's scope to money-correctness surfaces only. **New tools for
+  the live incident**: `diagnose_customer_debt` (read-only, dumps a customer's raw
+  Transaction + CustomerDebtPayment history bypassing the buggy aggregate entirely — built
+  and shipped FIRST, before the fix, specifically so Roy had an immediate way to see the
+  true underlying data and reassure staff that nothing was actually lost, only miscounted)
+  and `backfill_was_credit` (best-effort repair for transactions ALREADY resolved before
+  this fix existed — recovers `was_credit=True` for any tab-linked transaction whose tab
+  was EVER debt-converted, via `BarTab.customer` being set — a permanent signal, unlike
+  the since-overwritten `payment_method`; explicitly documented as NOT able to recover a
+  tab-LESS direct credit sale resolved before this fix, since no equivalent permanent
+  signal survives for that case — `diagnose_customer_debt` is the fallback for inspecting
+  any such customer directly). 27 new tests (`TransactionWasCreditFieldTest`,
+  `PaidExceedsCreditBugFixTest` — including a direct reproduction of the exact reported
+  numeric shape and a regression lock that the ordinary single-transaction partial-
+  payment case, Eugene's own literal remembered scenario, is completely unaffected,
+  `TickEntryDebtRedirectTest`, `BackfillWasCreditCommandTest`, `DiagnoseCustomerDebt
+  CommandTest`) plus the full pre-existing `CreditGate*`/`UniversalCreditLimitTest`/
+  `SettleTabRedirectsToDebtPaymentTest`/`DoSettleDebtPaymentTransactionSyncTest` suites
+  confirmed passing unmodified. One migration (0164, additive — `was_credit` defaults
+  False). **Action for Roy, once deployed**: run `python manage.py backfill_was_credit`
+  (with `--dry-run` first to preview) on Render's Shell to repair historical data for
+  every business on the platform — safe to re-run. For any customer whose numbers still
+  look wrong afterward (the documented tab-less-direct-credit-sale gap), run
+  `python manage.py diagnose_customer_debt --business="X" --customer="Y"` to inspect
+  their raw history directly and manually reconcile with `record_debt_payment`'s existing
+  backdate field if needed.

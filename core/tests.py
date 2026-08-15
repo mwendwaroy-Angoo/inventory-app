@@ -10731,6 +10731,457 @@ class DoSettleDebtPaymentTransactionSyncTest(TestCase):
         self.assertFalse(open_entry.is_paid, "an OPEN tab's own entries are not debt yet")
 
 
+class TransactionWasCreditFieldTest(TestCase):
+    """2026-08-15 live report (Roy, Monsoon Inn): "Total Paid" exceeding
+    "Total Credit" on the debt tracker, with genuinely-still-owed items
+    silently vanishing from "Unpaid Credit Transactions" — see
+    Transaction.was_credit's own docstring for the full mechanism. These
+    tests lock in the auto-stamping behavior at the model layer directly."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WasCredit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='WC-01', unit='Pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('50'),
+        )
+
+    def test_fresh_credit_transaction_does_not_get_was_credit_immediately(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Eugene',
+        )
+        self.assertFalse(txn.was_credit, "was_credit only stamps on a later TRANSITION, not at creation")
+
+    def test_transition_off_credit_stamps_was_credit(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Eugene',
+        )
+        txn.payment_method = 'cash'
+        txn.save(update_fields=['payment_method'])
+        txn.refresh_from_db()
+        self.assertTrue(txn.was_credit)
+        self.assertEqual(txn.payment_method, 'cash')
+
+    def test_transition_off_credit_stamps_was_credit_even_with_narrow_update_fields(self):
+        """The dirty-tracking must append 'was_credit' to an explicit
+        update_fields list rather than being silently discarded by it —
+        every real call site in the app passes update_fields=['payment_method']
+        explicitly, so this is the realistic shape, not the edge case."""
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Eugene',
+        )
+        txn.payment_method = 'mpesa'
+        txn.save(update_fields=['payment_method'])
+        # Re-fetch as a FRESH instance to prove the field genuinely persisted
+        # to the database, not just held in the in-memory object.
+        fresh = Transaction.objects.get(pk=txn.pk)
+        self.assertTrue(fresh.was_credit)
+
+    def test_a_transaction_never_credit_never_gets_was_credit(self):
+        """An ordinary cash sale, or a tab item settled normally while still
+        OPEN (never debt-tracked) must never be flagged — was_credit is
+        specifically about genuine debt history, not any payment_method change."""
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash', recipient='',
+        )
+        txn.payment_method = 'mpesa'
+        txn.save(update_fields=['payment_method'])
+        txn.refresh_from_db()
+        self.assertFalse(txn.was_credit)
+
+    def test_was_credit_never_clears_once_set(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Eugene',
+        )
+        txn.payment_method = 'cash'
+        txn.save(update_fields=['payment_method'])
+        txn.refresh_from_db()
+        self.assertTrue(txn.was_credit)
+        # Some later, unrelated save (e.g. correcting the description via a
+        # different field) must never clear it back to False.
+        txn.invoice_no = 'corrected'
+        txn.save(update_fields=['invoice_no'])
+        txn.refresh_from_db()
+        self.assertTrue(txn.was_credit)
+
+
+class PaidExceedsCreditBugFixTest(TestCase):
+    """2026-08-15 live report (Roy, Monsoon Inn, with screenshots): a
+    customer's debt profile showed Total Paid KES 1360 against Total Credit
+    KES 920 ("all paid" — impossible, since paid > credit), while a
+    DIFFERENT customer (Eugene) showed 0 unpaid transactions despite a real,
+    remembered partial debt. Root cause traced end to end: every settle path
+    that resolves a debt-tracked transaction (tick_entry included — see
+    _is_debt_converted_tab) flips Transaction.payment_method away from
+    'credit' the instant it's paid — correct for shift_views._reconcile()'s
+    live cash/mpesa/credit split, but _get_customer_debt_data()'s own "Total
+    Credit" figure used to be computed from that SAME live, mutable filter —
+    so the moment a transaction got paid off via the debt tracker's own
+    _do_settle_debt_payment() (which ALSO creates the CustomerDebtPayment
+    that funds "Total Paid"), it silently vanished from "Total Credit" too,
+    double-subtracting the same payment. These tests reproduce the exact
+    numeric shape of the bug and prove the fix (Transaction.was_credit)
+    closes it, without breaking the ordinary partial-payment case."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Paid Exceeds Credit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='PEC-01', unit='Pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('50'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Roy', credit_approved=True,
+        )
+
+    def _credit_txn(self, amount, date_=None):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=amount, payment_method='credit', recipient='Roy',
+            **({'date': date_} if date_ else {}),
+        )
+
+    def test_resolving_one_of_several_credit_transactions_leaves_correct_outstanding(self):
+        """The exact reproduced bug: 3 transactions of 100 each (300 total
+        credit). Resolving ONE of them via a real debt payment of 100 must
+        leave outstanding at 200 (the other two) — NOT 100 (which is what
+        the pre-fix double-subtraction produced: total_credit shrinking to
+        200 via exclusion, MINUS total_paid(100) again = 100)."""
+        from core.debt_views import _get_customer_debt_data, _do_settle_debt_payment
+        self._credit_txn(Decimal('100'), date(2026, 8, 1))
+        self._credit_txn(Decimal('100'), date(2026, 8, 5))
+        self._credit_txn(Decimal('100'), date(2026, 8, 9))
+
+        data_before = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data_before['total_credit'], 300.0)
+        self.assertEqual(data_before['outstanding'], 300.0)
+
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'mpesa', 'bar')
+
+        data_after = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(
+            data_after['total_credit'], 300.0,
+            'Total Credit must stay the full historical total — never shrink '
+            'just because one transaction got resolved',
+        )
+        self.assertEqual(data_after['total_paid'], 100.0)
+        self.assertEqual(
+            data_after['outstanding'], 200.0,
+            'the exact reproduced bug — pre-fix this computed to 100 (double-subtracted)',
+        )
+        self.assertEqual(len(data_after['unpaid_transactions']), 2)
+
+    def test_paid_never_visibly_exceeds_credit_after_repeated_resolutions(self):
+        """Roy's own literal screenshot shape: keep resolving transactions
+        one at a time via real debt payments and confirm total_paid can
+        never exceed total_credit, and outstanding never goes negative-then-
+        clamped-to-zero while real debt remains."""
+        from core.debt_views import _get_customer_debt_data, _do_settle_debt_payment
+        for i in range(4):
+            self._credit_txn(Decimal('100'), date(2026, 8, 1 + i))
+
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'mpesa', 'bar')
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'mpesa', 'bar')
+
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['total_credit'], 400.0)
+        self.assertEqual(data['total_paid'], 300.0)
+        self.assertLessEqual(data['total_paid'], data['total_credit'])
+        self.assertEqual(data['outstanding'], 100.0)
+        self.assertEqual(len(data['unpaid_transactions']), 1)
+        self.assertEqual(data['unpaid_transactions'][0]['amount'], 100.0)
+
+    def test_partial_payment_of_a_single_transaction_still_works_unchanged(self):
+        """Eugene's own literal remembered scenario: one 320 debt, 160 paid
+        partially, 160 still owed — this must keep working exactly as
+        before, since a PARTIAL payment never triggers _do_settle_debt_
+        payment's full-coverage sync (payment_method stays 'credit')."""
+        from core.debt_views import _get_customer_debt_data, _do_settle_debt_payment
+        self._credit_txn(Decimal('320'))
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('160'), 'mpesa', 'bar')
+
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['total_credit'], 320.0)
+        self.assertEqual(data['total_paid'], 160.0)
+        self.assertEqual(data['outstanding'], 160.0)
+        self.assertEqual(len(data['unpaid_transactions']), 1)
+        self.assertEqual(data['unpaid_transactions'][0]['amount'], 160.0)
+
+    def test_fully_resolved_customer_shows_zero_outstanding_not_negative_looking(self):
+        from core.debt_views import _get_customer_debt_data, _do_settle_debt_payment
+        self._credit_txn(Decimal('100'))
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['total_credit'], 100.0)
+        self.assertEqual(data['total_paid'], 100.0)
+        self.assertEqual(data['outstanding'], 0.0)
+        self.assertEqual(data['unpaid_transactions'], [])
+
+
+class TickEntryDebtRedirectTest(TestCase):
+    """2026-08-15 fix (Roy, Monsoon Inn) — Fix A: tick_entry() (the per-item
+    checkmark, distinct from settle_tab's "Lipa Yote") had the SAME gap
+    settle_tab was fixed for on 2026-08-10, but was never itself fixed —
+    ticking a single entry on an already debt-converted tab flipped the
+    entry's Transaction.payment_method off 'credit' directly, with NO
+    matching CustomerDebtPayment ever created. Mirrors
+    SettleTabRedirectsToDebtPaymentTest's structure exactly."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Tick Redirect Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='tr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.kitchen_staff = User.objects.create_user(username='tr_kstaff', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Keg Gold',
+            material_no='TR-01', unit='Pcs', selling_price=Decimal('80'), cost_price=Decimal('40'),
+        )
+
+    def _make_tab(self, name, amount, source='bar'):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source=source, store=self.bar_store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=self.item.description, amount=amount, is_paid=False,
+        )
+        return tab, entry
+
+    def _convert(self, tab, name='Eugene'):
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/tabs/{tab.id}/debt/', {'customer_name': name})
+        tab.refresh_from_db()
+        self.assertEqual(tab.status, 'SETTLED')
+
+    def test_tick_on_debt_converted_tab_records_real_debt_payment(self):
+        from core.debt_views import _get_customer_debt_data
+        tab, entry = self._make_tab('Eugene', Decimal('80'))
+        self._convert(tab)
+        customer = Customer.objects.get(business=self.biz, name='Eugene')
+        self.assertEqual(_get_customer_debt_data(customer, self.biz)['outstanding'], 80.0)
+
+        resp = self.client.post(f'/bar/tabs/entry/{entry.id}/tick/', {'payment_method': 'mpesa'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data.get('redirected_to_debt'))
+
+        self.assertEqual(CustomerDebtPayment.objects.filter(customer=customer).count(), 1)
+        payment = CustomerDebtPayment.objects.get(customer=customer)
+        self.assertEqual(payment.amount_paid, Decimal('80'))
+        self.assertEqual(payment.payment_method, 'mpesa')
+        self.assertEqual(_get_customer_debt_data(customer, self.biz)['outstanding'], 0.0)
+
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        entry.transaction.refresh_from_db()
+        self.assertEqual(entry.transaction.payment_method, 'mpesa')
+        self.assertTrue(entry.transaction.was_credit)
+
+    def test_ordinary_open_tab_tick_is_completely_unaffected(self):
+        """Regression lock — the vast majority of ticks are on an ordinary,
+        never-debt-converted OPEN tab and must behave exactly as before:
+        no debt payment fabricated, no was_credit stamped."""
+        tab, entry = self._make_tab('Eugene', Decimal('80'))
+        resp = self.client.post(f'/bar/tabs/entry/{entry.id}/tick/', {'payment_method': 'cash'})
+        # No shift open and not owner/manager on a fresh staff would normally
+        # gate this, but for this fixture there's no staff constraint issue
+        # since no login occurred — verify the ordinary owner-bypass path.
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/entry/{entry.id}/tick/', {'payment_method': 'cash'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertFalse(data.get('redirected_to_debt'))
+        self.assertEqual(CustomerDebtPayment.objects.count(), 0)
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        entry.transaction.refresh_from_db()
+        self.assertEqual(entry.transaction.payment_method, 'cash')
+        self.assertFalse(
+            entry.transaction.was_credit,
+            'an ordinary tab settling normally was never real debt — must never get flagged',
+        )
+
+    def test_tick_redirect_respects_station_scoping(self):
+        tab, entry = self._make_tab('Eugene', Decimal('80'), source='bar')
+        self._convert(tab)
+        self.client.force_login(self.kitchen_staff)
+        resp = self.client.post(f'/bar/tabs/entry/{entry.id}/tick/', {'payment_method': 'cash'})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(CustomerDebtPayment.objects.count(), 0)
+
+    def test_tick_redirect_does_not_touch_stock_qty(self):
+        tab, entry = self._make_tab('Eugene', Decimal('80'))
+        original_qty = entry.transaction.qty
+        self._convert(tab)
+        self.client.post(f'/bar/tabs/entry/{entry.id}/tick/', {'payment_method': 'cash'})
+        entry.refresh_from_db()
+        self.assertEqual(entry.transaction.qty, original_qty)
+
+
+class DiagnoseCustomerDebtCommandTest(TestCase):
+    """2026-08-15 emergency read-only diagnostic — built alongside the
+    Paid-exceeds-Credit fix so Roy could inspect a customer's raw
+    transaction/payment history directly, bypassing the buggy aggregate,
+    while the real fix was still being built. Must never mutate anything."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Diagnose Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='DIAG-01', unit='Pcs', selling_price=Decimal('100'), cost_price=Decimal('50'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='Eugene')
+
+    def test_shows_raw_transactions_and_payments_without_mutating_anything(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('160'), payment_method='credit', recipient='Eugene',
+        )
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('160'), source='bar',
+        )
+        before_txn_count = Transaction.objects.count()
+        before_payment_count = CustomerDebtPayment.objects.count()
+
+        out = StringIO()
+        call_command('diagnose_customer_debt', business='Diagnose', customer='Eugene', stdout=out)
+        output = out.getvalue()
+        self.assertIn('Eugene', output)
+        self.assertIn('160', output)
+        self.assertEqual(Transaction.objects.count(), before_txn_count)
+        self.assertEqual(CustomerDebtPayment.objects.count(), before_payment_count)
+
+    def test_no_matching_customer_does_not_crash(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_customer_debt', business='Diagnose', customer='Nobody', stdout=out)
+        self.assertIn('No customer named', out.getvalue())
+
+
+class BackfillWasCreditCommandTest(TestCase):
+    """2026-08-15 — one-time repair for historical data affected by the
+    Paid-exceeds-Credit bug, predating the fix. Recovers was_credit=True for
+    any tab-linked transaction whose tab was EVER debt-converted
+    (BarTab.customer set is a permanent signal, unlike the mutable
+    Transaction.payment_method)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Backfill WC Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='BWC-01', unit='Pcs', selling_price=Decimal('80'), cost_price=Decimal('40'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='Eugene')
+
+    def test_backfills_tab_linked_transaction_already_resolved_pre_fix(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Eugene', customer=self.customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', recipient='Eugene',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
+        )
+        self.assertFalse(txn.was_credit)
+
+        out = StringIO()
+        call_command('backfill_was_credit', stdout=out)
+        txn.refresh_from_db()
+        self.assertTrue(txn.was_credit)
+        self.assertIn('Backfilled', out.getvalue())
+
+    def test_dry_run_changes_nothing(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Eugene', customer=self.customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', recipient='Eugene',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
+        )
+
+        out = StringIO()
+        call_command('backfill_was_credit', '--dry-run', stdout=out)
+        txn.refresh_from_db()
+        self.assertFalse(txn.was_credit)
+        self.assertIn('DRY RUN', out.getvalue())
+
+    def test_leaves_a_tab_never_converted_to_debt_untouched(self):
+        """A tab that was fully paid in the ordinary way (never had a
+        customer set, never debt-converted) must never be backfilled."""
+        from io import StringIO
+        from django.core.management import call_command
+
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Eugene', customer=None,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', recipient='Eugene',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
+        )
+
+        call_command('backfill_was_credit', stdout=StringIO())
+        txn.refresh_from_db()
+        self.assertFalse(txn.was_credit)
+
+    def test_idempotent_rerun_is_safe(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Eugene', customer=self.customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash', recipient='Eugene',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
+        )
+
+        call_command('backfill_was_credit', stdout=StringIO())
+        out2 = StringIO()
+        call_command('backfill_was_credit', stdout=out2)
+        self.assertIn('Backfilled was_credit on 0 transaction', out2.getvalue())
+
+
 class DebtConvertedTabsPanelPaymentExclusionTest(TestCase):
     """2026-07-31 live report (Roy): "when the debt payment is recorded,
     the order goes back to the tabs drawer it came from... showing that
