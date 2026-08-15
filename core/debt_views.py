@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Q
+from django.db.models import F, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.http import JsonResponse
 from django.utils import timezone
@@ -186,7 +186,15 @@ def _get_customer_debt_data(customer, business, scope='all'):
         )
         total_credit_amount = bar_d['total_credit'] + kitchen_d['total_credit']
         total_paid          = bar_d['total_paid'] + kitchen_d['total_paid']
-        outstanding          = round(max(0.0, total_credit_amount - total_paid), 2)
+        # 2026-08-15: sum the two ALREADY-CORRECT per-scope outstanding
+        # figures directly — do NOT re-derive via total_credit - total_paid
+        # here. Since the tab-linked-is_paid fix, a scope's own outstanding
+        # is no longer simply total_credit minus total_paid (a tab-linked
+        # unpaid entry counts fully regardless of the scope's total_paid) —
+        # re-subtracting at the 'all' merge level would silently undo that
+        # fix the moment bar+kitchen are combined, which is the default
+        # scope every real caller uses.
+        outstanding = round(bar_d['outstanding'] + kitchen_d['outstanding'], 2)
         aged = {k: round(bar_d['aged'][k] + kitchen_d['aged'][k], 2) for k in bar_d['aged']}
         has_overdue = bar_d['has_overdue'] or kitchen_d['has_overdue']
         credit_txns_exist = bool(bar_d['txn_count'] or kitchen_d['txn_count'])
@@ -227,18 +235,7 @@ def _get_customer_debt_data(customer, business, scope='all'):
         # Transactions linked to an OPEN tab are tab charges, not standalone debt.
         # They enter the debt ledger only after the tab is settled as credit / converted.
         tab_entry__tab__status='OPEN',
-    ).order_by('date').select_related('item__store')
-    # 2026-08-15: was_credit=True (see Transaction model) keeps a transaction
-    # counted here PERMANENTLY once it's ever been genuinely debt-tracked, even
-    # after it's later resolved via a settle path that flips payment_method away
-    # from 'credit' — see the field's own docstring for the full mechanism this
-    # fixes (Total Paid silently exceeding Total Credit). The FIFO walk below is
-    # completely unchanged by this — it naturally, correctly treats an
-    # already-resolved (payment_method != 'credit') transaction as "already
-    # spoken for" the moment total_paid's cumulative consumption reaches it in
-    # date order, since that's exactly the same oldest-first logic
-    # _do_settle_debt_payment used to decide which transaction to resolve in the
-    # first place — the two can never drift apart.
+    ).order_by('date').select_related('item__store', 'tab_entry', 'tab_entry__tab')
 
     payment_qs = CustomerDebtPayment.objects.filter(
         customer=customer,
@@ -252,17 +249,96 @@ def _get_customer_debt_data(customer, business, scope='all'):
         credit_qs = credit_qs.filter(item__store__is_kitchen=False)
         payment_qs = payment_qs.filter(source='bar')
 
-    credit_txns = list(credit_qs)
-    payments    = list(payment_qs)
-
-    total_credit_amount = sum(float(t.revenue()) for t in credit_txns)
+    all_txns = list(credit_qs)
+    payments = list(payment_qs)
     total_paid = sum(float(p.amount_paid) for p in payments)
-    outstanding = max(0.0, total_credit_amount - total_paid)
 
-    remaining_paid = total_paid
+    # 2026-08-15, second fix the same day (Roy's own live data, "i have 600
+    # to pay for bar section specifically... there must be something we are
+    # missing"): confirmed a real, separate bug from was_credit's own —
+    # a tab-linked transaction (entry.is_paid=False, entry ground truth) was
+    # STILL showing as "All paid" because the FIFO-against-cumulative-total
+    # walk below assumed every shilling ever paid lined up in date order
+    # against the oldest debts, which doesn't hold once payments and tab
+    # items don't arrive in a clean 1:1 sequence — the cumulative math
+    # concluded "covered by now" for an item nobody had actually paid.
+    #
+    # Fix: BarTabEntry.is_paid is 100% authoritative for a tab-linked
+    # transaction and needs NO FIFO guessing at all — a tab can only reach
+    # SETTLED with an is_paid=False entry via a genuine Geuza Deni debt
+    # conversion (_convert_tab_to_debt_core only force-sets payment_method=
+    # 'credit' on still-UNPAID entries; an ORDINARY paid-in-full tab clears
+    # every entry before it can even become SETTLED — tab_settled = not
+    # tab.entries.filter(is_paid=False).exists()) — so this combination can
+    # never happen for an ordinary tab, unlike tab.customer_id (which IS set
+    # for an ordinary settle too, the exact wrong signal the retired
+    # backfill_was_credit command used).
+    #
+    # Tab-linked unpaid entries are therefore counted as FULLY outstanding
+    # (minus any partial amount_paid) unconditionally, with no FIFO/payment-
+    # total guessing needed. But the money that DID go toward a tab-linked
+    # entry (whether it fully or partially covered it) is real money out of
+    # the shared total_paid pool — it must be reserved away before that same
+    # pool is applied to the non-tab walk below, or the exact same shilling
+    # would silently reduce BOTH a tab-linked entry's own is_paid/amount_paid
+    # state AND a non-tab transaction's outstanding amount at once (found
+    # while writing this fix's own tests: a single 80 KES debt payment fully
+    # covering one 80 KES tab-linked entry was ALSO subtracted a second time
+    # from an unrelated 100 KES non-tab debt, understating it to 20).
+    tab_linked_unpaid = []
+    tab_linked_consumed = 0.0
+    non_tab_txns = []
+    for txn in all_txns:
+        try:
+            entry = txn.tab_entry
+        except Exception:
+            entry = None
+        if entry is not None:
+            # is_paid=True is authoritative that the FULL amount was
+            # consumed, regardless of what amount_paid happens to say (a
+            # tab-linked entry marked paid before amount_paid existed, or by
+            # any other settle path, still has its full amount reserved
+            # here — never re-available to the non-tab walk).
+            tab_linked_consumed += float(entry.amount) if entry.is_paid else float(entry.amount_paid)
+            if not entry.is_paid:
+                tab_linked_unpaid.append(txn)
+            # else: is_paid=True — fully resolved, whatever the mechanism,
+            # excluded entirely; see the docstring above for why this is safe.
+        else:
+            non_tab_txns.append(txn)
+
     unpaid_transactions = []
+    tab_linked_outstanding = 0.0
+    for txn in tab_linked_unpaid:
+        # 2026-08-15, third fix same day: is_paid=False doesn't mean "zero
+        # paid" — settle_tab's own amount= param (and _do_settle_debt_
+        # payment's FIFO walk) can partially cover a tab-linked entry
+        # without fully resolving it (is_paid only flips True once the
+        # WHOLE amount is covered). amount_paid tracks that remainder so a
+        # partial payment is reflected here instead of re-showing the full
+        # original amount as still owed.
+        entry = txn.tab_entry
+        remaining = round(float(txn.revenue()) - float(entry.amount_paid), 2)
+        if remaining <= 0:
+            continue
+        tab_linked_outstanding += remaining
+        unpaid_transactions.append({
+            'txn': txn,
+            'amount': remaining,
+            'days_outstanding': (today - txn.date).days,
+            'is_overdue': (today - txn.date).days > window,
+            'transfer_note': _txn_transfer_note(txn),
+        })
 
-    for txn in credit_txns:
+    # Non-tab (direct credit sale, e.g. a plain Quick Sell "Deni") has no
+    # per-item is_paid flag to rely on — keeps the original, already-tested
+    # FIFO-against-total_paid walk, which correctly supports a genuine
+    # partial payment of a single transaction. tab_linked_consumed is
+    # reserved away first so money that already paid off a tab-linked entry
+    # can never also reduce a non-tab transaction's own outstanding amount.
+    non_tab_available_paid = max(0.0, total_paid - tab_linked_consumed)
+    remaining_paid = non_tab_available_paid
+    for txn in non_tab_txns:
         txn_amount = float(txn.revenue())
         if remaining_paid >= txn_amount:
             remaining_paid -= txn_amount
@@ -284,6 +360,39 @@ def _get_customer_debt_data(customer, business, scope='all'):
                 'is_overdue': (today - txn.date).days > window,
                 'transfer_note': _txn_transfer_note(txn),
             })
+
+    unpaid_transactions.sort(key=lambda e: e['txn'].date)
+    credit_txns = all_txns
+    # 2026-08-15, FOURTH fix same day (found by the full test suite —
+    # ReturnPrimitiveTest.test_return_reverses_credit_debt regressed to
+    # 400.0 instead of 200.0): Total Credit must be the full historical
+    # total ever extended — EVERY txn in all_txns, tab-linked or not,
+    # PAID or not — never shrinking just because a tab-linked entry later
+    # got paid off. Excluding paid-off tab-linked entries here (as an
+    # earlier draft of this fix did) would silently reproduce THIS SAME
+    # SESSION'S OWN "Total Paid exceeds Total Credit" bug, just scoped to
+    # the tab-linked population instead of the non-tab one: pay off entry
+    # 1 of 3 via a real debt payment → total_paid grows AND total_credit
+    # shrinks by the same amount, and the next payment then exceeds a
+    # now-smaller total_credit again.
+    total_credit_amount = sum(float(t.revenue()) for t in all_txns)
+    # Outstanding is NOT simply "sum of the itemized unpaid_transactions
+    # list" — a Return's reversal transaction (qty=0, NEGATIVE sale_amount,
+    # no tab) breaks the itemized per-transaction walk below when it lands
+    # in an unlucky tie-order relative to the sale it's reversing (the walk
+    # is a single forward pass with no way to revisit an already-appended
+    # earlier line once a later negative amount effectively "pre-pays" it).
+    # Non-tab outstanding is computed the ORIGINAL, order-independent way
+    # (total credit minus total paid, floored at 0) — exactly matching this
+    # function's pre-2026-08-15 behavior, which handled Returns correctly.
+    # Tab-linked outstanding is fully separate and unconditional (is_paid=
+    # False is 100% authoritative — no total_paid involved at all), so the
+    # two combine cleanly with no double-counting either way. (Already
+    # accumulated above, in the same loop that builds unpaid_transactions.)
+    tab_linked_outstanding = round(tab_linked_outstanding, 2)
+    non_tab_total_credit = sum(float(t.revenue()) for t in non_tab_txns)
+    non_tab_outstanding = round(max(0.0, non_tab_total_credit - non_tab_available_paid), 2)
+    outstanding = round(tab_linked_outstanding + non_tab_outstanding, 2)
 
     aged = {'current': 0.0, 'overdue_30': 0.0, 'overdue_60': 0.0, 'overdue_90': 0.0}
     for entry in unpaid_transactions:
@@ -614,7 +723,7 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
                 if paid_remaining <= 0:
                     break
                 txn = entry['txn']
-                entry_amount = float(entry['amount'])
+                entry_amount = float(entry['amount'])  # already remaining-after-amount_paid
                 covered = round(min(entry_amount, paid_remaining), 2)
                 paid_remaining = round(paid_remaining - covered, 2)
                 if covered >= entry_amount:
@@ -622,7 +731,10 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
                         tab__id__in=settled_tab_ids,
                         transaction=txn,
                         is_paid=False,
-                    ).update(is_paid=True, paid_at=now, payment_method=payment_method)
+                    ).update(
+                        is_paid=True, paid_at=now, payment_method=payment_method,
+                        amount_paid=F('amount'),
+                    )
                     # 2026-08-14 live report (Roy, via audit_debt_ledger_integrity
                     # --all-customers): the BarTabEntry .update() above never
                     # touched the underlying Transaction — every OTHER settle
@@ -638,11 +750,29 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
                     # the debt tracker (and anything else reading Transaction.
                     # payment_method directly, e.g. promo_views.py's "has debt"
                     # segment) kept counting each one as still-owed credit
-                    # forever. See backfill_settled_debt_txn_payment_method for
+                    # forever. See backfill_split_paid_txn_payment_method for
                     # the retroactive repair of every already-corrupted row.
                     if txn.payment_method != payment_method:
                         txn.payment_method = payment_method
                         txn.save(update_fields=['payment_method'])
+                elif covered > 0:
+                    # 2026-08-15, fourth fix same day: a PARTIAL cover of a
+                    # tab-linked entry (settle_tab's own amount= param routed
+                    # here via the debt-redirect, or a debt-tracker payment
+                    # too small to clear the whole item) must not be
+                    # silently discarded — is_paid stays False (the entry
+                    # genuinely isn't fully resolved) and its Transaction
+                    # must STAY 'credit' (still genuinely, partially owed) —
+                    # but the covered amount needs to persist so
+                    # _get_customer_debt_data reports the TRUE remainder next
+                    # time, not the full original amount again. F() keeps
+                    # this safe under concurrent partial payments (never
+                    # overwrites with a stale read).
+                    BarTabEntry.objects.filter(
+                        tab__id__in=settled_tab_ids,
+                        transaction=txn,
+                        is_paid=False,
+                    ).update(amount_paid=F('amount_paid') + Decimal(str(covered)))
     except Exception:
         pass
 

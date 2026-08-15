@@ -10926,6 +10926,169 @@ class PaidExceedsCreditBugFixTest(TestCase):
         self.assertEqual(data['unpaid_transactions'], [])
 
 
+class TabLinkedIsPaidAuthoritativeTest(TestCase):
+    """2026-08-15, same day as the was_credit fix — second, distinct bug in
+    the same area, found from Roy's own live data (Monsoon Inn): a
+    tab-linked transaction with BarTabEntry.is_paid=False — the direct,
+    ground-truth "nobody has settled this yet" flag — was STILL showing as
+    "All paid" on the debt tracker. Root cause: the FIFO-against-cumulative-
+    payment-total walk assumed every payment ever recorded lines up in date
+    order against the oldest debts; once that assumption breaks (a lump
+    payment covering more than what's strictly "next" in the queue), the
+    cumulative math concludes an item is covered even though nobody actually
+    settled THAT item. Fix: BarTabEntry.is_paid is now authoritative for any
+    tab-linked transaction — a tab can only reach SETTLED with an
+    is_paid=False entry via a genuine Geuza Deni conversion (confirmed by
+    reading _convert_tab_to_debt_core: it only force-sets payment_method=
+    'credit' on still-unpaid entries; an ordinary paid-in-full tab always
+    clears every entry before it can become SETTLED at all), so this is a
+    100% reliable signal, unlike tab.customer_id (the wrong signal the
+    retired backfill_was_credit command used)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='IsPaid Authoritative Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='IPA-01', unit='Pcs', selling_price=Decimal('80'), cost_price=Decimal('40'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+
+    def _debt_converted_entry(self, amount, date_, is_paid=False):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=amount, payment_method='credit', recipient='Roy', date=date_,
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=amount, is_paid=is_paid,
+        )
+        if is_paid:
+            txn.payment_method = 'mpesa'
+            txn.save(update_fields=['payment_method'])
+        return txn, entry
+
+    def test_reproduces_roys_exact_live_scenario(self):
+        """A run of earlier, resolved tab-linked entries plus real payments
+        that (by pure cumulative arithmetic) more than cover everything up
+        to and including two still-genuinely-unpaid entries dated later —
+        those two must still show as owed, not silently absorbed."""
+        from core.debt_views import _get_customer_debt_data
+
+        # Several earlier debt-converted-and-genuinely-resolved entries.
+        self._debt_converted_entry(Decimal('80'), date(2026, 7, 31), is_paid=True)
+        self._debt_converted_entry(Decimal('80'), date(2026, 8, 1), is_paid=True)
+        self._debt_converted_entry(Decimal('160'), date(2026, 8, 1), is_paid=True)
+        # A large lump payment recorded via the debt tracker, dated after
+        # those resolved — its own cumulative total comfortably exceeds
+        # everything before AND after it in the naive walk.
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=self.customer, amount_paid=Decimal('1360'),
+            source='bar', paid_at=timezone.now(),
+        )
+        # Two REAL, still-unpaid tab-linked items, dated after the payment.
+        txn_a, entry_a = self._debt_converted_entry(Decimal('80'), date(2026, 8, 9), is_paid=False)
+        txn_b, entry_b = self._debt_converted_entry(Decimal('80'), date(2026, 8, 9), is_paid=False)
+
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(
+            data['outstanding'], 160.0,
+            "the exact reported bug — the two genuinely-unpaid items must show as owed "
+            "regardless of how the cumulative payment total works out",
+        )
+        unpaid_txn_ids = {e['txn'].id for e in data['unpaid_transactions']}
+        self.assertEqual(unpaid_txn_ids, {txn_a.id, txn_b.id})
+
+    def test_resolved_tab_linked_entry_never_counts_as_outstanding(self):
+        from core.debt_views import _get_customer_debt_data
+        self._debt_converted_entry(Decimal('80'), date(2026, 8, 1), is_paid=True)
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['outstanding'], 0.0)
+        self.assertEqual(data['unpaid_transactions'], [])
+
+    def test_unpaid_tab_linked_entry_counts_fully_regardless_of_payment_history(self):
+        """Deliberately no CustomerDebtPayment recorded at all — is_paid is
+        the sole source of truth for a tab-linked transaction, no payment
+        total needed to determine it's still owed."""
+        from core.debt_views import _get_customer_debt_data
+        txn, _entry = self._debt_converted_entry(Decimal('80'), date(2026, 8, 9), is_paid=False)
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['outstanding'], 80.0)
+        self.assertEqual(len(data['unpaid_transactions']), 1)
+        self.assertEqual(data['unpaid_transactions'][0]['txn'].id, txn.id)
+
+    def test_mixed_tab_and_non_tab_debt_both_counted(self):
+        """A customer with BOTH a genuine unpaid tab-linked debt AND a
+        separate, tab-less direct credit sale — both must show as owed."""
+        from core.debt_views import _get_customer_debt_data
+        self._debt_converted_entry(Decimal('80'), date(2026, 8, 9), is_paid=False)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='credit', recipient='Roy',
+            date=date(2026, 8, 10),
+        )
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['outstanding'], 130.0)
+        self.assertEqual(len(data['unpaid_transactions']), 2)
+
+    def test_paying_off_a_tab_linked_entry_never_double_counts_against_non_tab_debt(self):
+        """2026-08-15, fourth fix same day: a debt payment that fully covers
+        a tab-linked entry (via _do_settle_debt_payment's FIFO — same amount
+        as the entry, so is_paid flips True and amount_paid=entry.amount)
+        must NOT also be treated as available money to reduce a SEPARATE,
+        unrelated non-tab transaction's own outstanding amount. Found while
+        fixing the Return-reversal regression: an earlier draft reserved
+        nothing away from the shared total_paid pool before applying it to
+        the non-tab walk, so the same 80 KES that paid off the tab-linked
+        entry ALSO silently subtracted 80 from an unrelated 100 KES non-tab
+        debt (understating it to 20)."""
+        from core.debt_views import _get_customer_debt_data, _do_settle_debt_payment
+        self._debt_converted_entry(Decimal('80'), date(2026, 8, 1), is_paid=False)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Roy',
+            date=date(2026, 8, 2),
+        )
+        data_before = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data_before['outstanding'], 180.0)
+
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('80'), 'mpesa', 'bar')
+
+        data_after = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(
+            data_after['outstanding'], 100.0,
+            'the tab-linked entry is paid off, the unrelated 100 non-tab debt must '
+            'stay fully owed — not silently reduced by the same payment twice',
+        )
+        self.assertEqual(len(data_after['unpaid_transactions']), 1)
+        self.assertEqual(data_after['unpaid_transactions'][0]['amount'], 100.0)
+
+    def test_ordinary_settled_tab_never_appears_at_all(self):
+        """A tab that was NEVER debt-converted (plain BarTab.customer=None,
+        settled normally) doesn't even reach credit_qs — recipient stays
+        set from tab creation, but payment_method already flipped off
+        'credit' at ordinary settle time and was_credit is never stamped
+        for it (see Transaction.save()'s own tab-status check)."""
+        from core.debt_views import _get_customer_debt_data
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=None,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='mpesa', recipient='Roy',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('80'), is_paid=True,
+        )
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(data['outstanding'], 0.0)
+        self.assertEqual(data['total_credit'], 0.0)
+
+
 class TickEntryDebtRedirectTest(TestCase):
     """2026-08-15 fix (Roy, Monsoon Inn) — Fix A: tick_entry() (the per-item
     checkmark, distinct from settle_tab's "Lipa Yote") had the SAME gap
@@ -11228,18 +11391,27 @@ class RevertBadWasCreditBackfillTest(TestCase):
         self.assertFalse(txn.was_credit)
         self.assertIn('Reverted', out.getvalue())
 
-    def test_reverting_makes_the_debt_tracker_correct_again(self):
-        """End-to-end: the exact live report shape — after revert, an
-        ordinary settled tab's item must NOT appear as outstanding debt."""
+    def test_reverting_clears_the_field_even_though_a_second_fix_also_protects_outstanding(self):
+        """The debt tracker's own outstanding computation was independently
+        hardened the same day (is_paid is now authoritative for a tab-linked
+        transaction, see _get_customer_debt_data) — an is_paid=True entry is
+        correctly excluded regardless of was_credit, so 'outstanding' reads
+        0.0 even BEFORE this revert runs. This test locks in what the revert
+        command itself is actually responsible for: clearing the was_credit
+        field, which still matters on its own (e.g. for a tab-less direct
+        credit sale, where no is_paid flag exists to fall back on)."""
         from io import StringIO
         from django.core.management import call_command
         from core.debt_views import _get_customer_debt_data
 
-        self._ordinary_settled_tab_txn()
+        txn = self._ordinary_settled_tab_txn()
         data_before = _get_customer_debt_data(self.customer, self.biz)
-        self.assertEqual(data_before['outstanding'], 80.0, 'the bug: ordinary paid tab showing as owed')
+        self.assertEqual(data_before['outstanding'], 0.0, 'is_paid=True already protects this independently')
+        self.assertTrue(txn.was_credit)
 
         call_command('revert_bad_was_credit_backfill', stdout=StringIO())
+        txn.refresh_from_db()
+        self.assertFalse(txn.was_credit)
         data_after = _get_customer_debt_data(self.customer, self.biz)
         self.assertEqual(data_after['outstanding'], 0.0)
 
@@ -23089,8 +23261,14 @@ class AuditDebtLedgerIntegrityTest(TestCase):
         self.assertIn(f'Transaction #{txn.id}', output)
         self.assertIn('is_paid=True', output)
         self.assertIn("still payment_method='credit'", output)
-        # The itemized customer breakdown must also surface it directly.
-        self.assertIn('outstanding KES 80', output)
+        # 2026-08-15 (same-day, third fix): the is_paid-authoritative rewrite
+        # of _get_customer_debt_data() self-heals this exact finding-1
+        # category at the OUTSTANDING-figure level — is_paid=True is now
+        # authoritative for a tab-linked entry regardless of the underlying
+        # Transaction's own (still-stuck) payment_method, so the itemized
+        # breakdown correctly shows nothing owed even though the raw
+        # inconsistency this finding flags is real and still worth a look.
+        self.assertIn('outstanding KES 0', output)
 
     def test_finding_2_settled_tab_stuck_with_no_customer(self):
         tab = BarTab.objects.create(

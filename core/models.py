@@ -4909,6 +4909,14 @@ class BarTabEntry(models.Model):
     description    = models.CharField(max_length=80)
     amount         = models.DecimalField(max_digits=10, decimal_places=2)
     is_paid        = models.BooleanField(default=False)
+    amount_paid    = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    # ↑ 2026-08-15 — a debt-converted tab entry can be paid PARTIALLY (see
+    # settle_tab's own amount= param / _do_settle_debt_payment's FIFO walk).
+    # is_paid alone can't express "KES 200 of KES 480 covered, 280 still
+    # owed" — this tracks that remainder so _get_customer_debt_data can
+    # correctly report the TRUE outstanding amount for a still-unpaid
+    # (is_paid=False) entry, instead of assuming the full original amount
+    # is owed just because is_paid hasn't flipped to True yet.
     paid_at        = models.DateTimeField(null=True, blank=True)
     payment_method = models.CharField(max_length=10, blank=True)
     settled_by     = models.ForeignKey(
