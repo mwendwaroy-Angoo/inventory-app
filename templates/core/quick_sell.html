@@ -1385,9 +1385,21 @@
         <option value="">— Chagua item —</option>
         {% for item in items %}
         {% if not item.is_keg and not item.is_produce %}
-        <option value="{{ item.id }}" data-unit="{{ item.unit }}" data-price="{{ item.selling_price|default:0 }}">{{ item.description }} ({{ item.unit }})</option>
+        <option value="{{ item.id }}" data-unit="{{ item.unit }}" data-price="{{ item.selling_price|default:0 }}" data-has-presets="{{ item.has_presets|yesno:'true,false' }}">{{ item.description }} ({{ item.unit }})</option>
         {% endif %}
         {% endfor %}
+      </select>
+    </div>
+    <!-- 2026-08-16 live request (Roy): an item sold via split presets (Robo/
+         Nusu/Tatu Robo/Tot etc.) needs those SAME presets offered here, not
+         just a raw whole-item quantity — otherwise staff has to guess a
+         fractional quantity and the full-bottle price by hand. Reuses the
+         existing /stock/item/<id>/presets/ endpoint the ordinary tile-tap
+         flow already calls. -->
+    <div class="mb-3" id="ot-preset-wrap" style="display:none;">
+      <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:4px;">Kiasi Alichokichukua</label>
+      <select id="ot-preset-select" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px; font-size:0.9rem;">
+        <option value="">— Chagua kiasi —</option>
       </select>
     </div>
     <div class="row g-2 mb-3">
@@ -4164,6 +4176,8 @@ window.openOwnerTookModal = function () {
   document.getElementById('ot-note').value = '';
   document.getElementById('ot-item-select').value = '';
   document.getElementById('ot-unit-label').textContent = '';
+  document.getElementById('ot-preset-wrap').style.display = 'none';
+  document.getElementById('ot-preset-select').innerHTML = '<option value="">— Chagua kiasi —</option>';
   overlay.style.display = 'flex';
 };
 
@@ -4184,12 +4198,58 @@ function _otRecalcPrice() {
   document.getElementById('ot-price').value = (unitPrice * qty) ? (unitPrice * qty).toFixed(0) : '';
 }
 
+// 2026-08-16 live request (Roy): an item sold via split presets (Robo/Nusu/
+// Tatu Robo/Tot etc.) had no way to record the owner taking JUST a preset's
+// worth — only a raw whole-item quantity. Reuses the same /stock/item/<id>/
+// presets/ endpoint the ordinary tile-tap flow already calls; picking a
+// preset auto-fills Idadi/Bei from it (still editable, matching this
+// modal's existing convention), same as every preset-priced sale elsewhere.
 document.getElementById('ot-item-select').addEventListener('change', function () {
   var opt = this.options[this.selectedIndex];
   var unit = opt ? (opt.getAttribute('data-unit') || '') : '';
   document.getElementById('ot-unit-label').textContent = unit ? '(' + unit + ')' : '';
+  var presetWrap = document.getElementById('ot-preset-wrap');
+  var presetSel = document.getElementById('ot-preset-select');
+  presetSel.innerHTML = '<option value="">— Chagua kiasi —</option>';
+  var hasPresets = opt ? opt.getAttribute('data-has-presets') === 'true' : false;
+  if (!hasPresets || !this.value) {
+    presetWrap.style.display = 'none';
+    _otRecalcPrice();
+    return;
+  }
+  fetch('/stock/item/' + this.value + '/presets/')
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.presets || !d.presets.length) {
+        presetWrap.style.display = 'none';
+        _otRecalcPrice();
+        return;
+      }
+      d.presets.forEach(function (p) {
+        var o = document.createElement('option');
+        o.value = String(p.id);
+        o.setAttribute('data-price', p.price);
+        o.setAttribute('data-qty', p.quantity_consumed);
+        o.textContent = p.label + (p.price > 0 ? (' — KES ' + p.price.toFixed(0)) : ' — Bei Yoyote');
+        presetSel.appendChild(o);
+      });
+      presetWrap.style.display = 'block';
+    })
+    .catch(function () { presetWrap.style.display = 'none'; });
   _otRecalcPrice();
 });
+
+document.getElementById('ot-preset-select').addEventListener('change', function () {
+  var opt = this.options[this.selectedIndex];
+  if (!opt || !opt.value) return;
+  var qty = parseFloat(opt.getAttribute('data-qty') || '0');
+  var price = parseFloat(opt.getAttribute('data-price') || '0');
+  document.getElementById('ot-qty').value = qty || '';
+  if (price > 0) {
+    document.getElementById('ot-price').value = price.toFixed(0);
+  }
+});
+
 document.getElementById('ot-qty').addEventListener('input', _otRecalcPrice);
 
 window.submitOwnerTook = function () {

@@ -335,6 +335,7 @@ from core.owner_consumption_views import (
     void_owner_consumption,
     settle_owner_consumption,
     propose_transfer_to_owner,
+    propose_transfer_to_owner_partial,
     propose_transfer_from_owner,
     respond_owner_transfer,
 )
@@ -424,6 +425,7 @@ urlpatterns = [
     path("stock/owner-consumption/<int:txn_id>/void/", void_owner_consumption, name="void_owner_consumption"),
     path("stock/owner-consumption/<int:txn_id>/settle/", settle_owner_consumption, name="settle_owner_consumption"),
     path("stock/owner-consumption/transfer/to-owner/", propose_transfer_to_owner, name="propose_transfer_to_owner"),
+    path("stock/owner-consumption/transfer/to-owner/partial/", propose_transfer_to_owner_partial, name="propose_transfer_to_owner_partial"),
     path("stock/owner-consumption/transfer/from-owner/", propose_transfer_from_owner, name="propose_transfer_from_owner"),
     path("stock/owner-consumption/transfer/<int:request_id>/respond/", respond_owner_transfer, name="respond_owner_transfer"),
     path("stock/reset-sales/", reset_sales_intro, name="reset_sales_intro"),

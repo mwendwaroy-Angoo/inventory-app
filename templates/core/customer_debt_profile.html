@@ -576,6 +576,14 @@
                                    color:#e87c96;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;margin-right:0.3rem;">
                             🏠 {% trans 'Mmiliki' %}
                         </button>
+                        <!-- 2026-08-16 live request (Roy) — "customer acquisition of an
+                             item and partial payment is going to the owner": customer
+                             pays PART now, only the remainder is proposed to the owner. -->
+                        <button onclick="window.ocDebtProposeToOwnerPartial({{ entry.txn.id }}, {{ entry.amount }}, '{{ entry.txn.item.description|escapejs }}', this)"
+                            style="background:rgba(232,124,150,0.06);border:1px solid rgba(232,124,150,0.25);border-radius:6px;
+                                   color:#e87c96;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;margin-right:0.3rem;">
+                            ✂️🏠 {% trans 'Sehemu' %}
+                        </button>
                         {% endif %}
                         <button onclick="openWriteOffModal({{ entry.txn.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
                             style="background:rgba(192,57,90,0.06);border:1px solid rgba(192,57,90,0.25);border-radius:6px;
@@ -1177,6 +1185,47 @@ window.ocDebtProposeToOwner = function (txnId, btn) {
             btn.disabled = false;
             if (d.ok) {
                 alert(d.message || 'Ombi limetumwa kwa mmiliki.');
+            } else {
+                alert(d.error || 'Imeshindikana');
+            }
+        })
+        .catch(function () { alert('Hitilafu ya mtandao'); btn.disabled = false; });
+};
+
+// 2026-08-16 live request (Roy) — "customer acquisition of an item and
+// partial payment is going to the owner": ask how much the customer is
+// paying themselves right now (cash/mpesa), then the REMAINDER is what
+// gets proposed to the owner — same accept/reject step as the whole-item
+// version above, only the amount differs.
+window.ocDebtProposeToOwnerPartial = function (txnId, totalAmount, itemName, btn) {
+    var paidStr = prompt('Mteja amelipa kiasi gani mwenyewe sasa hivi kwa "' + itemName + '" (jumla KES ' + totalAmount + ')?');
+    if (paidStr === null) return;
+    var paid = parseFloat(paidStr);
+    if (isNaN(paid) || paid <= 0 || paid >= totalAmount) {
+        alert('Kiasi lazima kiwe kati ya 0 na KES ' + totalAmount + '.');
+        return;
+    }
+    var method = prompt('Njia ya malipo ya sehemu hii — andika "cash" au "mpesa":', 'cash');
+    if (method === null) return;
+    method = method.trim().toLowerCase();
+    if (method !== 'cash' && method !== 'mpesa') {
+        alert('Njia ya malipo lazima iwe cash au mpesa.');
+        return;
+    }
+    btn.disabled = true;
+    var body = new URLSearchParams({
+        txn_id: String(txnId),
+        paid_amount: String(paid),
+        paid_method: method,
+        csrfmiddlewaretoken: document.querySelector('[name=csrfmiddlewaretoken]').value,
+    });
+    fetch('/stock/owner-consumption/transfer/to-owner/partial/', { method: 'POST', body: body, credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            btn.disabled = false;
+            if (d.ok) {
+                alert(d.message || 'Sehemu iliyobaki imetumwa kwa mmiliki.');
+                window.location.reload();
             } else {
                 alert(d.error || 'Imeshindikana');
             }

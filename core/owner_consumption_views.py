@@ -405,6 +405,58 @@ def propose_transfer_to_owner(request):
 
 @login_required
 @require_POST
+def propose_transfer_to_owner_partial(request):
+    """2026-08-16 live request (Roy): customer pays PART of an item/debt
+    themselves right now, remainder goes to the owner's ledger — needs his
+    accept before anything moves. Same permission tier as the whole-item
+    version (any staff with an open shift; owner/manager exempt)."""
+    up = _get_up(request)
+    if not up or not up.business:
+        return JsonResponse({'ok': False, 'error': 'Not authenticated.'}, status=403)
+    if not up.is_owner_or_manager:
+        shift = get_active_staff_shift(up, up.business)
+        if shift is False:
+            return JsonResponse({'ok': False, 'error': 'Hakuna shift iliyofunguliwa. Fungua shift kwanza.'}, status=403)
+
+    txn_id = (request.POST.get('txn_id') or '').strip()
+    paid_method = (request.POST.get('paid_method') or '').strip()
+    note = (request.POST.get('note') or '').strip()
+    if not txn_id:
+        return JsonResponse({'ok': False, 'error': 'Taja transaction.'}, status=400)
+    try:
+        paid_amount = Decimal(str(request.POST.get('paid_amount') or '0'))
+    except InvalidOperation:
+        return JsonResponse({'ok': False, 'error': 'Kiasi si sahihi.'}, status=400)
+
+    from .models import OwnerConsumptionTransferRequest as _OCTR
+    try:
+        req = _OCTR.propose_to_owner_partial_locked(
+            txn_id, up.business, paid_amount, paid_method, request.user, note=note,
+        )
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    actor_name = request.user.get_full_name() or request.user.username
+    remainder = float(req.source_txn.sale_amount or 0)
+    item_name = req.source_txn.item.description if req.source_txn.item_id else ''
+    msg = (
+        f"{actor_name} anapendekeza kwamba {req.source_txn.recipient} — {item_name} "
+        f"— alishalipa sehemu (KES {float(paid_amount):,.0f}), na iliyobaki "
+        f"(KES {remainder:,.0f}) ni ya mmiliki. Inasubiri uamuzi wako."
+    )
+    _notify_owner_consumption_change(
+        up.business, request.user, '🏠 Ombi — Sehemu Hamishia kwa Mmiliki', msg,
+        '/stock/owner-consumption/list/',
+    )
+    return JsonResponse({
+        'ok': True,
+        'message': f'Amelipa KES {float(paid_amount):,.0f} — KES {remainder:,.0f} iliyobaki imetumwa kwa mmiliki.',
+        'request_id': req.id,
+    })
+
+
+@login_required
+@require_POST
 def propose_transfer_from_owner(request):
     """Owner hands an item (or whole outstanding bill) to a customer
     willing to cover it — creates a PENDING request per item, batched for

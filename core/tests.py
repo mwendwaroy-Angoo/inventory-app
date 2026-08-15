@@ -29804,6 +29804,177 @@ class OwnerConsumptionTransferTest(TestCase):
         self.assertFalse(resp.json()['ok'])
 
 
+class OwnerConsumptionPartialTransferTest(TestCase):
+    """2026-08-16 live request (Roy): "customer acquisition of an item and
+    partial payment is going to the owner" — a customer pays PART of a
+    credit item/debt themselves, right now, and only the REMAINDER is
+    proposed to the owner (still needs his accept). Mirrors the customer-
+    to-customer split-transfer feature's paid_amount>0 shape, but for
+    both a plain non-tab debt AND a tab-linked debt-converted entry."""
+
+    def setUp(self):
+        self.biz, self.store, self.staff, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'OCPT Biz'
+        )
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.owner = User.objects.create_user(username='ocpt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+
+    def _make_debt_txn(self, customer_name='Mary', amount='500'):
+        if not Customer.objects.filter(business=self.biz, name=customer_name).exists():
+            Customer.objects.create(business=self.biz, name=customer_name, credit_approved=True)
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal(amount), payment_method='credit', recipient=customer_name,
+            date=timezone.localdate(),
+        )
+
+    def test_non_tab_partial_transfer_splits_correctly(self):
+        txn = self._make_debt_txn('Mary', '500')
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/partial/', {
+            'txn_id': txn.id, 'paid_amount': '200', 'paid_method': 'mpesa',
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'mpesa')
+        self.assertEqual(float(txn.sale_amount), 200.0)
+        self.assertTrue(txn.was_credit)  # genuinely paid off, must self-heal from the debt tracker
+
+        from core.models import OwnerConsumptionTransferRequest
+        req = OwnerConsumptionTransferRequest.objects.get(id=d['request_id'])
+        self.assertEqual(req.status, 'PENDING')
+        self.assertEqual(float(req.source_txn.sale_amount), 300.0)
+        self.assertEqual(req.source_txn.payment_method, 'credit')
+        self.assertEqual(req.source_txn.recipient, 'Mary')
+
+        from core.debt_views import _get_customer_debt_data
+        customer = Customer.objects.get(business=self.biz, name='Mary')
+        data = _get_customer_debt_data(customer, self.biz)
+        # 300 still shows as owed by Mary until the owner accepts.
+        self.assertEqual(data['outstanding'], 300.0)
+
+    def test_accepting_partial_transfer_reclassifies_only_the_remainder(self):
+        txn = self._make_debt_txn('Mary', '500')
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/partial/', {
+            'txn_id': txn.id, 'paid_amount': '200', 'paid_method': 'cash',
+        })
+        req_id = resp.json()['request_id']
+
+        self.client.force_login(self.owner)
+        resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'accept'})
+        self.assertTrue(resp2.json()['ok'], resp2.json())
+
+        from core.models import OwnerConsumptionTransferRequest
+        req = OwnerConsumptionTransferRequest.objects.get(id=req_id)
+        remainder_txn = req.source_txn
+        remainder_txn.refresh_from_db()
+        self.assertEqual(remainder_txn.type, 'OwnerConsumption')
+        self.assertEqual(remainder_txn.recipient, 'Mmiliki')
+
+        from core.debt_views import _get_customer_debt_data
+        customer = Customer.objects.get(business=self.biz, name='Mary')
+        data = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(data['outstanding'], 0.0)  # 200 paid + 300 now the owner's
+
+    def test_rejecting_partial_transfer_leaves_remainder_as_ordinary_debt(self):
+        txn = self._make_debt_txn('Mary', '500')
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/partial/', {
+            'txn_id': txn.id, 'paid_amount': '200', 'paid_method': 'cash',
+        })
+        req_id = resp.json()['request_id']
+
+        self.client.force_login(self.owner)
+        resp2 = self.client.post(f'/stock/owner-consumption/transfer/{req_id}/respond/', {'action': 'reject'})
+        self.assertTrue(resp2.json()['ok'], resp2.json())
+
+        from core.models import OwnerConsumptionTransferRequest
+        req = OwnerConsumptionTransferRequest.objects.get(id=req_id)
+        req.source_txn.refresh_from_db()
+        self.assertEqual(req.source_txn.type, 'Issue')
+        self.assertEqual(req.source_txn.payment_method, 'credit')
+
+        from core.debt_views import _get_customer_debt_data
+        customer = Customer.objects.get(business=self.biz, name='Mary')
+        data = _get_customer_debt_data(customer, self.biz)
+        self.assertEqual(data['outstanding'], 300.0)  # still owed by Mary, nothing moved
+
+    def test_paid_amount_must_be_less_than_total(self):
+        txn = self._make_debt_txn('Mary', '500')
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/partial/', {
+            'txn_id': txn.id, 'paid_amount': '500', 'paid_method': 'cash',
+        })
+        self.assertFalse(resp.json()['ok'])
+        resp2 = self.client.post('/stock/owner-consumption/transfer/to-owner/partial/', {
+            'txn_id': txn.id, 'paid_amount': '0', 'paid_method': 'cash',
+        })
+        self.assertFalse(resp2.json()['ok'])
+
+    def test_tab_linked_partial_transfer(self):
+        """Same feature, but starting from a debt-converted tab item (an
+        BarTabEntry) instead of a plain non-tab credit sale — splits via
+        BarTabEntry.split_paid_unpaid_locked, remainder stays on the SAME
+        tab (an ordinary unpaid entry) until the owner accepts."""
+        customer = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('480'), payment_method='credit', recipient='Roy',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=Decimal('480'),
+            is_paid=False,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/partial/', {
+            'txn_id': txn.id, 'paid_amount': '180', 'paid_method': 'mpesa',
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(float(entry.amount), 180.0)
+        entry.transaction.refresh_from_db()
+        self.assertEqual(entry.transaction.payment_method, 'mpesa')
+
+        from core.models import OwnerConsumptionTransferRequest
+        req = OwnerConsumptionTransferRequest.objects.get(id=d['request_id'])
+        remainder_entry = req.source_txn.tab_entry
+        self.assertEqual(remainder_entry.tab_id, tab.id)  # stays on the SAME tab
+        self.assertFalse(remainder_entry.is_paid)
+        self.assertEqual(float(req.source_txn.sale_amount), 300.0)
+
+        self.client.force_login(self.owner)
+        self.client.post(f'/stock/owner-consumption/transfer/{req.id}/respond/', {'action': 'accept'})
+        remainder_entry.refresh_from_db()
+        self.assertTrue(remainder_entry.is_paid)  # closed out — moved to the owner
+        remainder_entry.transaction.refresh_from_db()
+        self.assertEqual(remainder_entry.transaction.type, 'OwnerConsumption')
+
+    def test_staff_needs_open_shift(self):
+        txn = self._make_debt_txn('Mary', '500')
+        no_shift_staff = User.objects.create_user(username='ocpt_noshift', password='x')
+        UserProfile.objects.create(user=no_shift_staff, business=self.biz, role='staff')
+        self.client.force_login(no_shift_staff)
+        resp = self.client.post('/stock/owner-consumption/transfer/to-owner/partial/', {
+            'txn_id': txn.id, 'paid_amount': '200', 'paid_method': 'cash',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+
 class CustomerLinkAsOwnerTest(TestCase):
     """2026-08-13 live request (Roy) — "the system can be able to know that
     a certain name in either orders/tabs/debt tracker is the owner" (e.g.

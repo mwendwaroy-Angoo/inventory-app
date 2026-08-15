@@ -1562,6 +1562,70 @@ class Transaction(models.Model):
             return txn, new_txn
 
     @classmethod
+    def split_credit_paid_unpaid_locked(cls, txn_id, business, paid_amount, paid_method, staff_user=None):
+        """2026-08-16 live request (Roy): "customer acquisition of an item
+        and partial payment is going to the owner" — a customer buys
+        something already on credit (no tab, e.g. a plain Quick Sell
+        "Deni"), pays PART of it themselves right now, and the OWNER
+        agrees to cover the rest (see OwnerConsumptionTransferRequest.
+        propose_to_owner_partial_locked, the caller that wires this in).
+
+        The non-tab mirror of BarTabEntry.split_paid_unpaid_locked's shape:
+        reduces the original Transaction in place to paid_amount (payment_
+        method flips to paid_method — a REAL payment, right now), and
+        creates a NEW sibling transaction for the remainder, still tagged
+        payment_method='credit' under the SAME recipient — an ordinary,
+        still-owed debt, exactly like the tab-linked case's remainder entry
+        stays on the source tab until a transfer request is accepted. The
+        caller then proposes THAT remainder transaction to the owner via
+        the normal propose_to_owner_locked path — rejecting it needs zero
+        reversal, since the money never left the customer's name until
+        accepted.
+
+        Only ever operates on a genuinely non-tab credit transaction (no
+        tab_entry) — a tab-linked one must go through split_paid_unpaid_
+        locked instead, which already handles the SETTLED-tab (debt-
+        converted) case correctly; this method deliberately rejects one.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            txn = cls.objects.select_for_update().get(pk=txn_id, business=business)
+            try:
+                has_tab_entry = txn.tab_entry is not None
+            except Exception:
+                has_tab_entry = False
+            if txn.type != 'Issue' or has_tab_entry:
+                raise ValueError('Muamala huu hauwezi kugawanywa hivi — ni wa tab, si deni la moja kwa moja.')
+            if txn.payment_method != 'credit':
+                raise ValueError('Muamala huu si deni.')
+            if paid_method not in ('cash', 'mpesa'):
+                raise ValueError('Njia ya malipo si sahihi.')
+
+            original_amount = float(txn.revenue())
+            paid_amount = float(paid_amount)
+            if paid_amount <= 0 or paid_amount >= original_amount:
+                raise ValueError('Kiasi cha kulipa lazima kiwe kati ya 0 na jumla ya deni.')
+
+            remaining = round(original_amount - paid_amount, 2)
+            recipient = txn.recipient
+            txn.sale_amount = Decimal(str(round(paid_amount, 2)))
+            txn.payment_method = paid_method
+            txn.save(update_fields=['sale_amount', 'payment_method'])
+
+            new_txn = cls.objects.create(
+                item=txn.item, business=txn.business, type='Issue',
+                qty=Decimal('0'), sale_amount=Decimal(str(remaining)),
+                payment_method='credit', recipient=recipient,
+                invoice_no=txn.invoice_no,
+                recorded_by=staff_user or txn.recorded_by,
+                date=txn.date, created_at=txn.created_at,
+                keg_barrel_id=txn.keg_barrel_id,
+                produce_bunch_id=txn.produce_bunch_id,
+                kitchen_batch_id=txn.kitchen_batch_id,
+            )
+            return txn, new_txn
+
+    @classmethod
     def apply_checkout_partial_credit_locked(cls, txn_ids, business, amount_paid, recipient, staff_user=None):
         """UBA P0-A — Kibanda split-tender-at-checkout: one direct sale,
         customer pays only `amount_paid` (already recorded as cash/mpesa on
@@ -5757,6 +5821,89 @@ class OwnerConsumptionTransferRequest(models.Model):
                 source_txn=txn, requested_by=requested_by, note=note[:80], batch_id=batch_id,
             ))
         return requests
+
+    @classmethod
+    def propose_to_owner_partial_locked(cls, txn_id, business, paid_amount, paid_method, requested_by, note=''):
+        """2026-08-16 live request (Roy): "customer acquisition of an item
+        and partial payment is going to the owner" — the customer pays
+        PART of a credit item/debt themselves, right now, and only the
+        REMAINDER is proposed to the owner (still needs his accept, same
+        as every other transfer). Mirrors the customer-to-customer split-
+        transfer feature's own paid_amount>0 shape (BarTabEntry.split_
+        and_transfer_locked), but the destination is the owner's own
+        "Mmiliki Alichukua" ledger instead of another customer's tab.
+
+        Works for BOTH a tab-linked transaction (splits via BarTabEntry.
+        split_paid_unpaid_locked — the remainder stays an ordinary unpaid
+        entry on the SAME tab until accepted, exactly like the customer-
+        to-customer feature) and a plain non-tab direct credit sale
+        (splits via Transaction.split_credit_paid_unpaid_locked). Either
+        way, the customer's own paid portion is a REAL payment recorded
+        immediately; only the remainder becomes a pending proposal —
+        rejecting it needs zero reversal, since the remainder never left
+        the customer's name until accepted.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            try:
+                txn = Transaction.objects.get(
+                    id=txn_id, business=business, type='Issue', payment_method='credit',
+                )
+            except Transaction.DoesNotExist:
+                raise ValueError('Transaction haipatikani au si deni linaloweza kuhamishwa.')
+            try:
+                entry = txn.tab_entry
+            except Exception:
+                entry = None
+
+            if paid_method not in ('cash', 'mpesa'):
+                raise ValueError('Njia ya malipo si sahihi.')
+
+            if entry is not None:
+                entry = BarTabEntry.objects.select_for_update().select_related('tab').get(id=entry.id)
+                if entry.is_paid:
+                    raise ValueError('Kiingilio hiki tayari kimelipwa.')
+                if entry.tab.status not in ('OPEN', 'SETTLED'):
+                    raise ValueError('Tab ya kiingilio hiki haiko wazi wala haijawa deni.')
+                paid_amount_dec = Decimal(str(paid_amount))
+                if paid_amount_dec <= 0 or paid_amount_dec >= entry.amount:
+                    raise ValueError('Kiasi cha kulipa lazima kiwe kati ya 0 na jumla ya kiingilio.')
+                new_entry = BarTabEntry.split_paid_unpaid_locked(entry, paid_amount_dec, paid_method, requested_by)
+                new_txn_id = new_entry.transaction_id
+            else:
+                _orig, new_txn = Transaction.split_credit_paid_unpaid_locked(
+                    txn.id, business, paid_amount, paid_method, staff_user=requested_by,
+                )
+                new_txn_id = new_txn.id
+                # 2026-08-16: unlike the tab-linked branch (where is_paid is
+                # 100% authoritative for outstanding, no total_paid pool
+                # involved at all), a non-tab transaction's outstanding is
+                # computed from total_credit MINUS total_paid — and
+                # total_credit deliberately never shrinks (it includes any
+                # transaction that ever transitioned off 'credit', via
+                # was_credit — see _get_customer_debt_data's own 2026-08-15
+                # fix). Without a matching CustomerDebtPayment recorded here,
+                # the now-paid-off original portion would still count toward
+                # total_credit with nothing offsetting it, overstating what
+                # the customer still owes by exactly the amount they already
+                # paid. Mirrors _do_settle_debt_payment's own record-then-
+                # sync shape, just for a single specific transaction instead
+                # of a FIFO walk across several.
+                customer = Customer.objects.filter(
+                    business=business, name__iexact=(txn.recipient or ''),
+                ).first()
+                if customer is not None:
+                    is_kitchen = bool(txn.item and txn.item.store and txn.item.store.is_kitchen)
+                    CustomerDebtPayment.objects.create(
+                        customer=customer, business=business,
+                        amount_paid=Decimal(str(paid_amount)), payment_method=paid_method,
+                        source=('kitchen' if is_kitchen else 'bar'),
+                        notes='Malipo ya sehemu — kilichobaki kimehamishiwa mmiliki',
+                        recorded_by=requested_by,
+                    )
+
+            reqs = cls.propose_to_owner_locked([new_txn_id], business, requested_by, note=note)
+            return reqs[0]
 
     @classmethod
     def propose_from_owner_locked(cls, txn_ids, business, dest_customer_name, requested_by, note=''):
