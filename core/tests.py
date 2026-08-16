@@ -13110,6 +13110,96 @@ class KitchenBatchSplitByDateTest(TestCase):
         self.assertEqual(batches[1].cost_total, Decimal('1500'))
         self.assertIsNone(batches[1].source_item_id)
 
+    def test_batch_opened_before_raw_link_existed_gets_a_real_error_not_a_crash(self):
+        """2026-08-16 live report (Roy): splitting Chipo crashed with a real
+        500 ("Hitilafu ya mtandao... hitilafu 500"), even after the client-
+        side error-masking fix. Reproduces the one real difference between
+        every pre-existing test and Roy's actual batch: THIS specific batch
+        was opened via the manual-cost flow BEFORE Chipo's item-level
+        raw_material_source link existed (so batch.source_qty_drawn is None
+        on it), but the item HAS the link now — split_by_date_locked's
+        `draw_qty = batch.source_qty_drawn` then passes None into
+        open_batch(), which is a real, correctly-raised ValueError there,
+        not a crash. Confirms it stays a clean 400-shaped error, never an
+        uncaught exception."""
+        self.item.raw_material_source = None
+        self.item.save(update_fields=['raw_material_source'])
+        old_batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, cost_total=Decimal('1000'),
+            received_on=self.day1.date(),
+        )
+        self.assertIsNone(old_batch.source_qty_drawn)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('500'), kitchen_batch=old_batch, date=self.day1.date(),
+        )
+        # NOW link the raw material — exactly Roy's real timeline.
+        self.item.raw_material_source = self.raw_item
+        self.item.save(update_fields=['raw_material_source'])
+
+        with self.assertRaises(ValueError):
+            KitchenBatch.split_by_date_locked(
+                old_batch.id, self.biz, [self.day2], self.owner_user,
+            )
+        # The original batch must be completely untouched by the failed
+        # attempt — no partial split, no orphaned new batch left behind
+        # (setUp's own self.batch is the +1 baseline for this item).
+        old_batch.refresh_from_db()
+        self.assertEqual(old_batch.status, 'OPEN')
+        self.assertEqual(KitchenBatch.objects.filter(item=self.item).count(), 2)
+
+    def test_split_note_never_exceeds_column_length_after_prior_correction(self):
+        """THE REAL BUG (2026-08-16 live report): KitchenBatch.note was a
+        CharField(max_length=200) that edit_kitchen_batch_target/edit_
+        raw_material_cost ALSO append onto — a batch already carrying one
+        prior correction note easily exceeds 200 chars once split_by_date_
+        locked appends its own. SQLite (this test DB) never enforces VARCHAR
+        length, so this only ever surfaced on real production Postgres as an
+        uncaught DataError → 500, exactly matching Roy's report and never
+        caught by any pre-existing test. Fixed by widening note to
+        TextField (no length limit in either database) — this test locks
+        in that a long pre-existing note plus a split note, well past the
+        old 200-char ceiling, saves cleanly."""
+        long_existing_note = (
+            'Gharama ilibadilishwa kutoka KES 1133.33 kwenda KES 1200.00 '
+            'na Roy Mwendwa — 15 Aug 2026, 14:32'
+        )
+        self.batch.note = long_existing_note
+        self.batch.save(update_fields=['note'])
+        self.assertLess(len(long_existing_note), 200)  # sanity: on its own, still fits
+
+        batches = KitchenBatch.split_by_date_locked(
+            self.batch.id, self.biz, [self.day2], self.owner_user,
+        )
+        original = batches[0]
+        original.refresh_from_db()
+        self.assertGreater(len(original.note), 200)  # the real overflow, saved successfully
+        self.assertIn(long_existing_note, original.note)
+        self.assertIn('Imegawanywa', original.note)
+
+    def test_view_reports_the_real_error_when_batch_predates_raw_link(self):
+        """Same scenario through the real HTTP view — must return a clean
+        JSON 400 with the actual Swahili message, never an uncaught 500."""
+        self.item.raw_material_source = None
+        self.item.save(update_fields=['raw_material_source'])
+        old_batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, cost_total=Decimal('1000'),
+            received_on=self.day1.date(),
+        )
+        self.item.raw_material_source = self.raw_item
+        self.item.save(update_fields=['raw_material_source'])
+
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/kitchen/batch/{old_batch.id}/split/', {
+            'cutoffs': self.day2.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertEqual(resp.status_code, 400)
+        d = resp.json()
+        self.assertFalse(d['ok'])
+        self.assertTrue(d.get('error'))
+
 
 class SplitKitchenBatchViewTest(TestCase):
     """core/kitchen_views.py::split_kitchen_batch — owner/manager-only,

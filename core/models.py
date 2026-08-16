@@ -6401,7 +6401,26 @@ class KitchenBatch(models.Model):
     )
     received_on       = models.DateField(default=timezone.localdate)
     closed_on         = models.DateTimeField(null=True, blank=True)
-    note              = models.CharField(max_length=200, blank=True)
+    # 2026-08-16 live report (Roy): "Gawanya Chipo kwa Tarehe" crashed with
+    # a real, uncaught 500 — root-caused (not just error-message-improved)
+    # to THIS field being a CharField(max_length=200) that multiple features
+    # ALL append onto over a batch's lifetime as a running audit trail
+    # (edit_kitchen_batch_target's cost-correction note, edit_raw_material_
+    # cost's retroactive-recompute note, and this session's own split_by_
+    # date_locked's split note) — a batch that's been through even one prior
+    # correction easily exceeds 200 chars once a second note is appended
+    # (measured: a realistic combined string hits ~205 chars). SQLite (this
+    # sandbox's test DB) never enforces VARCHAR length limits, so no
+    # existing automated test could have caught this — only PostgreSQL
+    # (this app's real production database, per this file's own documented
+    # tech stack) does, raising django.db.utils.DataError on save, an
+    # uncaught exception → 500. Widened to TextField (no length limit in
+    # either database) rather than a bigger-but-still-finite CharField,
+    # since this field's real, intentional job is an UNBOUNDED accumulating
+    # trail across however many corrections a batch goes through — not a
+    # short fixed-format label (unlike cost_note below, which IS a one-time,
+    # already-truncated-at-input field and needed no change).
+    note              = models.TextField(blank=True)
     recorded_by       = models.ForeignKey(
         'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='kitchen_batches_recorded',
