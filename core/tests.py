@@ -4112,6 +4112,87 @@ class CrossCounterReceiptLinkingTest(TestCase):
         bar_rcpt.refresh_from_db()
         self.assertIn(qs_tab.id, bar_rcpt.meta.get('linked_tab_ids', []))
 
+    def test_two_different_customers_sharing_a_name_are_never_merged_priority3(self):
+        """2026-08-16 live report (Roy, Monsoon Inn), confirmed via
+        diagnose_receipt: Receipt #705 ended up linked to two BarTabs
+        resolving to two DIFFERENT Customer records (both named 'Peter').
+        Priority 3's name-string fallback (used when a tab's own
+        customer_id is unresolved) must never match a candidate tab that
+        DOES have a resolved, different Customer identity."""
+        from core.tab_receipts import resolve_master_receipt
+        peter_a = Customer.objects.create(business=self.biz, name='Peter')
+        peter_b = Customer.objects.create(business=self.biz, name='Peter')
+        bar_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Peter', customer=peter_a, status='OPEN', source='bar',
+        )
+        Receipt.issue(
+            business=self.biz, lines=[{'name': 'Chrome Gin', 'qty': 1, 'subtotal': 150}],
+            payment_method='mpesa', customer_name='Peter', meta={'tab_id': bar_tab.id},
+        )
+        new_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Peter', customer=peter_b, status='OPEN', source='bar',
+        )
+        found, freshly_linked = resolve_master_receipt(self.biz, new_tab)
+        self.assertIsNone(found)
+        self.assertFalse(freshly_linked)
+
+    def test_two_different_customers_sharing_a_name_are_never_merged_priority4(self):
+        """Same live bug, the actual root-cause branch: an earlier,
+        already-SETTLED (no live tab) receipt for one 'Peter' must not be
+        silently reused for a brand-new tab belonging to a DIFFERENT
+        'Peter' just because the name string matches."""
+        from core.tab_receipts import resolve_master_receipt
+        peter_a = Customer.objects.create(business=self.biz, name='Peter')
+        peter_b = Customer.objects.create(business=self.biz, name='Peter')
+        old_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Peter', customer=peter_a, status='SETTLED',
+        )
+        Receipt.issue(
+            business=self.biz, lines=[{'name': 'Chrome Gin', 'qty': 1, 'subtotal': 150}],
+            payment_method='mpesa', customer_name='Peter', meta={'tab_id': old_tab.id},
+        )
+        new_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Peter', customer=peter_b, status='OPEN',
+        )
+        found, freshly_linked = resolve_master_receipt(self.biz, new_tab)
+        self.assertIsNone(found)
+        self.assertFalse(freshly_linked)
+
+    def test_two_anonymous_walkins_sharing_a_name_still_merge(self):
+        """Regression lock: two tabs with NO resolved Customer at all, just
+        the same typed name, is the one case that must keep merging — the
+        lowest-stakes case, since neither side is tied to any real
+        Customer/debt record yet (matches every pre-existing test in this
+        class, none of which attach a `customer=` FK)."""
+        from core.tab_receipts import resolve_master_receipt
+        bar_tab, bar_rcpt = self._make_tab_with_receipt('bar', customer_name='Anon Patron')
+        new_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Anon Patron', status='OPEN', source='kitchen',
+        )
+        found, freshly_linked = resolve_master_receipt(self.biz, new_tab)
+        self.assertEqual(found.id, bar_rcpt.id)
+        self.assertTrue(freshly_linked)
+
+    def test_same_resolved_customer_still_merges_across_counters(self):
+        """Regression lock: when BOTH tabs genuinely resolve to the SAME
+        Customer record, merging must still work exactly as before —
+        this fix only blocks a mismatch, never a real match."""
+        from core.tab_receipts import resolve_master_receipt
+        peter = Customer.objects.create(business=self.biz, name='Peter')
+        bar_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Peter', customer=peter, status='OPEN', source='bar',
+        )
+        bar_rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'XCounter Soda', 'qty': 1, 'subtotal': 100}],
+            payment_method='tab', customer_name='Peter', meta={'tab_id': bar_tab.id},
+        )
+        qs_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Peter', customer=peter, status='OPEN', source='qs',
+        )
+        found, freshly_linked = resolve_master_receipt(self.biz, qs_tab)
+        self.assertEqual(found.id, bar_rcpt.id)
+        self.assertTrue(freshly_linked)
+
 
 class NetProfitWastageDeductionTest(TestCase):
     """K8 audit (Task 1, deferred): regression-locks the current, intentional net_profit
@@ -7035,6 +7116,39 @@ class TabRenameMergeTest(TestCase):
         _tab.refresh_from_db()
         self.assertEqual(_tab.customer_name, 'Wanjiku')
         self.assertEqual(_tab.status, 'OPEN')
+
+    def test_rename_never_merges_two_tabs_belonging_to_different_customers(self):
+        """2026-08-16 — the same class of bug confirmed live in production
+        (see RenameConsolidatesReceiptAndFindableTest's sibling test for the
+        actual confirmed incident): two OPEN tabs sharing a name but tied to
+        different resolved Customer records must never be folded together —
+        that would silently move a stranger's real entries onto someone
+        else's tab."""
+        peter_a = Customer.objects.create(business=self.biz, name='Peter')
+        peter_b = Customer.objects.create(business=self.biz, name='Peter')
+        peter_tab, _e1 = self._make_tab('Peter', Decimal('250'))
+        peter_tab.customer = peter_a
+        peter_tab.save(update_fields=['customer'])
+
+        other_tab, other_entry = self._make_tab('Tab #zzz', Decimal('80'))
+        other_tab.customer = peter_b
+        other_tab.save(update_fields=['customer'])
+
+        self.client.force_login(self.bar_staff)
+        resp = self.client.post(f'/bar/tabs/{other_tab.id}/rename/', {'name': 'Peter'})
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertFalse(data.get('merged'), 'must never merge — different Customer records')
+
+        other_tab.refresh_from_db()
+        self.assertEqual(other_tab.status, 'OPEN')
+        self.assertEqual(other_tab.customer_name, 'Peter')
+        self.assertEqual(other_tab.entries.count(), 1, 'entry must stay on its own tab')
+        other_entry.refresh_from_db()
+        self.assertEqual(other_entry.tab_id, other_tab.id)
+
+        peter_tab.refresh_from_db()
+        self.assertEqual(peter_tab.entries.count(), 1, "the other customer's own entry must be untouched")
 
     def test_merge_cancels_pending_transfer_where_merged_tab_was_source(self):
         roy_tab, _roy_entry = self._make_tab('Roy', Decimal('250'))
@@ -32583,6 +32697,43 @@ class RenameConsolidatesReceiptAndFindableTest(TestCase):
         table4_receipt.refresh_from_db()
         self.assertEqual(table4_receipt.customer_name, 'Brand New Name')
         self.assertEqual(table4_receipt.meta.get('tab_id'), table4_tab.id)
+
+    def test_renaming_to_a_different_customers_name_never_merges_receipts(self):
+        """2026-08-16 live report (Roy, Monsoon Inn) — the ACTUAL confirmed
+        root cause of a real production incident, found via diagnose_receipt:
+        a tab renamed to 'Peter' (already resolved to one Customer record)
+        got silently folded into a WEEK-OLD, already-settled receipt for a
+        DIFFERENT 'Peter' (a different Customer record) — this consolidation
+        search has no date bound and, unlike resolve_master_receipt(), never
+        checked whether the two records agree on WHICH customer at all."""
+        peter_a = Customer.objects.create(business=self.biz, name='Peter')
+        peter_b = Customer.objects.create(business=self.biz, name='Peter')
+        old_tab, old_receipt = self._make_settled_tab_with_receipt(
+            'Peter', Decimal('150'), 1, 'peter-old',
+        )
+        old_tab.customer = peter_a
+        old_tab.save(update_fields=['customer'])
+
+        new_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Suzzie', customer=peter_b,
+            status='OPEN', source='qs', store=self.store,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{new_tab.id}/rename/', {'name': 'Peter'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+        old_receipt.refresh_from_db()
+        self.assertNotIn(
+            new_tab.id, old_receipt.meta.get('linked_tab_ids', []),
+            'a tab belonging to a DIFFERENT Customer must never be folded '
+            "into another customer's already-settled receipt just because "
+            'the typed name matches',
+        )
+        self.assertEqual(
+            Receipt.objects.filter(business=self.biz, customer_name='Peter').count(), 1,
+            'the new tab must NOT get a receipt linked from the old one — '
+            'no receipt exists for it yet since it has no entries',
+        )
 
 
 class SearchFindsReceiptsRegardlessOfAgeTest(TestCase):

@@ -89,7 +89,24 @@ def resolve_master_receipt(business, tab):
     if tab.customer_id:
         other_tabs_qs = other_tabs_qs.filter(customer_id=tab.customer_id)
     elif tab.customer_name:
-        other_tabs_qs = other_tabs_qs.filter(customer_name__iexact=tab.customer_name)
+        # 2026-08-16 live report (Roy, Monsoon Inn): confirmed via
+        # diagnose_receipt that this exact fallback (or Priority 4 below)
+        # had merged two DIFFERENT real customers who both happen to be
+        # named "Peter" onto one shared receipt/PIN — Receipt #705 ended up
+        # linked to two BarTabs resolving to two different Customer records
+        # (203 and 228). Our own tab has no resolved identity to check here
+        # (that's why we're in this branch at all), so the only safe
+        # tightening available is to never match a candidate that DOES have
+        # a resolved identity of its own — an already-identified customer
+        # is a real, distinct person on record, and a bare name match is
+        # too weak a signal to fold an unidentified tab into their bill.
+        # Two genuinely anonymous walk-ins sharing a name (both
+        # customer_id=None) is the one case this still safely merges —
+        # lowest stakes, since neither side is tied to any debt/Customer
+        # record yet.
+        other_tabs_qs = other_tabs_qs.filter(
+            customer_name__iexact=tab.customer_name, customer_id__isnull=True,
+        )
     else:
         other_tabs_qs = other_tabs_qs.none()
 
@@ -102,16 +119,42 @@ def resolve_master_receipt(business, tab):
             return candidate, True
 
     if tab.customer_name:
-        candidate = Receipt.objects.filter(
+        candidates = Receipt.objects.filter(
             business=business,
             customer_name__iexact=tab.customer_name,
             created_at__date=timezone.localdate(),
-        ).exclude(payment_method='statement').order_by('-created_at').first()
-        if candidate:
+        ).exclude(payment_method='statement').order_by('-created_at')
+        for candidate in candidates:
+            if _candidate_conflicts_with_customer(business, candidate, tab):
+                continue
             _link_tab_into_receipt(candidate, tab.id)
             return candidate, True
 
     return None, False
+
+
+def _candidate_conflicts_with_customer(business, candidate_receipt, tab):
+    """True if candidate_receipt is already tied (via its own linked tabs)
+    to a DIFFERENT resolved Customer than `tab` — i.e. linking them would
+    silently merge two different real people who just share a name (the
+    2026-08-16 live bug — see resolve_master_receipt's own comment above).
+
+    Only a real signal when `tab` itself has a resolved customer_id; with
+    nothing to compare against (tab.customer_id is None), this can't tell
+    conflict from coincidence and returns False — a Deni/credit-only
+    receipt with no live tab at all (Priority 4's own stated legitimate
+    use case) has nothing to check against either and is unaffected.
+    """
+    if not tab.customer_id:
+        return False
+    from .models import BarTab
+    linked_ids = ([candidate_receipt.meta.get('tab_id')] if candidate_receipt.meta.get('tab_id') else []) \
+        + list(candidate_receipt.meta.get('linked_tab_ids') or [])
+    if not linked_ids:
+        return False
+    return BarTab.objects.filter(
+        id__in=linked_ids, business=business,
+    ).exclude(customer_id=tab.customer_id).exclude(customer_id__isnull=True).exists()
 
 
 def _link_tab_into_receipt(receipt, tab_id):

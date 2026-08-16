@@ -122,9 +122,21 @@ def _sync_master_receipt_customer_name(business, tab, new_name):
     _resolve_tab_public_url() correctly falls through to the consolidated
     receipt instead of the stale one. Never raises — a receipt display
     glitch must never block the rename itself.
+
+    2026-08-16 live report (Roy, Monsoon Inn) — this was the ACTUAL root
+    cause of a real production incident: a tab renamed "Peter" (already
+    resolved to Customer #228) got silently folded into a WEEK-OLD,
+    already-settled receipt for a DIFFERENT "Peter" (Customer #203) — the
+    "any status, any date" search above has no upper bound on how old the
+    match can be and, unlike resolve_master_receipt(), never checked
+    whether the two records agree on WHICH customer they belong to at all.
+    diagnose_receipt confirmed both linked tabs pointed at different
+    Customer ids. Same fix as resolve_master_receipt(): skip any candidate
+    whose own linked tab(s) already resolve to a different Customer than
+    this one.
     """
     try:
-        from core.tab_receipts import _link_tab_into_receipt, _receipt_linked_to
+        from core.tab_receipts import _link_tab_into_receipt, _receipt_linked_to, _candidate_conflicts_with_customer
         from core.models import Receipt as _Receipt
 
         this_receipt = _Receipt.objects.filter(business=business, meta__tab_id=tab.id).first()
@@ -136,7 +148,12 @@ def _sync_master_receipt_customer_name(business, tab, new_name):
         ).exclude(payment_method='statement')
         if this_receipt:
             target_qs = target_qs.exclude(id=this_receipt.id)
-        target = target_qs.order_by('-created_at').first()
+        target = None
+        for candidate in target_qs.order_by('-created_at'):
+            if _candidate_conflicts_with_customer(business, candidate, tab):
+                continue
+            target = candidate
+            break
 
         if target:
             _link_tab_into_receipt(target, tab.id)
@@ -2449,10 +2466,21 @@ def update_tab_name(request, tab_id):
         # Search scoped to the same stations this staffer can already see
         # (not a blanket cross-counter search) — a silent merge must never
         # pull in revenue from a station this staffer isn't allowed to view.
-        existing = BarTab.objects.filter(
+        # 2026-08-16: also never fold two tabs together when they already
+        # resolve to DIFFERENT Customer records — same class of bug as the
+        # _sync_master_receipt_customer_name() fix just below (that one was
+        # the confirmed live incident; this sibling merge shares the exact
+        # same unguarded name-only match and would corrupt worse — real
+        # entries reassigned onto a stranger's tab, not just a receipt link).
+        existing = None
+        for candidate in BarTab.objects.filter(
             business=up.business, customer_name__iexact=new_name, status='OPEN',
             source__in=_allowed_tab_sources(up),
-        ).exclude(id=tab.id).first()
+        ).exclude(id=tab.id):
+            if tab.customer_id and candidate.customer_id and candidate.customer_id != tab.customer_id:
+                continue
+            existing = candidate
+            break
         if existing:
             merged = _merge_tab_into(tab, existing)
             return JsonResponse({
