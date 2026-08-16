@@ -12948,6 +12948,232 @@ class KitchenBatchOpenBatchDrawTest(TestCase):
         )
 
 
+class KitchenBatchSplitByDateTest(TestCase):
+    """2026-08-16 live request (Roy) — kitchen staff forgot to tap
+    "Imekwisha" between buckets of fries and kept selling straight through
+    3 physical buckets on one still-open batch. KitchenBatch.split_by_
+    date_locked() splits the sales/cost/profit apart along real cutoff
+    moments from the paper sales book, drawing fresh raw material for each
+    new split (recommended default) so the raw item's own balance
+    self-corrects too."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='splitbatch')
+        self.raw_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Potatoes',
+            unit='Ndoo', material_no='SPLIT-RAW-01', cost_price=Decimal('1133.33'),
+            opening_bin_balance=6,
+        )
+        self.item.raw_material_source = self.raw_item
+        self.item.save(update_fields=['raw_material_source'])
+        from datetime import datetime as _dt
+        self.day1 = timezone.make_aware(_dt(2026, 8, 12, 9, 0))
+        self.batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, draw_qty=Decimal('1'),
+            received_on=self.day1.date(),
+        )
+        self._sell(self.day1 + timedelta(hours=1), Decimal('100'))   # bucket 1
+        self._sell(self.day1 + timedelta(hours=2), Decimal('200'))   # bucket 1
+        self.day2 = self.day1 + timedelta(days=1)
+        self._sell(self.day2 + timedelta(hours=1), Decimal('300'))   # bucket 2
+        self._sell(self.day2 + timedelta(hours=2), Decimal('150'))   # bucket 2
+        self.day3 = self.day2 + timedelta(days=1)
+        self._sell(self.day3 + timedelta(hours=1), Decimal('400'))   # bucket 3 (still open)
+
+    def _sell(self, when, amount):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=amount, kitchen_batch=self.batch,
+            date=when.date(),
+        )
+        Transaction.objects.filter(id=txn.id).update(created_at=when)
+        self.batch.revenue_collected = (self.batch.revenue_collected or Decimal('0')) + amount
+        self.batch.save(update_fields=['revenue_collected'])
+        return txn
+
+    def test_split_creates_correct_number_of_batches(self):
+        batches = KitchenBatch.split_by_date_locked(
+            self.batch.id, self.biz, [self.day2, self.day3], self.owner_user,
+        )
+        self.assertEqual(len(batches), 3)
+
+    def test_split_reassigns_revenue_correctly_per_bucket(self):
+        batches = KitchenBatch.split_by_date_locked(
+            self.batch.id, self.biz, [self.day2, self.day3], self.owner_user,
+        )
+        b1, b2, b3 = batches
+        self.assertEqual(b1.revenue_collected, Decimal('300'))   # 100 + 200
+        self.assertEqual(b2.revenue_collected, Decimal('450'))   # 300 + 150
+        self.assertEqual(b3.revenue_collected, Decimal('400'))
+
+    def test_split_draws_fresh_raw_material_per_new_batch(self):
+        before = self.raw_item.current_balance()  # 6 - 1 (bucket 1's own draw) = 5
+        KitchenBatch.split_by_date_locked(
+            self.batch.id, self.biz, [self.day2, self.day3], self.owner_user,
+        )
+        self.raw_item.refresh_from_db()
+        # 2 new batches, each drawing 1 bucket (same qty as the original draw).
+        self.assertEqual(self.raw_item.current_balance(), before - Decimal('2'))
+        self.assertEqual(
+            Transaction.objects.filter(item=self.raw_item, type='Draw').count(), 3,
+        )
+
+    def test_only_last_batch_stays_open(self):
+        batches = KitchenBatch.split_by_date_locked(
+            self.batch.id, self.biz, [self.day2, self.day3], self.owner_user,
+        )
+        b1, b2, b3 = batches
+        self.assertEqual(b1.status, 'DEPLETED')
+        self.assertEqual(b2.status, 'DEPLETED')
+        self.assertEqual(b3.status, 'OPEN')
+
+    def test_each_new_batch_gets_its_own_cost(self):
+        batches = KitchenBatch.split_by_date_locked(
+            self.batch.id, self.biz, [self.day2, self.day3], self.owner_user,
+        )
+        b1, b2, b3 = batches
+        self.assertEqual(b1.cost_total, Decimal('1133.33'))
+        self.assertEqual(b2.cost_total, Decimal('1133.33'))
+        self.assertEqual(b3.cost_total, Decimal('1133.33'))
+
+    def test_transactions_correctly_reassigned_to_new_batches(self):
+        batches = KitchenBatch.split_by_date_locked(
+            self.batch.id, self.biz, [self.day2, self.day3], self.owner_user,
+        )
+        b1, b2, b3 = batches
+        self.assertEqual(
+            Transaction.objects.filter(kitchen_batch=b1, type='Issue').count(), 2,
+        )
+        self.assertEqual(
+            Transaction.objects.filter(kitchen_batch=b2, type='Issue').count(), 2,
+        )
+        self.assertEqual(
+            Transaction.objects.filter(kitchen_batch=b3, type='Issue').count(), 1,
+        )
+
+    def test_rejects_batch_not_open(self):
+        self.batch.status = 'DEPLETED'
+        self.batch.save(update_fields=['status'])
+        with self.assertRaises(ValueError):
+            KitchenBatch.split_by_date_locked(
+                self.batch.id, self.biz, [self.day2], self.owner_user,
+            )
+
+    def test_rejects_non_increasing_cutoffs(self):
+        with self.assertRaises(ValueError):
+            KitchenBatch.split_by_date_locked(
+                self.batch.id, self.biz, [self.day3, self.day2], self.owner_user,
+            )
+
+    def test_rejects_cutoff_before_batch_started(self):
+        too_early = self.day1 - timedelta(days=1)
+        with self.assertRaises(ValueError):
+            KitchenBatch.split_by_date_locked(
+                self.batch.id, self.biz, [too_early], self.owner_user,
+            )
+
+    def test_insufficient_raw_balance_raises_and_creates_no_batches(self):
+        self.raw_item.opening_bin_balance = 1  # only enough for the original draw
+        self.raw_item.save(update_fields=['opening_bin_balance'])
+        with self.assertRaises(ValueError):
+            KitchenBatch.split_by_date_locked(
+                self.batch.id, self.biz, [self.day2, self.day3], self.owner_user,
+            )
+        self.assertEqual(KitchenBatch.objects.filter(item=self.item).count(), 1)
+
+    def test_manual_cost_item_splits_without_raw_draw(self):
+        self.item.raw_material_source = None
+        self.item.save(update_fields=['raw_material_source'])
+        manual_batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, cost_total=Decimal('1500'),
+            received_on=self.day1.date(),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('500'), kitchen_batch=manual_batch, date=self.day1.date(),
+        ).save()
+        txn2 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('700'), kitchen_batch=manual_batch, date=self.day2.date(),
+        )
+        Transaction.objects.filter(id=txn2.id).update(created_at=self.day2)
+        manual_batch.revenue_collected = Decimal('1200')
+        manual_batch.save(update_fields=['revenue_collected'])
+
+        batches = KitchenBatch.split_by_date_locked(
+            manual_batch.id, self.biz, [self.day2], self.owner_user,
+        )
+        self.assertEqual(len(batches), 2)
+        self.assertEqual(batches[0].cost_total, Decimal('1500'))
+        self.assertEqual(batches[1].cost_total, Decimal('1500'))
+        self.assertIsNone(batches[1].source_item_id)
+
+
+class SplitKitchenBatchViewTest(TestCase):
+    """core/kitchen_views.py::split_kitchen_batch — owner/manager-only,
+    reachable from the Kitchen Board tile."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='splitview')
+        self.raw_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Potatoes',
+            unit='Ndoo', material_no='SPLITV-RAW-01', cost_price=Decimal('1133.33'),
+            opening_bin_balance=6,
+        )
+        self.item.raw_material_source = self.raw_item
+        self.item.save(update_fields=['raw_material_source'])
+        from datetime import datetime as _dt
+        self.day1 = timezone.make_aware(_dt(2026, 8, 12, 9, 0))
+        self.batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.item,
+            recorded_by=self.owner_user, draw_qty=Decimal('1'),
+            received_on=self.day1.date(),
+        )
+        self.day2 = self.day1 + timedelta(days=1)
+        self.staff = User.objects.create_user(username='splitview_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def test_owner_can_split(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/split/', {
+            'cutoffs': self.day2.strftime('%Y-%m-%dT%H:%M'),
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(len(d['batches']), 2)
+
+    def test_staff_cannot_split(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/split/', {
+            'cutoffs': self.day2.strftime('%Y-%m-%dT%H:%M'),
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_invalid_cutoff_format_rejected(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/split/', {
+            'cutoffs': 'not-a-date',
+        })
+        self.assertFalse(resp.json()['ok'])
+
+    def test_missing_cutoffs_rejected(self):
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/split/', {'cutoffs': ''})
+        self.assertFalse(resp.json()['ok'])
+
+    def test_multiple_cutoffs_comma_separated(self):
+        day3 = self.day2 + timedelta(days=1)
+        self.client.force_login(self.owner_user)
+        resp = self.client.post(f'/kitchen/batch/{self.batch.id}/split/', {
+            'cutoffs': f"{self.day2.strftime('%Y-%m-%dT%H:%M')},{day3.strftime('%Y-%m-%dT%H:%M')}",
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(len(d['batches']), 3)
+
+
 class TransactionCostKitchenBatchProportionalTest(TestCase):
     """Transaction.cost() must return a PROPORTIONAL share of the batch's
     cost_total per sale, not the whole cost_total on every sale. Found

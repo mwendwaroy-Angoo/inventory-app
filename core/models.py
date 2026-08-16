@@ -6517,6 +6517,140 @@ class KitchenBatch(models.Model):
         self.save(update_fields=['status', 'closed_on', 'note'])
         return txn
 
+    @classmethod
+    def split_by_date_locked(cls, batch_id, business, cutoffs, requested_by):
+        """2026-08-16 live request (Roy): a kitchen staffer forgot to tap
+        "Imekwisha" between buckets of fries — she kept selling straight
+        through buckets 2 and 3 without ever closing bucket 1 or opening a
+        new batch for the ones after it, so every sale from all THREE
+        physical buckets landed on the one still-open batch, and only
+        bucket 1's own raw-material draw was ever recorded (buckets 2/3
+        used real potatoes with no matching deduction — Raw Potatoes'
+        balance was overstated by exactly that much). Roy already has the
+        real cutoff moments written down in the paper sales book.
+
+        Splits `batch_id` into len(cutoffs)+1 batches along those exact
+        moments: the ORIGINAL batch keeps everything before cutoffs[0] and
+        closes as DEPLETED (bucket 1, done); one NEW batch is created per
+        cutoff for everything from that cutoff up to the next one (or now,
+        for the last) — each via open_batch() UNCHANGED, so it gets its
+        own real raw-material draw (same kg as the original batch drew,
+        the recommended default — "same cost as bucket 1's"; self-corrects
+        Raw Potatoes' overstated balance as a side effect) and its own
+        cost_total; every earlier resulting batch closes DEPLETED, only
+        the LAST (the currently-active bucket) stays OPEN. Every
+        Transaction (sale AND any Wastage from a discard) with kitchen_
+        batch_id pointing at the original batch is reassigned by its own
+        created_at into whichever segment it actually falls in — the
+        receipt/profit picture for each bucket "adjusts accordingly" for
+        free, since KitchenStockReceipt.total_revenue() and the analytics
+        Kitchen Performance table both read straight from Transaction.
+
+        Raises ValueError on any validation failure — batch not OPEN,
+        wrong business, cutoffs not strictly increasing, a cutoff outside
+        the batch's own history, or (for a raw-material-tracked item) not
+        enough raw balance left for the extra draws.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            batch = cls.objects.select_for_update().select_related('item', 'store').get(
+                id=batch_id, business=business,
+            )
+            if batch.status != 'OPEN':
+                raise ValueError('Batch hii si wazi — haiwezi kugawanywa.')
+            if not cutoffs:
+                raise ValueError('Weka angalau tarehe moja ya mgawanyo.')
+
+            # Deliberately NOT auto-sorted — cutoffs must be given in the
+            # real chronological order the buckets actually happened in
+            # (bucket 2 started, then bucket 3 started); silently re-
+            # ordering a mistyped list would mask a real data-entry error
+            # instead of catching it.
+            for i in range(1, len(cutoffs)):
+                if cutoffs[i] <= cutoffs[i - 1]:
+                    raise ValueError('Tarehe za mgawanyo lazima ziwe kwa mfuatano wa nyakati (kila moja baada ya iliyotangulia).')
+
+            from datetime import datetime as _dt, time as _time
+            batch_start = timezone.make_aware(
+                _dt.combine(batch.received_on, _time.min), timezone.get_current_timezone(),
+            )
+            if cutoffs[0] <= batch_start:
+                raise ValueError('Tarehe ya kwanza lazima iwe baada ya batch hii kuanza.')
+
+            all_txns = list(
+                Transaction.objects.select_for_update()
+                .filter(kitchen_batch_id=batch.id)
+                .order_by('created_at')
+            )
+
+            # len(cutoffs) NEW batches are created — one per cutoff, each
+            # representing the segment STARTING at that cutoff (open-ended,
+            # up to the NEXT cutoff or "now" for the very last one). Together
+            # with the original batch (which keeps everything before
+            # cutoffs[0]) that's len(cutoffs)+1 segments in total — e.g. 2
+            # cutoffs (bucket 2 started, bucket 3 started) → 3 total batches.
+            draw_qty = batch.source_qty_drawn
+            new_batches = []
+            for idx, cutoff in enumerate(cutoffs):
+                new_batch = cls.open_batch(
+                    business=business, store=batch.store, item=batch.item,
+                    recorded_by=requested_by,
+                    cost_total=(None if batch.item.raw_material_source_id else batch.cost_total),
+                    cost_note=batch.cost_note,
+                    note=f'Imegawanywa kutoka batch #{batch.id} (kipindi {idx + 2})',
+                    draw_qty=draw_qty,
+                    received_on=timezone.localtime(cutoff).date(),
+                )
+                new_batches.append((cutoff, new_batch))
+
+            # Reassign each transaction into whichever segment it falls in —
+            # walked from the LAST (largest) cutoff backwards; the first
+            # cutoff a transaction's created_at is on/after is its segment.
+            # A transaction older than every cutoff is left untouched (it
+            # already belongs to the original batch).
+            for txn in all_txns:
+                target_batch = None
+                for cutoff, nb in reversed(new_batches):
+                    if txn.created_at >= cutoff:
+                        target_batch = nb
+                        break
+                if target_batch is not None:
+                    txn.kitchen_batch = target_batch
+                    txn.save(update_fields=['kitchen_batch'])
+
+            # Recompute revenue_collected for the original + every new batch
+            # from the transactions that actually ended up on each, rather
+            # than incrementally adjusting a running counter — safest,
+            # most auditable way to do a retroactive correction like this.
+            def _recompute_revenue(b):
+                total = Transaction.objects.filter(
+                    kitchen_batch=b, type='Issue',
+                ).aggregate(total=models.Sum('sale_amount'))['total'] or Decimal('0')
+                b.revenue_collected = total
+                b.save(update_fields=['revenue_collected'])
+
+            _recompute_revenue(batch)
+            for _cutoff, nb in new_batches:
+                _recompute_revenue(nb)
+
+            # Close out every segment except the last (still-active) one.
+            batch.note = (batch.note + ' | ' if batch.note else '') + (
+                f'Imegawanywa {timezone.localtime(timezone.now()).strftime("%d %b %Y, %H:%M")} '
+                f'na {requested_by.get_full_name() or requested_by.username if requested_by else "—"} '
+                f'— mauzo ya baadaye ya {cutoffs[0].strftime("%d %b, %H:%M")} yamehamishiwa batch mpya.'
+            )
+            batch.status = 'DEPLETED'
+            batch.closed_on = timezone.now()
+            batch.save(update_fields=['note', 'status', 'closed_on'])
+
+            for i in range(len(new_batches) - 1):
+                _cutoff, nb = new_batches[i]
+                nb.status = 'DEPLETED'
+                nb.closed_on = timezone.now()
+                nb.save(update_fields=['status', 'closed_on'])
+
+            return [batch] + [nb for _c, nb in new_batches]
+
 
 class KitchenStockReceipt(models.Model):
     """One supplier delivery covering MULTIPLE portion items pooled under one

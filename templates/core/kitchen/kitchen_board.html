@@ -1136,6 +1136,31 @@
   </div>
 </div>
 
+<!-- ── Gawanya Batch kwa Tarehe (2026-08-16) ── -->
+<div class="modal fade" id="kbSplitBatchModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#5da8f0;">🔀 Gawanya <span id="ksb-item-name"></span> kwa Tarehe</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.85rem;">
+        <div style="background:rgba(93,168,240,0.08);border:1px solid rgba(93,168,240,0.25);border-radius:6px;padding:.5rem .6rem;margin-bottom:.65rem;font-size:.77rem;color:#a9d0f5;line-height:1.4;">
+          Kama uliendelea kuuza bila kubonyeza "✓ Imekwisha" kati ya ndoo/madumu tofauti, weka hapa TU tarehe na muda ambapo kila ndoo mpya ilianza (kutoka kwenye kitabu cha mauzo). Mauzo yatagawanywa, kila ndoo itapata gharama yake mwenyewe (malighafi mpya itatolewa), na ndoo zilizopita zitafungwa moja kwa moja.
+        </div>
+        <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.3rem;">Ndoo Mpya Ilianza Lini?</label>
+        <div id="ksb-cutoffs" style="display:flex;flex-direction:column;gap:.4rem;margin-bottom:.5rem;"></div>
+        <button type="button" class="btn btn-sm" style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);color:#5da8f0;font-size:.78rem;margin-bottom:.6rem;"
+                onclick="window.ksbAddCutoff()">+ Ongeza Ndoo Nyingine</button>
+        <div id="ksb-error" style="display:none;color:#c0395a;font-size:.8rem;margin-top:.4rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;padding:.75rem;">
+        <button id="ksb-submit-btn" class="btn btn-gold w-100" onclick="window.ksbSubmit()">Gawanya</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Khaki consumable purchase modal ── -->
 <div class="modal fade" id="kbKhakiModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered modal-sm">
@@ -2154,6 +2179,12 @@
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(255,255,255,.04);border:1px solid #555;border-radius:5px;color:#b0b0b0;cursor:pointer;">✓ Imekwisha</button>' +
           '<button onclick="kbDiscardBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\', this); event.stopPropagation();" ' +
           'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;cursor:pointer;">🗑 Tupa</button>' +
+          // 2026-08-16 live request (Roy): staff forgot to tap Imekwisha
+          // between physical buckets and kept selling on one still-open
+          // batch across several — this splits the sales/cost apart along
+          // real cutoff moments from the paper sales book.
+          (IS_OWNER ? '<button onclick="kbOpenSplitBatch(' + batch.id + ',\'' + item.name.replace(/'/g,'') + '\'); event.stopPropagation();" ' +
+          'style="font-size:.68rem;padding:.2rem .5rem;background:rgba(93,168,240,.08);border:1px solid rgba(93,168,240,.3);border-radius:5px;color:#5da8f0;cursor:pointer;">🔀 Gawanya kwa Tarehe</button>' : '') +
           // 2026-08-09 (Roy): "Hariri Gharama" here hides itself ONLY for a
           // batch that was actually OPENED via a linked raw-material draw
           // (batch.from_draw — the exact per-batch signal open_batch() sets,
@@ -4501,6 +4532,62 @@
         }
       })
       .catch(function(){ btn.disabled=false; btn.textContent='Hifadhi Receipt'; errEl.textContent='Hitilafu ya mtandao.'; errEl.style.display='block'; });
+  };
+
+  /* ── Gawanya Batch kwa Tarehe (2026-08-16) ── */
+  var _ksbBatchId = null;
+
+  window.ksbAddCutoff = function() {
+    var wrap = document.createElement('div');
+    wrap.className = 'ksb-cutoff-row';
+    wrap.style.cssText = 'display:flex;gap:.35rem;align-items:center;';
+    wrap.innerHTML =
+      '<input type="datetime-local" class="ksb-cutoff-input" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.35rem .5rem;font-size:.85rem;">' +
+      '<button type="button" onclick="this.closest(\'.ksb-cutoff-row\').remove()" style="background:none;border:none;color:#c0395a;font-size:1.1rem;cursor:pointer;padding:0;">×</button>';
+    document.getElementById('ksb-cutoffs').appendChild(wrap);
+  };
+
+  window.kbOpenSplitBatch = function(batchId, itemName) {
+    _ksbBatchId = batchId;
+    document.getElementById('ksb-item-name').textContent = itemName;
+    document.getElementById('ksb-cutoffs').innerHTML = '';
+    document.getElementById('ksb-error').style.display = 'none';
+    window.ksbAddCutoff();
+    showModal('kbSplitBatchModal');
+  };
+
+  window.ksbSubmit = function() {
+    var errEl = document.getElementById('ksb-error');
+    var cutoffs = [];
+    document.querySelectorAll('#ksb-cutoffs .ksb-cutoff-input').forEach(function(inp) {
+      if (inp.value) cutoffs.push(inp.value);
+    });
+    if (!cutoffs.length) {
+      errEl.textContent = 'Weka angalau tarehe moja.';
+      errEl.style.display = 'block';
+      return;
+    }
+    var btn = document.getElementById('ksb-submit-btn');
+    btn.disabled = true; btn.textContent = 'Inagawanya...';
+    errEl.style.display = 'none';
+
+    var body = new URLSearchParams();
+    body.append('csrfmiddlewaretoken', CSRF);
+    body.append('cutoffs', cutoffs.join(','));
+
+    fetch('/kitchen/batch/' + _ksbBatchId + '/split/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        btn.disabled = false; btn.textContent = 'Gawanya';
+        if (d.ok) {
+          hideModal('kbSplitBatchModal');
+          showToast(d.message || '✓ Imegawanywa');
+          setTimeout(function(){ location.reload(); }, 1200);
+        } else {
+          errEl.textContent = d.error || 'Hitilafu ya seva.'; errEl.style.display = 'block';
+        }
+      })
+      .catch(function(){ btn.disabled=false; btn.textContent='Gawanya'; errEl.textContent='Hitilafu ya mtandao.'; errEl.style.display='block'; });
   };
 
   function _ksrLineHtml(r) {

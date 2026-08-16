@@ -2451,6 +2451,58 @@ def edit_kitchen_batch_target(request, batch_id):
 
 @login_required
 @require_POST
+def split_kitchen_batch(request, batch_id):
+    """2026-08-16 live request (Roy): a kitchen staffer forgot to tap
+    "Imekwisha" between buckets of fries — she kept selling through
+    buckets 2 and 3 on the SAME still-open batch, so all three buckets'
+    sales, cost, and profit were tangled into one. He already has the real
+    "a new bucket began" moments written down in the paper sales book.
+    Owner/manager only — same tier as edit_kitchen_batch_target (this
+    touches cost_total/revenue_collected AND draws additional raw
+    material). Splits the batch into as many pieces as cutoff timestamps
+    given — see KitchenBatch.split_by_date_locked's own docstring for the
+    full mechanism."""
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Ingia kwanza'}, status=403)
+    business = up.business
+    if not getattr(up, 'is_owner_or_manager', False):
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya mmiliki/meneja pekee'}, status=403)
+
+    cutoffs_raw = [c.strip() for c in (request.POST.get('cutoffs') or '').split(',') if c.strip()]
+    if not cutoffs_raw:
+        return JsonResponse({'ok': False, 'error': 'Weka angalau tarehe moja ya mgawanyo.'}, status=400)
+
+    from datetime import datetime as _dt
+    cutoffs = []
+    for raw in cutoffs_raw:
+        try:
+            naive = _dt.strptime(raw, '%Y-%m-%dT%H:%M')
+        except ValueError:
+            return JsonResponse({'ok': False, 'error': f'Tarehe si sahihi: {raw}'}, status=400)
+        cutoffs.append(timezone.make_aware(naive, timezone.get_current_timezone()))
+
+    try:
+        batches = KitchenBatch.split_by_date_locked(batch_id, business, cutoffs, request.user)
+    except KitchenBatch.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'Batch haikupatikana.'}, status=404)
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    label = batches[0].item.description
+    parts = ', '.join(
+        f"#{b.id} (Gharama KES {b.cost_total:,.0f} · Mapato KES {b.revenue_collected:,.0f})"
+        for b in batches
+    )
+    return JsonResponse({
+        'ok': True,
+        'message': f'{label} imegawanywa kuwa batch {len(batches)}: {parts}',
+        'batches': [_batch_to_dict(b) for b in batches],
+    })
+
+
+@login_required
+@require_POST
 def edit_raw_material_cost(request, item_id):
     """Correct a raw-material-source item's own cost_price (e.g. "Raw
     Potatoes" feeding Chipo's batch draw) by typing the SACK's whole cost
