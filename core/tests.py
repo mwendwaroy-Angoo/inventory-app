@@ -10,7 +10,7 @@ from django.utils import timezone
 from accounts.models import Business, UserProfile
 from core.models import (
     Appointment, AppointmentService, BarCupLog, BarTab, BarTabEntry,
-    BusinessException, BusinessExpense, County, Customer, FittingRoomLog, GlobalProduct, Item,
+    BusinessException, BusinessExpense, County, Customer, Exchange, FittingRoomLog, GlobalProduct, Item,
     ItemPortionPreset, ItemPriceHistory, KegBarrel, KegWeightReading,
     KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
     KitchenStockReceiptLine, MaintenanceTicket, MarketPriceIndex,
@@ -27131,6 +27131,191 @@ class ReturnPrimitiveTest(TestCase):
         self.assertTrue(resp.json()['ok'])
         ret.refresh_from_db()
         self.assertEqual(ret.status, Return.STATUS_APPROVED)
+
+
+class ExchangePrimitiveTest(TestCase):
+    """2026-08-16 live request (Roy): "a customer had a counter item worth
+    a certain amount, paid for it, got the receipt, later decided to
+    exchange it for a different item worth the same amount" — e.g. an
+    unopened Guinness (KES 300) swapped for a Chrome Gin (KES 300), no
+    new money changing hands. Built on top of Return's own reversal
+    machinery, always immediate (no approval threshold — no cash risk)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Exchange Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner_user = User.objects.create_user(username='exch_owner', password='x')
+        self.owner = UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='exch_staff', password='x')
+        self.staff = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.guinness = Item.objects.create(
+            business=self.biz, store=self.store, description='Guinness',
+            material_no='EXCH-01', unit='Bottle', selling_price=Decimal('300'),
+            cost_price=Decimal('220'), opening_bin_balance=20,
+        )
+        self.chrome = Item.objects.create(
+            business=self.biz, store=self.store, description='Chrome Gin',
+            material_no='EXCH-02', unit='Bottle', selling_price=Decimal('300'),
+            cost_price=Decimal('200'), opening_bin_balance=10,
+        )
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+
+    def _sale(self, item, qty=1, amount=Decimal('300'), payment_method='cash', recipient=''):
+        return Transaction.objects.create(
+            business=self.biz, item=item, type='Issue', qty=Decimal(str(-qty)),
+            sale_amount=amount, payment_method=payment_method, recipient=recipient,
+            date=timezone.localdate(),
+        )
+
+    def test_exchange_swaps_stock_correctly(self):
+        guinness_before = self.guinness.current_balance()
+        chrome_before = self.chrome.current_balance()
+        sale = self._sale(self.guinness)
+
+        exch = Exchange.process_locked(
+            sale.id, self.biz, qty_returned=1, new_item_id=self.chrome.id,
+            new_qty=1, reason='Alibadilisha akili', processed_by=self.owner,
+        )
+
+        self.guinness.refresh_from_db()
+        self.chrome.refresh_from_db()
+        # Guinness restocked by 1 (sold then returned), Chrome depleted by 1.
+        self.assertEqual(self.guinness.current_balance(), guinness_before)
+        self.assertEqual(self.chrome.current_balance(), chrome_before - 1)
+        self.assertEqual(exch.return_record.refund_amount, Decimal('300.00'))
+        self.assertEqual(exch.new_transaction.sale_amount, Decimal('300.00'))
+
+    def test_exchange_nets_zero_revenue_change(self):
+        sale = self._sale(self.guinness)
+        today = timezone.localdate()
+
+        def _total_rev():
+            return sum(
+                t.revenue() for t in Transaction.objects.filter(
+                    business=self.biz, type='Issue', date=today,
+                )
+            )
+
+        before = _total_rev()
+        Exchange.process_locked(
+            sale.id, self.biz, qty_returned=1, new_item_id=self.chrome.id,
+            new_qty=1, reason='Swap', processed_by=self.owner,
+        )
+        after = _total_rev()
+        self.assertAlmostEqual(before, after, places=2)
+
+    def test_exchange_inherits_original_payment_method_and_recipient(self):
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Bosco')
+        sale = self._sale(self.guinness, payment_method='credit', recipient='Bosco')
+        exch = Exchange.process_locked(
+            sale.id, self.biz, qty_returned=1, new_item_id=self.chrome.id,
+            new_qty=1, reason='Swap', processed_by=self.owner,
+        )
+        self.assertEqual(exch.new_transaction.payment_method, 'credit')
+        self.assertEqual(exch.new_transaction.recipient, 'Bosco')
+
+        from core.debt_views import _get_customer_debt_data
+        customer = Customer.objects.get(business=self.biz, name='Bosco')
+        data = _get_customer_debt_data(customer, self.biz)
+        # Original 300 debt reversed, new 300 debt created — same net owed.
+        self.assertEqual(data['outstanding'], 300.0)
+
+    def test_cannot_exchange_into_the_same_item(self):
+        sale = self._sale(self.guinness)
+        with self.assertRaises(ValueError):
+            Exchange.process_locked(
+                sale.id, self.biz, qty_returned=1, new_item_id=self.guinness.id,
+                new_qty=1, reason='X', processed_by=self.owner,
+            )
+
+    def test_cannot_exchange_more_than_new_item_stock(self):
+        sale = self._sale(self.guinness)
+        with self.assertRaises(ValueError):
+            Exchange.process_locked(
+                sale.id, self.biz, qty_returned=1, new_item_id=self.chrome.id,
+                new_qty=999, reason='X', processed_by=self.owner,
+            )
+        # Nothing should have moved — the original return itself never
+        # committed since the whole thing is one atomic block.
+        self.guinness.refresh_from_db()
+        self.assertEqual(Exchange.objects.count(), 0)
+
+    def test_original_item_balance_unaffected_when_new_item_check_fails(self):
+        guinness_before = self.guinness.current_balance()
+        sale = self._sale(self.guinness)
+        with self.assertRaises(ValueError):
+            Exchange.process_locked(
+                sale.id, self.biz, qty_returned=1, new_item_id=self.chrome.id,
+                new_qty=999, reason='X', processed_by=self.owner,
+            )
+        self.guinness.refresh_from_db()
+        # Still down 1 from the original sale — the failed exchange's own
+        # reversal attempt was rolled back atomically, not double-reversed.
+        self.assertEqual(self.guinness.current_balance(), guinness_before - 1)
+
+    def test_cross_business_new_item_rejected(self):
+        other_biz = Business.objects.create(name='Other Exchange Biz')
+        other_store = Store.objects.create(business=other_biz, name='Shop')
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Other Item',
+            material_no='EXCH-OTHER-01', unit='Bottle', selling_price=Decimal('300'),
+            opening_bin_balance=10,
+        )
+        sale = self._sale(self.guinness)
+        with self.assertRaises(ValueError):
+            Exchange.process_locked(
+                sale.id, self.biz, qty_returned=1, new_item_id=other_item.id,
+                new_qty=1, reason='X', processed_by=self.owner,
+            )
+
+    def test_view_end_to_end_staff_with_open_shift(self):
+        sale = self._sale(self.guinness)
+        self.client.force_login(self.staff_user)
+        resp = self.client.post('/stock/exchanges/process/', {
+            'transaction_id': sale.id, 'qty_returned': '1',
+            'new_item_id': self.chrome.id, 'new_qty': '1', 'reason': 'Alibadilisha akili',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(Exchange.objects.filter(id=data['exchange_id']).exists())
+
+    def test_view_requires_open_shift_for_staff(self):
+        no_shift_staff = User.objects.create_user(username='exch_noshift', password='x')
+        UserProfile.objects.create(user=no_shift_staff, business=self.biz, role='staff')
+        sale = self._sale(self.guinness)
+        self.client.force_login(no_shift_staff)
+        resp = self.client.post('/stock/exchanges/process/', {
+            'transaction_id': sale.id, 'qty_returned': '1',
+            'new_item_id': self.chrome.id, 'new_qty': '1', 'reason': 'X',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_owner_bypasses_shift_gate(self):
+        sale = self._sale(self.guinness)
+        self.client.force_login(self.owner_user)
+        resp = self.client.post('/stock/exchanges/process/', {
+            'transaction_id': sale.id, 'qty_returned': '1',
+            'new_item_id': self.chrome.id, 'new_qty': '1', 'reason': 'X',
+        })
+        self.assertTrue(resp.json()['ok'])
+
+    def test_exchange_high_value_needs_no_approval_even_with_threshold_set(self):
+        """Confirms Roy's explicit call: an exchange skips Return's own
+        approval-threshold gate entirely, since no cash leaves the till."""
+        self.biz.return_approval_threshold = Decimal('50')
+        self.biz.save(update_fields=['return_approval_threshold'])
+        sale = self._sale(self.guinness, amount=Decimal('300'))
+        exch = Exchange.process_locked(
+            sale.id, self.biz, qty_returned=1, new_item_id=self.chrome.id,
+            new_qty=1, reason='X', processed_by=self.owner,
+        )
+        self.assertEqual(exch.return_record.status, Return.STATUS_APPROVED)
+        self.chrome.refresh_from_db()
+        self.assertEqual(self.chrome.current_balance(), 9)  # already moved, no pending state
 
 
 class MarginGuardTest(TestCase):

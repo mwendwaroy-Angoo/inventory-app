@@ -3041,6 +3041,114 @@ class Return(models.Model):
         self.save(update_fields=['status', 'approved_by', 'approved_at'])
 
 
+class Exchange(models.Model):
+    """2026-08-16 live request (Roy): "a customer had a counter item worth
+    a certain amount, paid for it, got the receipt, later decided to
+    exchange it for a DIFFERENT item worth the same amount" — e.g. an
+    unopened Guinness (KES 300, already paid) swapped for a Chrome Gin
+    (also KES 300) on the spot. No new money changes hands — the business
+    keeps exactly what it was already paid, only which item is walking
+    out the door changes.
+
+    Deliberately built ON TOP OF Return rather than as a parallel
+    mechanism: the ORIGINAL item's stock+revenue reverse via Return.
+    process_locked() itself (force_approve=True — an exchange never sends
+    cash out, so the refund-approval threshold that protects against a
+    large CASH refund doesn't apply here; Roy's own call, confirmed live:
+    "the first option is okay... it is not complicated" — any staff with
+    an open shift can complete one immediately, at any value), then a
+    brand-new ordinary Issue Transaction gives the REPLACEMENT item out
+    of stock at that SAME reversed value (Return's own refund_amount —
+    computed proportionally from the original sale, exactly like a
+    partial return already does), inheriting the original sale's
+    payment_method/recipient so a credit exchange still correctly
+    resolves against the same customer's debt ledger. Net effect on
+    total revenue for the period is zero (what was already collected
+    stays collected); per-item attribution correctly shows the old item
+    given back and the new item sold, and analytics/COGS pick up the
+    replacement item's own real cost via the ordinary Issue leg — same
+    honestly-scoped limitation Return itself documents: the ORIGINAL
+    item's own recognized cost is never reversed (qty=0 on that leg), so
+    if the replacement item's cost differs from the original's, net_
+    profit shifts by that difference — a real, physically-correct effect
+    (the business's cost exposure genuinely did just change), not a bug.
+    """
+    business = models.ForeignKey('accounts.Business', on_delete=models.CASCADE, related_name='exchanges')
+    original_transaction = models.ForeignKey(
+        'Transaction', on_delete=models.CASCADE, related_name='exchange_requests'
+    )
+    return_record = models.ForeignKey(Return, on_delete=models.CASCADE, related_name='exchange')
+    new_item = models.ForeignKey(Item, on_delete=models.PROTECT, related_name='exchanges_received')
+    new_qty = models.DecimalField(max_digits=12, decimal_places=3)
+    new_transaction = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+'
+    )
+    reason = models.CharField(max_length=200, blank=True)
+    processed_by = models.ForeignKey(
+        'accounts.UserProfile', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='exchanges_processed',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        old_desc = self.original_transaction.item.description if self.original_transaction_id else '?'
+        return f"Exchange: {old_desc} → {self.new_qty} {self.new_item.description}"
+
+    @classmethod
+    def process_locked(cls, original_transaction_id, business, qty_returned,
+                        new_item_id, new_qty, reason='', processed_by=None):
+        """The one entry point. Raises ValueError for an invalid request —
+        same validation Return.process_locked already does for the
+        original item (wrong business, not a plain Issue sale, qty
+        exceeds what's left to return/exchange), plus: the replacement
+        item must belong to the same business and have enough stock on
+        hand to cover new_qty, and must be a genuinely different item
+        from the one being exchanged away (an exchange into the SAME item
+        is a return, not an exchange — reject it here rather than
+        silently doing a no-op-shaped double transaction)."""
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            ret = Return.process_locked(
+                original_transaction_id=original_transaction_id, business=business,
+                qty_returned=qty_returned, reason=reason or 'Exchange',
+                processed_by=processed_by, force_approve=True,
+            )
+
+            new_item = Item.objects.select_for_update().filter(
+                id=new_item_id, store__business=business,
+            ).first()
+            if new_item is None:
+                raise ValueError('Bidhaa mpya haikupatikana.')
+            if new_item.id == ret.item_id:
+                raise ValueError('Huwezi kubadilisha na bidhaa ile ile — hii ni kurudisha, si kubadilisha.')
+
+            new_qty = Decimal(str(new_qty))
+            if new_qty <= 0:
+                raise ValueError('Idadi ya bidhaa mpya lazima iwe zaidi ya sifuri.')
+            available = new_item.current_balance()
+            if new_qty > available:
+                raise ValueError(
+                    f'{new_item.description} ina {available:g}{new_item.unit} pekee '
+                    f'iliyobaki — huwezi kubadilisha na {new_qty:g}{new_item.unit}.'
+                )
+
+            orig = ret.original_transaction
+            new_txn = Transaction.objects.create(
+                business=business, item=new_item, type='Issue', qty=-new_qty,
+                sale_amount=ret.refund_amount, payment_method=orig.payment_method,
+                recipient=orig.recipient, invoice_no='[EXCHANGE]',
+                recorded_by=getattr(processed_by, 'user', None),
+            )
+            return cls.objects.create(
+                business=business, original_transaction=orig, return_record=ret,
+                new_item=new_item, new_qty=new_qty, new_transaction=new_txn,
+                reason=reason, processed_by=processed_by,
+            )
+
+
 class ItemPriceHistory(models.Model):
     """UBA §7.3 (Sprint R2) — the margin guard's "Sasisha bei" one-tap price
     update writes here. NOT a general price-change log for every possible

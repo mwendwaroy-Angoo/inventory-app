@@ -1136,6 +1136,47 @@
   </div>
 </div>
 
+<!-- ════════════════════════════════════════════════════
+     BADILISHA BIDHAA (EXCHANGE) MODAL — 2026-08-16
+════════════════════════════════════════════════════ -->
+<div id="exchangeModalBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1200; align-items:center; justify-content:center;">
+  <div style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:16px; width:100%; max-width:400px; margin:1rem; padding:1.25rem;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+      <div style="font-family:'Playfair Display',serif; color:#5da8f0; font-size:1.05rem; font-weight:600;">🔁 Badilisha Bidhaa</div>
+      <button onclick="window.closeExchangeModal()" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; cursor:pointer; line-height:1;">×</button>
+    </div>
+    <div style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+      Mteja aliyenunua <strong id="exch-orig-desc" style="color:#f0ece4;"></strong> anataka kubadilisha na bidhaa nyingine — hakuna malipo mapya, thamani ile ile.
+    </div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Idadi ya Kurudisha (ya bidhaa ya awali)</label>
+      <input type="number" id="exch-old-qty" class="form-control" min="0.001" step="0.01" value="1"
+             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+    </div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Bidhaa Mpya</label>
+      <select id="exch-new-item" class="form-select" style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+        <option value="">-- Chagua bidhaa --</option>
+      </select>
+    </div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Idadi ya Bidhaa Mpya</label>
+      <input type="number" id="exch-new-qty" class="form-control" min="0.001" step="0.01" value="1"
+             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+    </div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Sababu (si lazima)</label>
+      <input type="text" id="exch-reason" class="form-control" placeholder="mfano: hakupenda ladha"
+             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+    </div>
+    <div id="exch-error" style="color:#e87c96; font-size:0.82rem; margin-bottom:0.5rem; display:none;"></div>
+    <button type="button" id="exch-submit-btn" onclick="window.submitExchange()"
+            style="width:100%; background:rgba(93,168,240,.15); border:1px solid rgba(93,168,240,.4); color:#5da8f0; border-radius:8px; padding:10px; font-size:0.9rem; cursor:pointer; font-weight:600;">
+      ✓ Badilisha
+    </button>
+  </div>
+</div>
+
 <!-- ── Gawanya Batch kwa Tarehe (2026-08-16) ── -->
 <div class="modal fade" id="kbSplitBatchModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
@@ -3392,7 +3433,17 @@
             '<button onclick="window.kbSplitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
             'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
             '<button onclick="window.kbSplitToDebt(' + e.id + ',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
-            'style="background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.25);border-radius:4px;color:#e29aab;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🤝 Deni</button>' +
+            'style="background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.25);border-radius:4px;color:#e29aab;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🤝 Deni</button>';
+        }
+        // 2026-08-16 live request (Roy): exchange offered regardless of
+        // payment method — no cash moves, so a credit sale is exchangeable
+        // just like a cash/mpesa one. Kept outside the credit-gated block
+        // above (which covers only cash/mpesa-relabel-shaped actions).
+        html +=
+          '<button onclick="window.openExchangeModal(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
+          'style="background:rgba(93,168,240,.06);border:1px solid rgba(93,168,240,.25);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔁 Badilisha</button>';
+        if (e.payment_method !== 'credit') {
+          html +=
             '<button onclick="window.kbVoidDirectPayment(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
             'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🗑 Futa</button>';
         }
@@ -3603,6 +3654,77 @@
         else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
       })
       .catch(function(){ showToast('Hitilafu ya mtandao'); });
+  };
+
+  /* ── Exchange (🔁 Badilisha) — 2026-08-16 live request ─────────────── */
+  var _exchTxnId = null;
+  window.openExchangeModal = function (txnId, description) {
+    _exchTxnId = txnId;
+    document.getElementById('exch-orig-desc').textContent = 'Kutoka: ' + description;
+    document.getElementById('exch-old-qty').value = '1';
+    document.getElementById('exch-new-qty').value = '1';
+    document.getElementById('exch-reason').value = '';
+    document.getElementById('exch-error').style.display = 'none';
+    var sel = document.getElementById('exch-new-item');
+    sel.innerHTML = '<option value="">— inapakia... —</option>';
+    fetch('/stock/exchanges/items/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        sel.innerHTML = '<option value="">— chagua bidhaa —</option>';
+        (d.items || []).forEach(function (i) {
+          var o = document.createElement('option');
+          o.value = String(i.id);
+          o.textContent = i.description + ' (' + i.unit + ')';
+          sel.appendChild(o);
+        });
+      })
+      .catch(function () { sel.innerHTML = '<option value="">— hitilafu ya kuload —</option>'; });
+    document.getElementById('exchangeModalBackdrop').style.display = 'flex';
+  };
+
+  window.closeExchangeModal = function () {
+    document.getElementById('exchangeModalBackdrop').style.display = 'none';
+  };
+
+  var _exchBackdrop = document.getElementById('exchangeModalBackdrop');
+  if (_exchBackdrop) {
+    _exchBackdrop.addEventListener('click', function (e) {
+      if (e.target === _exchBackdrop) window.closeExchangeModal();
+    });
+  }
+
+  window.submitExchange = function () {
+    var errEl = document.getElementById('exch-error');
+    var newItemId = document.getElementById('exch-new-item').value;
+    var oldQty = document.getElementById('exch-old-qty').value;
+    var newQty = document.getElementById('exch-new-qty').value;
+    var reason = document.getElementById('exch-reason').value;
+    errEl.style.display = 'none';
+    if (!newItemId) { errEl.textContent = 'Chagua bidhaa mpya.'; errEl.style.display = 'block'; return; }
+    if (!oldQty || parseFloat(oldQty) <= 0 || !newQty || parseFloat(newQty) <= 0) {
+      errEl.textContent = 'Weka idadi sahihi.'; errEl.style.display = 'block'; return;
+    }
+    var btn = document.getElementById('exch-submit-btn');
+    btn.disabled = true; btn.textContent = 'Inabadilisha...';
+    postJSON('/stock/exchanges/process/', {
+      transaction_id: _exchTxnId, qty_returned: oldQty,
+      new_item_id: newItemId, new_qty: newQty, reason: reason,
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false; btn.textContent = 'Badilisha';
+        if (d.ok) {
+          window.closeExchangeModal();
+          showToast(d.message || '✓ Imebadilishwa');
+          window.kbLoadRecentPayments();
+        } else {
+          errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block';
+        }
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'Badilisha';
+        errEl.textContent = 'Hitilafu ya mtandao.'; errEl.style.display = 'block';
+      });
   };
 
   // 2026-08-02 audit finding — parity with bar_board.html's voidDirectPayment.

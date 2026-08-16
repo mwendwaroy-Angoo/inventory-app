@@ -11,9 +11,9 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
-from .models import ItemPriceHistory, Item, Return, Transaction
+from .models import Exchange, ItemPriceHistory, Item, Return, Transaction
 from .shift_views import get_active_staff_shift
 from .views import owner_or_manager_required
 
@@ -87,6 +87,70 @@ def reject_return(request, return_id):
     except ValueError as e:
         return JsonResponse({'ok': False, 'error': str(e)}, status=400)
     return JsonResponse({'ok': True, 'message': 'Kurudisha kumekataliwa.'})
+
+
+@login_required
+@require_GET
+def exchangeable_items_api(request):
+    """Feeds the "🔁 Badilisha" (exchange) modal's item picker — plain
+    non-keg items across the WHOLE business (bar or kitchen; a keg pour is
+    deliberately excluded, same reasoning as bar_board()'s own non_keg_
+    items — a keg exchange doesn't fit the simple qty×value model this
+    uses). Shared by all three counters (Bar Board, Kitchen Board, Quick
+    Sell) rather than each rendering its own differently-scoped list."""
+    up = request.user.userprofile
+    items = list(
+        Item.objects.filter(store__business=up.business, is_keg=False)
+        .order_by('description')
+        .values('id', 'description', 'unit')
+    )
+    return JsonResponse({'items': items})
+
+
+@login_required
+@require_POST
+def process_exchange(request):
+    """2026-08-16 live request (Roy): a customer swaps an already-paid-for
+    item for a different one of the same value (e.g. an unopened Guinness
+    for a Chrome Gin, both KES 300) — no cash moves, so this is always
+    immediate, same permission tier as an ordinary counter sale/return
+    (any staff with an open shift; owner/manager exempt from the shift
+    gate). See Exchange.process_locked()'s own docstring for the full
+    mechanism."""
+    up = request.user.userprofile
+    business = up.business
+
+    if not up.is_owner_or_manager:
+        gate = get_active_staff_shift(up, business)
+        if gate is False:
+            return JsonResponse({'ok': False, 'error': 'Fungua shift kwanza.'}, status=403)
+
+    txn_id = request.POST.get('transaction_id')
+    qty_returned = (request.POST.get('qty_returned') or '').strip()
+    new_item_id = request.POST.get('new_item_id')
+    new_qty = (request.POST.get('new_qty') or '').strip()
+    reason = (request.POST.get('reason') or '').strip()
+
+    if not new_item_id or not new_qty:
+        return JsonResponse({'ok': False, 'error': 'Chagua bidhaa mpya na idadi.'}, status=400)
+
+    try:
+        exch = Exchange.process_locked(
+            original_transaction_id=txn_id, business=business, qty_returned=qty_returned,
+            new_item_id=new_item_id, new_qty=new_qty, reason=reason, processed_by=up,
+        )
+    except (Transaction.DoesNotExist, ValueError) as e:
+        return JsonResponse({'ok': False, 'error': str(e) or 'Muamala haukupatikana.'}, status=400)
+
+    return JsonResponse({
+        'ok': True,
+        'exchange_id': exch.id,
+        'message': (
+            f'{exch.return_record.item.description} imebadilishwa na '
+            f'{exch.new_qty:g} {exch.new_item.description} — KES {exch.return_record.refund_amount} '
+            f'(hakuna malipo mapya). Salio na mauzo vimerekebishwa.'
+        ),
+    })
 
 
 @login_required
