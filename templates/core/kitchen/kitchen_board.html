@@ -1546,10 +1546,16 @@
         <!-- Pre-close summary injected here -->
         <div id="close-shift-summary" style="margin-bottom:1rem;"></div>
         <div class="mb-3">
-          <label class="form-label">Hesabu Pesa Mkononi (KES)</label>
+          <label class="form-label">Hesabu Pesa Mkononi (KES){% if is_waitress %} <span style="color:#888; font-weight:400;">(hiari kwako sasa)</span>{% endif %}</label>
           <input type="number" step="1" min="0" id="close-shift-cash" class="form-control"
                  placeholder="Hesabu kila noti na koin">
-          <div class="form-text">Jumla ya pesa zote zilizopo ndani ya kasabuni sasa hivi.</div>
+          <div class="form-text">
+            {% if is_waitress %}
+            Wewe ni msaidizi wa muda — huhitajiki kuhesabu pesa za kaunta kwa sasa. Unaweza kuacha wazi.
+            {% else %}
+            Jumla ya pesa zote zilizopo ndani ya kasabuni sasa hivi.
+            {% endif %}
+          </div>
         </div>
         <div class="mb-3">
           <label class="form-label">Maelezo (optional)</label>
@@ -1966,6 +1972,45 @@
     var body = new URLSearchParams(data);
     body.append('csrfmiddlewaretoken', CSRF);
     return fetch(url, {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}});
+  }
+
+  // 2026-08-16 live report (Roy): "Hitilafu ya mtandao" (generic network
+  // error) after tapping Gawanya on the batch-split modal, even though the
+  // underlying view/model logic is already test-covered and correct. Root
+  // cause class (this app's fourth time hitting this exact symptom shape —
+  // see petty_cash_list.html's _pcParseJson for the first three): the
+  // handler called r.json() unconditionally — if the server ever responds
+  // with something that ISN'T valid JSON (a stale/rotated CSRF token
+  // hitting csrf_failure_view's HTML redirect being the single most likely
+  // cause here, since Django's test client bypasses CSRF checks entirely
+  // and every pre-existing automated test for this feature therefore never
+  // could have caught it), r.json() throws and the generic catch() fires,
+  // masking the real cause. Same fix as petty_cash_list.html: check
+  // content-type before parsing, and report a status-aware message instead
+  // of a blanket "check your internet" that's wrong most of the time.
+  function _kbParseJson(r) {
+    var ct = r.headers.get('content-type') || '';
+    if (ct.indexOf('application/json') === -1) {
+      var err = new Error('not-json-response');
+      err._kbNotJson = true;
+      err._kbStatus = r.status;
+      throw err;
+    }
+    return r.json();
+  }
+  function _kbNetworkErrorMessage(err) {
+    if (!err || !err._kbNotJson) {
+      return 'Hitilafu ya mtandao — angalia intaneti yako kisha jaribu tena.';
+    }
+    var s = err._kbStatus;
+    if (s === 403) {
+      return 'Kikao chako kimeisha muda wake. Sasisha (reload) ukurasa kisha jaribu tena.';
+    }
+    if (s >= 500) {
+      return 'Seva ina shughuli nyingi kwa sasa (hitilafu ' + s + '). Subiri kidogo, '
+           + 'sasisha ukurasa uone hali halisi, kisha jaribu tena.';
+    }
+    return 'Ombi halikufaulu (hitilafu ' + s + '). Sasisha (reload) ukurasa kisha jaribu tena.';
   }
 
   function kbNotifyRestock(itemId, itemName) {
@@ -4647,10 +4692,9 @@
       (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
 
     fetch('/kitchen/stock-receipt/create/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
-      .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
-      .then(function(res){
+      .then(_kbParseJson)
+      .then(function(d){
         btn.disabled = false; btn.textContent = 'Hifadhi Receipt';
-        var d = res.data;
         if (d.ok) {
           hideModal('kbStockReceiptModal');
           showToast('✓ Receipt imehifadhiwa!');
@@ -4659,7 +4703,7 @@
           errEl.textContent = d.error || 'Hitilafu ya seva.'; errEl.style.display = 'block';
         }
       })
-      .catch(function(){ btn.disabled=false; btn.textContent='Hifadhi Receipt'; errEl.textContent='Hitilafu ya mtandao.'; errEl.style.display='block'; });
+      .catch(function(err){ btn.disabled=false; btn.textContent='Hifadhi Receipt'; errEl.textContent=_kbNetworkErrorMessage(err); errEl.style.display='block'; });
   };
 
   /* ── Gawanya Batch kwa Tarehe (2026-08-16) ── */
@@ -4704,7 +4748,7 @@
     body.append('cutoffs', cutoffs.join(','));
 
     fetch('/kitchen/batch/' + _ksbBatchId + '/split/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
-      .then(function(r){ return r.json(); })
+      .then(_kbParseJson)
       .then(function(d){
         btn.disabled = false; btn.textContent = 'Gawanya';
         if (d.ok) {
@@ -4715,7 +4759,7 @@
           errEl.textContent = d.error || 'Hitilafu ya seva.'; errEl.style.display = 'block';
         }
       })
-      .catch(function(){ btn.disabled=false; btn.textContent='Gawanya'; errEl.textContent='Hitilafu ya mtandao.'; errEl.style.display='block'; });
+      .catch(function(err){ btn.disabled=false; btn.textContent='Gawanya'; errEl.textContent=_kbNetworkErrorMessage(err); errEl.style.display='block'; });
   };
 
   function _ksrLineHtml(r) {
@@ -5095,16 +5139,28 @@
           _justOpenedWelcomeMessage + '</div>' : '') +
         '<div style="color:#4caf50; font-size:.9rem; font-weight:600;">✓ Umefungua shift na float ya KES ' +
         Math.round(parseFloat(openingFloat)) + '</div>' +
+        (IS_WAITRESS ? '' :
         '<p style="font-size:.78rem; color:#888; margin-top:.5rem;">Unaweza hesabu bidhaa zilizopo sasa kama ' +
-        'kianzio (hiari) — hii itasaidia kulinganisha na hesabu ya mwisho wa shift.</p>';
+        'kianzio (hiari) — hii itasaidia kulinganisha na hesabu ya mwisho wa shift.</p>');
     }
+    // 2026-08-16 live report (Roy): see bar_board.html's identical comment —
+    // hideModal('openShiftModal') + window.openStockTake() (which shows a
+    // DIFFERENT modal) in the same synchronous tick raced Bootstrap's async
+    // hide() transition against the new modal's show(), corrupting the
+    // shared backdrop/scroll-lock state so "Hesabu Stock" never actually
+    // reached the count form. Fixed by not hiding openShiftModal first —
+    // stockTakeModal simply stacks on top, matching the close-shift path
+    // (which never had this bug, since it never hides closeShiftModal
+    // first either). Waitress exempted from the stock-take offer entirely —
+    // she's a concurrent helper, not the stock custodian.
     if (footer) {
       footer.innerHTML =
         '<button type="button" class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;"' +
         ' onclick="hideModal(\'openShiftModal\'); loadShift();">Maliza</button>' +
+        (IS_WAITRESS ? '' :
         '<button type="button" class="btn btn-gold btn-sm"' +
-        ' onclick="hideModal(\'openShiftModal\'); loadShift(); window.openStockTake(' +
-        _justOpenedShiftId + ', \'opening\');">📦 Hesabu Stock</button>';
+        ' onclick="loadShift(); window.openStockTake(' +
+        _justOpenedShiftId + ', \'opening\');">📦 Hesabu Stock</button>');
     }
   }
 
@@ -5397,7 +5453,12 @@
     var resEl = document.getElementById('close-shift-result');
     var cash  = (document.getElementById('close-shift-cash').value || '').trim();
     var notes = (document.getElementById('close-shift-notes').value || '').trim();
-    if (!cash) {
+    // 2026-08-16 (Roy): see bar_board.html's identical comment — waitress is
+    // a concurrent helper, not the till custodian; not enforced for her
+    // "for now, until I say otherwise." Server already treats a blank
+    // closing_cash_counted as genuinely uncounted (None), never a verified
+    // zero — this is a pure client-side relaxation.
+    if (!cash && !IS_WAITRESS) {
       if (errEl) { errEl.textContent = 'Tafadhali ingiza pesa zilizohesabiwa.'; errEl.style.display = 'block'; }
       return;
     }
@@ -5583,11 +5644,14 @@
           doneBtn.onclick = function () { hideModal('closeShiftModal'); loadShift(); };
           btn.parentNode.insertBefore(doneBtn, btn);
 
-          var stBtn = document.createElement('button');
-          stBtn.className = 'btn btn-gold btn-sm';
-          stBtn.textContent = '📦 Hesabu Stock';
-          stBtn.onclick = function () { window.openStockTake(_activeShiftId); };
-          btn.parentNode.insertBefore(stBtn, btn);
+          // 2026-08-16 (Roy): waitress exempted from the stock-take offer.
+          if (!IS_WAITRESS) {
+            var stBtn = document.createElement('button');
+            stBtn.className = 'btn btn-gold btn-sm';
+            stBtn.textContent = '📦 Hesabu Stock';
+            stBtn.onclick = function () { window.openStockTake(_activeShiftId); };
+            btn.parentNode.insertBefore(stBtn, btn);
+          }
         } else {
           if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
         }

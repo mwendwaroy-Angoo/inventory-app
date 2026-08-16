@@ -22819,6 +22819,23 @@ class ShiftStockCountPhaseTest(TestCase):
         missed = _missed_tasks_for_shift(self.shift, self.biz)
         self.assertNotIn('Hesabu ya bidhaa (stock take) haikufanywa', missed)
 
+    def test_missed_tasks_never_nags_a_waitress_about_stock_take(self):
+        """2026-08-16 live request (Roy): a waitress is a concurrent helper,
+        not the stock custodian — she's exempted from the stock-take offer
+        on both boards, so the missed-tasks reminder must never flag her for
+        skipping one, even with zero ShiftStockCount rows at all."""
+        from core.shift_views import _missed_tasks_for_shift
+        waitress = User.objects.create_user(username='sp_waitress', password='x')
+        UserProfile.objects.create(user=waitress, business=self.biz, role='waitress')
+        wshift = Shift.objects.create(business=self.biz, staff=waitress, status='OPEN')
+        missed = _missed_tasks_for_shift(wshift, self.biz)
+        self.assertNotIn('Hesabu ya bidhaa (stock take) haikufanywa', missed)
+        # Regression lock: an ordinary (non-waitress) shift with zero counts
+        # is still correctly flagged — the exemption must not swallow the
+        # check entirely.
+        missed_owner = _missed_tasks_for_shift(self.shift, self.biz)
+        self.assertIn('Hesabu ya bidhaa (stock take) haikufanywa', missed_owner)
+
 
 class OpenShiftIncludesStockTakeAccessTest(TestCase):
     """The open-shift endpoint returns a shift_id staff can immediately use

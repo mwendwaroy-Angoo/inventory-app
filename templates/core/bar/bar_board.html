@@ -1075,10 +1075,16 @@
         <!-- Pre-close summary injected here -->
         <div id="close-shift-summary" style="margin-bottom:1rem;"></div>
         <div class="mb-3">
-          <label class="form-label">Hesabu Pesa Mkononi (KES)</label>
+          <label class="form-label">Hesabu Pesa Mkononi (KES){% if is_waitress %} <span style="color:#888; font-weight:400;">(hiari kwako sasa)</span>{% endif %}</label>
           <input type="number" step="1" min="0" id="close-shift-cash" class="form-control"
                  placeholder="Hesabu kila noti na koin">
-          <div class="form-text">Jumla ya pesa zote zilizopo ndani ya kasabuni sasa hivi.</div>
+          <div class="form-text">
+            {% if is_waitress %}
+            Wewe ni msaidizi wa muda — huhitajiki kuhesabu pesa za kaunta kwa sasa. Unaweza kuacha wazi.
+            {% else %}
+            Jumla ya pesa zote zilizopo ndani ya kasabuni sasa hivi.
+            {% endif %}
+          </div>
         </div>
         <div class="mb-3">
           <label class="form-label">Maelezo (optional)</label>
@@ -5105,16 +5111,32 @@
           _justOpenedWelcomeMessage + '</div>' : '') +
         '<div style="color:#4caf50; font-size:.9rem; font-weight:600;">✓ Umefungua shift na float ya KES ' +
         Math.round(parseFloat(openingFloat)) + '</div>' +
+        (IS_WAITRESS ? '' :
         '<p style="font-size:.78rem; color:#888; margin-top:.5rem;">Unaweza hesabu bidhaa zilizopo sasa kama ' +
-        'kianzio (hiari) — hii itasaidia kulinganisha na hesabu ya mwisho wa shift.</p>';
+        'kianzio (hiari) — hii itasaidia kulinganisha na hesabu ya mwisho wa shift.</p>');
     }
+    // 2026-08-16 live report (Roy): tapping "📦 Hesabu Stock" right after
+    // opening didn't actually reach the count form. Root cause: this
+    // onclick called hideModal('openShiftModal') and window.openStockTake()
+    // (which shows stockTakeModal) in the SAME synchronous tick — Bootstrap's
+    // hide() is an async fade transition that manages a shared backdrop/
+    // body-scroll-lock state, and racing it against an immediate show() of a
+    // DIFFERENT modal corrupts that shared state (the new modal's backdrop
+    // gets torn down by the old modal's delayed cleanup). The close-shift
+    // path never had this bug because its own "Hesabu Stock" button never
+    // hides closeShiftModal first — it just opens stockTakeModal on top and
+    // lets Bootstrap stack them, exactly like the fix below now also does.
+    // Also: a waitress is a concurrent helper, not the stock custodian —
+    // Roy's explicit call is to exempt her from the stock-take offer
+    // entirely, both opening and closing.
     if (footer) {
       footer.innerHTML =
         '<button type="button" class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;"' +
         ' onclick="hideModal(\'openShiftModal\'); loadShift();">Maliza</button>' +
+        (IS_WAITRESS ? '' :
         '<button type="button" class="btn btn-gold btn-sm"' +
-        ' onclick="hideModal(\'openShiftModal\'); loadShift(); window.openStockTake(' +
-        _justOpenedShiftId + ', \'opening\');">📦 Hesabu Stock</button>';
+        ' onclick="loadShift(); window.openStockTake(' +
+        _justOpenedShiftId + ', \'opening\');">📦 Hesabu Stock</button>');
     }
   }
 
@@ -5453,7 +5475,13 @@
     var resEl = document.getElementById('close-shift-result');
     var cash  = (document.getElementById('close-shift-cash').value || '').trim();
     var notes = (document.getElementById('close-shift-notes').value || '').trim();
-    if (!cash) {
+    // 2026-08-16 (Roy): "for now let's not enforce the waitress to count
+    // cash at counter when closing her shift, until I say otherwise" — she's
+    // a concurrent helper, not the till custodian. Server already treats a
+    // blank closing_cash_counted as genuinely uncounted (None), never a
+    // verified zero, so this is a pure client-side relaxation — nothing to
+    // change server-side. Every other role still requires a real count.
+    if (!cash && !IS_WAITRESS) {
       if (errEl) { errEl.textContent = 'Tafadhali ingiza pesa zilizohesabiwa.'; errEl.style.display = 'block'; }
       return;
     }
@@ -5670,11 +5698,15 @@
           doneBtn.onclick = function () { hideModal('closeShiftModal'); loadShift(); };
           btn.parentNode.insertBefore(doneBtn, btn);
 
-          var stBtn = document.createElement('button');
-          stBtn.className = 'btn btn-gold btn-sm';
-          stBtn.textContent = '📦 Hesabu Stock';
-          stBtn.onclick = function () { window.openStockTake(_activeShiftId); };
-          btn.parentNode.insertBefore(stBtn, btn);
+          // 2026-08-16 (Roy): waitress is a concurrent helper, not the
+          // stock custodian — exempt her from the stock-take offer here too.
+          if (!IS_WAITRESS) {
+            var stBtn = document.createElement('button');
+            stBtn.className = 'btn btn-gold btn-sm';
+            stBtn.textContent = '📦 Hesabu Stock';
+            stBtn.onclick = function () { window.openStockTake(_activeShiftId); };
+            btn.parentNode.insertBefore(stBtn, btn);
+          }
         } else {
           if (errEl) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; }
         }

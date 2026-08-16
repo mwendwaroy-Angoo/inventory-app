@@ -1278,7 +1278,12 @@ def _missed_tasks_for_shift(shift, business):
     from .models import ShiftStockCount, KegWeightReading, KegBarrel
     missed = []
 
-    if not ShiftStockCount.objects.filter(shift=shift, phase='closing').exists():
+    # 2026-08-16 (Roy): a waitress is a concurrent helper, not the stock
+    # custodian — she's exempted from the stock-take offer everywhere else
+    # (bar_board.html/kitchen_board.html both skip offering it to her), so
+    # never nag her for having skipped one.
+    staff_role = getattr(getattr(shift.staff, 'userprofile', None), 'role', None)
+    if staff_role != 'waitress' and not ShiftStockCount.objects.filter(shift=shift, phase='closing').exists():
         missed.append('Hesabu ya bidhaa (stock take) haikufanywa')
 
     has_keg = getattr(business, 'has_keg', False)
