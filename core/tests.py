@@ -11298,6 +11298,121 @@ class DiagnoseCustomerDebtCommandTest(TestCase):
         self.assertIn('0 customer(s) still mismatched', out.getvalue())
 
 
+class DiagnoseReceiptCommandTest(TestCase):
+    """2026-08-16 live report (Roy, Monsoon Inn) — a customer's live receipt
+    showed an item ('Chrome Gin') they never ordered, already struck through
+    as paid. resolve_master_receipt() (core/tab_receipts.py) can link a
+    brand-new tab into an EXISTING receipt purely by customer-name string
+    match (Priority 3's fallback + all of Priority 4) with no check that the
+    two are the same physical person — two different real customers sharing
+    a first name can be silently merged onto one shared receipt/PIN. This
+    read-only diagnostic dumps a receipt's real linked-tab data so that can
+    be confirmed from facts rather than guessed at. Must never mutate."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Diagnose Receipt Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chrome Gin 250ML',
+            material_no='DRB-01', unit='Pcs', selling_price=Decimal('150'), cost_price=Decimal('80'),
+        )
+
+    def _make_tab_with_entry(self, customer_name, customer=None, is_paid=False, amount='150'):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=customer_name, customer=customer, status='OPEN',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal(amount), payment_method=('mpesa' if is_paid else 'credit'),
+            recipient=customer_name,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=self.item.description,
+            amount=Decimal(amount), is_paid=is_paid,
+        )
+        return tab
+
+    def test_flags_two_different_customer_records_linked_to_one_receipt(self):
+        """Reproduces the exact live scenario: an earlier, already-paid,
+        unrelated 'Peter' sale and a brand-new 'Peter' tab end up sharing one
+        receipt because they merely share a name string — the command must
+        surface this as the likely cause, not stay silent."""
+        peter_a = Customer.objects.create(business=self.biz, name='Peter')
+        peter_b = Customer.objects.create(business=self.biz, name='Peter')
+        old_tab = self._make_tab_with_entry('Peter', customer=peter_a, is_paid=True)
+        new_tab = self._make_tab_with_entry('Peter', customer=peter_b, is_paid=False)
+
+        from core.models import Receipt
+        receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=705, token='dr-tok-1',
+            total=Decimal('150'), customer_name='Peter', payment_method='mpesa',
+            meta={'tab_id': old_tab.id, 'linked_tab_ids': [new_tab.id]},
+        )
+
+        from io import StringIO
+        from django.core.management import call_command
+        before_txn_count = Transaction.objects.count()
+        before_tab_count = BarTab.objects.count()
+
+        out = StringIO()
+        call_command('diagnose_receipt', business='Diagnose Receipt', receipt=705, stdout=out)
+        output = out.getvalue()
+
+        self.assertIn('DIFFERENT Customer records', output)
+        self.assertIn(str(old_tab.id), output)
+        self.assertIn(str(new_tab.id), output)
+        self.assertIn('Chrome Gin', output)
+        self.assertEqual(Transaction.objects.count(), before_txn_count)
+        self.assertEqual(BarTab.objects.count(), before_tab_count)
+
+    def test_single_genuine_customer_does_not_flag_a_mismatch(self):
+        """Both tabs resolve to the SAME Customer record — must not be
+        flagged as a merge error."""
+        peter = Customer.objects.create(business=self.biz, name='Peter')
+        tab1 = self._make_tab_with_entry('Peter', customer=peter, is_paid=True)
+        tab2 = self._make_tab_with_entry('Peter', customer=peter, is_paid=False)
+
+        from core.models import Receipt
+        Receipt.objects.create(
+            business=self.biz, receipt_number=706, token='dr-tok-2',
+            total=Decimal('150'), customer_name='Peter', payment_method='mpesa',
+            meta={'tab_id': tab1.id, 'linked_tab_ids': [tab2.id]},
+        )
+
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_receipt', business='Diagnose Receipt', receipt=706, stdout=out)
+        output = out.getvalue()
+        self.assertNotIn('DIFFERENT Customer records', output)
+
+    def test_lookup_by_token(self):
+        from core.models import Receipt
+        Receipt.objects.create(
+            business=self.biz, receipt_number=707, token='dr-tok-3',
+            total=Decimal('0'), customer_name='Solo',
+        )
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_receipt', business='Diagnose Receipt', token='dr-tok-3', stdout=out)
+        self.assertIn('#707', out.getvalue())
+
+    def test_no_matching_receipt_does_not_crash(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_receipt', business='Diagnose Receipt', receipt=999, stdout=out)
+        self.assertIn('No matching receipt', out.getvalue())
+
+    def test_neither_receipt_nor_token_errors_cleanly(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_receipt', business='Diagnose Receipt', stdout=out)
+        self.assertIn('--receipt', out.getvalue())
+
+
 class BackfillWasCreditRetiredTest(TestCase):
     """2026-08-15, same day it shipped — RETIRED. Live report (Roy, with
     screenshots): running this command resurrected EVERY customer's ENTIRE
