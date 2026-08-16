@@ -1138,42 +1138,55 @@
 
 <!-- ════════════════════════════════════════════════════
      BADILISHA BIDHAA (EXCHANGE) MODAL — 2026-08-16
+     A real Bootstrap .modal (not a bare overlay div) — required
+     because this is opened from INSIDE the kbTabsDrawer offcanvas;
+     Bootstrap's Offcanvas focus trap yanks focus back into itself
+     for anything that isn't a real Bootstrap component, which
+     silently blocked typing in a bare div's inputs (found live
+     2026-08-16 — the "sababu si editable" report). Matches
+     kbSplitBatchModal's pattern exactly.
 ════════════════════════════════════════════════════ -->
-<div id="exchangeModalBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1200; align-items:center; justify-content:center;">
-  <div style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:16px; width:100%; max-width:400px; margin:1rem; padding:1.25rem;">
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
-      <div style="font-family:'Playfair Display',serif; color:#5da8f0; font-size:1.05rem; font-weight:600;">🔁 Badilisha Bidhaa</div>
-      <button onclick="window.closeExchangeModal()" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; cursor:pointer; line-height:1;">×</button>
+<div class="modal fade" id="exchangeModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#5da8f0;">🔁 Badilisha Bidhaa</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.85rem;">
+        <div style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
+          Mteja aliyenunua <strong id="exch-orig-desc" style="color:#f0ece4;"></strong> anataka kubadilisha na bidhaa nyingine — hakuna malipo mapya, thamani ile ile.
+        </div>
+        <div class="mb-3">
+          <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Idadi ya Kurudisha (ya bidhaa ya awali)</label>
+          <input type="number" id="exch-old-qty" class="form-control" min="0.001" step="0.01" value="1"
+                 style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+        </div>
+        <div class="mb-3">
+          <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Bidhaa Mpya</label>
+          <select id="exch-new-item" class="form-select" style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+            <option value="">-- Chagua bidhaa --</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Idadi ya Bidhaa Mpya</label>
+          <input type="number" id="exch-new-qty" class="form-control" min="0.001" step="0.01" value="1"
+                 style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+        </div>
+        <div class="mb-3">
+          <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Sababu (si lazima)</label>
+          <input type="text" id="exch-reason" class="form-control" placeholder="mfano: hakupenda ladha"
+                 style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+        </div>
+        <div id="exch-error" style="color:#e87c96; font-size:0.82rem; margin-bottom:0.5rem; display:none;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;">
+        <button type="button" id="exch-submit-btn" onclick="window.submitExchange()"
+                style="width:100%; background:rgba(93,168,240,.15); border:1px solid rgba(93,168,240,.4); color:#5da8f0; border-radius:8px; padding:10px; font-size:0.9rem; cursor:pointer; font-weight:600;">
+          ✓ Badilisha
+        </button>
+      </div>
     </div>
-    <div style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">
-      Mteja aliyenunua <strong id="exch-orig-desc" style="color:#f0ece4;"></strong> anataka kubadilisha na bidhaa nyingine — hakuna malipo mapya, thamani ile ile.
-    </div>
-    <div class="mb-3">
-      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Idadi ya Kurudisha (ya bidhaa ya awali)</label>
-      <input type="number" id="exch-old-qty" class="form-control" min="0.001" step="0.01" value="1"
-             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
-    </div>
-    <div class="mb-3">
-      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Bidhaa Mpya</label>
-      <select id="exch-new-item" class="form-select" style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
-        <option value="">-- Chagua bidhaa --</option>
-      </select>
-    </div>
-    <div class="mb-3">
-      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Idadi ya Bidhaa Mpya</label>
-      <input type="number" id="exch-new-qty" class="form-control" min="0.001" step="0.01" value="1"
-             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
-    </div>
-    <div class="mb-3">
-      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Sababu (si lazima)</label>
-      <input type="text" id="exch-reason" class="form-control" placeholder="mfano: hakupenda ladha"
-             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
-    </div>
-    <div id="exch-error" style="color:#e87c96; font-size:0.82rem; margin-bottom:0.5rem; display:none;"></div>
-    <button type="button" id="exch-submit-btn" onclick="window.submitExchange()"
-            style="width:100%; background:rgba(93,168,240,.15); border:1px solid rgba(93,168,240,.4); color:#5da8f0; border-radius:8px; padding:10px; font-size:0.9rem; cursor:pointer; font-weight:600;">
-      ✓ Badilisha
-    </button>
   </div>
 </div>
 
@@ -3679,19 +3692,12 @@
         });
       })
       .catch(function () { sel.innerHTML = '<option value="">— hitilafu ya kuload —</option>'; });
-    document.getElementById('exchangeModalBackdrop').style.display = 'flex';
+    showModal('exchangeModal');
   };
 
   window.closeExchangeModal = function () {
-    document.getElementById('exchangeModalBackdrop').style.display = 'none';
+    hideModal('exchangeModal');
   };
-
-  var _exchBackdrop = document.getElementById('exchangeModalBackdrop');
-  if (_exchBackdrop) {
-    _exchBackdrop.addEventListener('click', function (e) {
-      if (e.target === _exchBackdrop) window.closeExchangeModal();
-    });
-  }
 
   window.submitExchange = function () {
     var errEl = document.getElementById('exch-error');

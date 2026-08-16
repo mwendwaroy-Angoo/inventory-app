@@ -1083,6 +1083,24 @@
                 if (produceCheck) applyProduceToggle(produceCheck.checked);
             })();
 
+            // 2026-08-16 live request (Roy): a volume-based preset (Shot/
+            // Double/Nip — a fixed ml pour) divided by a small bottle's size
+            // often lands a hair off a clean quarter fraction (e.g. a 60ml
+            // Double on a 250ml bottle computes to 0.24, not the 0.25 the
+            // pricing already implies — KES 50 = exactly ¼ of a KES 200 Full
+            // Bottle). That tiny per-sale drift is what produces a "funny"
+            // running balance after many sales. Snap to the nearest standard
+            // split only when genuinely close (within 3%) — a real double
+            // from a 500ml bottle (0.12) or a shot from a 750ml bottle
+            // (0.04) isn't a clean quarter and must be left as computed.
+            function _snapToQuarterFraction(frac) {
+                var SNAPS = [0.25, 0.5, 0.75, 1.0];
+                for (var i = 0; i < SNAPS.length; i++) {
+                    if (Math.abs(frac - SNAPS[i]) <= 0.03) return SNAPS[i];
+                }
+                return frac;
+            }
+
             // CHANGE 2c: auto-fill qty_consumed from standard label, editable only for Custom
             var PRESET_AUTOFILL = {
                 'Nip':                    '25',
@@ -1175,7 +1193,8 @@
                     // ml values are always > 2; fractions are always ≤ 2.
                     if (!_isKegNow && window._barCatConfig && _rawQty > 2) {
                         var _sizeMl = window._barCatConfig._selectedSizeMl || window._barCatConfig.defaultSizeMl || 750;
-                        qtyInput.value = Math.round(_rawQty / _sizeMl * 10000) / 10000;
+                        var _frac = Math.round(_rawQty / _sizeMl * 10000) / 10000;
+                        qtyInput.value = _snapToQuarterFraction(_frac);
                     } else {
                         qtyInput.value = PRESET_AUTOFILL[val];
                     }
@@ -1437,9 +1456,11 @@
 
                     cfg.presets.forEach(function(preset) {
                         if (existingLabels.indexOf(preset.label) !== -1) return;
-                        // Compute qty: fraction stays constant; volume is ml / bottle size
+                        // Compute qty: fraction stays constant; volume is ml / bottle size,
+                        // snapped to the nearest clean quarter when close (see
+                        // _snapToQuarterFraction's own comment — 2026-08-16).
                         var qty = preset.type === 'volume'
-                            ? Math.round(preset.ml / sizeMl * 10000) / 10000
+                            ? _snapToQuarterFraction(Math.round(preset.ml / sizeMl * 10000) / 10000)
                             : preset.qty;
                         var row = document.createElement('div');
                         row.className = 'preset-row';
