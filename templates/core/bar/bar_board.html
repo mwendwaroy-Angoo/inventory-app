@@ -670,6 +670,15 @@
                      cursor:pointer;">
         🍾 Breakage
       </button>
+      <!-- 2026-08-16 live request (Roy): a keg pour the owner takes had no way to be
+           recorded anywhere — Quick Sell's own Mmiliki Alichukua modal excludes keg
+           items entirely. -->
+      <button onclick="window.openKegOwnerTookModal()"
+              style="background:rgba(232,124,150,0.1); border:1px solid rgba(232,124,150,0.35);
+                     color:#e87c96; border-radius:8px; padding:4px 12px; font-size:0.82rem;
+                     cursor:pointer;">
+        🥃 Mmiliki
+      </button>
       <button onclick="window.openPettyCashModal()"
               style="background:rgba(255,152,0,0.08); border:1px solid rgba(255,152,0,0.3);
                      color:#ff9800; border-radius:8px; padding:4px 12px; font-size:0.82rem;
@@ -842,6 +851,52 @@
         Acha
       </button>
     </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     MMILIKI ALICHUKUA (KEG DRAW) MODAL — 2026-08-16
+════════════════════════════════════════════════════ -->
+<div id="kegOwnerTookBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1200; align-items:center; justify-content:center;">
+  <div style="background:#2a2a2a; border:1px solid #3a3a3a; border-radius:16px; width:100%; max-width:400px; margin:1rem; padding:1.25rem;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+      <div style="font-family:'Playfair Display',serif; color:#e87c96; font-size:1.05rem; font-weight:600;">🥃 Mmiliki Alichukua</div>
+      <button onclick="window.closeKegOwnerTookModal()" style="background:none; border:none; color:#b0b0b0; font-size:1.3rem; cursor:pointer; line-height:1;">×</button>
+    </div>
+    <div style="font-size:0.8rem; color:#b0b0b0; margin-bottom:1rem;">Rekodi kiasi alichokichukua mmiliki kutoka kwa barrel iliyofunguliwa — bila malipo.</div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Keg</label>
+      <select id="kot-item-select" class="form-select" style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+        <option value="">-- Chagua keg --</option>
+      </select>
+    </div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Kiasi</label>
+      <select id="kot-preset-select" class="form-select" style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;" disabled>
+        <option value="">-- Chagua keg kwanza --</option>
+      </select>
+    </div>
+    <div class="mb-3">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Idadi</label>
+      <input type="number" id="kot-qty" class="form-control" min="1" step="1" value="1"
+             style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+    </div>
+    <div class="mb-2">
+      <button type="button" onclick="window.kotToggleBackdate()"
+              style="background:none; border:1px solid #555; border-radius:6px; color:#b0b0b0;
+                     font-size:0.76rem; padding:0.3rem 0.6rem; cursor:pointer;">
+        🕐 Haya ni Mauzo ya Nyuma (jana n.k.)
+      </button>
+    </div>
+    <div class="mb-3" id="kot-backdate-row" style="display:none;">
+      <label style="color:#b0b0b0; font-size:0.85rem; display:block; margin-bottom:0.35rem;">Tarehe na Muda Halisi</label>
+      <input type="datetime-local" id="kot-backdated-at" class="form-control" style="background:#1a1a1a; border-color:#3a3a3a; color:#f0ece4;">
+    </div>
+    <div id="kot-error" style="color:#e87c96; font-size:0.82rem; margin-bottom:0.5rem; display:none;"></div>
+    <button type="button" onclick="window.submitKegOwnerTook()"
+            style="width:100%; background:rgba(232,124,150,.15); border:1px solid rgba(232,124,150,.4); color:#e87c96; border-radius:8px; padding:10px; font-size:0.9rem; cursor:pointer; font-weight:600;">
+      ✓ Rekodi
+    </button>
   </div>
 </div>
 
@@ -6058,6 +6113,141 @@
         status.style.color = '#f87171';
         status.textContent = 'Hitilafu ya mtandao.';
         btn.disabled = false;
+      });
+  };
+})();
+
+/* ── Mmiliki Alichukua (keg draw) — 2026-08-16 live request ────────── */
+(function () {
+  var backdrop = document.getElementById('kegOwnerTookBackdrop');
+  if (!backdrop) return;
+  var _kegsById = {};  // item_id → kg dict from board API, refreshed each open
+
+  window.openKegOwnerTookModal = function () {
+    var sel = document.getElementById('kot-item-select');
+    var presetSel = document.getElementById('kot-preset-select');
+    sel.innerHTML = '<option value="">-- Inapakia... --</option>';
+    presetSel.innerHTML = '<option value="">-- Chagua keg kwanza --</option>';
+    presetSel.disabled = true;
+    document.getElementById('kot-qty').value = '1';
+    document.getElementById('kot-error').style.display = 'none';
+    document.getElementById('kot-backdate-row').style.display = 'none';
+    document.getElementById('kot-backdated-at').value = '';
+    backdrop.style.display = 'flex';
+
+    fetch('/stock/bar/board/')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        _kegsById = {};
+        var tapped = (d.kegs || []).filter(function (k) { return k.tapped_barrel_id; });
+        if (!tapped.length) {
+          sel.innerHTML = '<option value="">-- Hakuna keg iliyofunguliwa --</option>';
+          return;
+        }
+        sel.innerHTML = '<option value="">-- Chagua keg --</option>';
+        tapped.forEach(function (k) {
+          _kegsById[k.item_id] = k;
+          var o = document.createElement('option');
+          o.value = String(k.item_id);
+          o.textContent = k.name;
+          sel.appendChild(o);
+        });
+      })
+      .catch(function () {
+        sel.innerHTML = '<option value="">-- Hitilafu ya kuload --</option>';
+      });
+  };
+
+  window.closeKegOwnerTookModal = function () {
+    backdrop.style.display = 'none';
+  };
+
+  backdrop.addEventListener('click', function (e) {
+    if (e.target === backdrop) window.closeKegOwnerTookModal();
+  });
+
+  document.getElementById('kot-item-select').addEventListener('change', function () {
+    var presetSel = document.getElementById('kot-preset-select');
+    var kg = _kegsById[this.value];
+    presetSel.innerHTML = '<option value="">-- Chagua kiasi --</option>';
+    if (!kg || !(kg.presets || []).length) {
+      presetSel.disabled = true;
+      return;
+    }
+    kg.presets.forEach(function (p) {
+      var o = document.createElement('option');
+      o.value = String(p.id);
+      o.textContent = p.label + (p.price > 0 ? (' — KES ' + p.price.toFixed(0)) : '');
+      presetSel.appendChild(o);
+    });
+    presetSel.disabled = false;
+  });
+
+  window.kotToggleBackdate = function () {
+    var row = document.getElementById('kot-backdate-row');
+    var input = document.getElementById('kot-backdated-at');
+    var showing = row.style.display !== 'none';
+    row.style.display = showing ? 'none' : 'block';
+    if (!showing && !input.value) {
+      var now = new Date();
+      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+      input.value = now.toISOString().slice(0, 16);
+    }
+    if (showing) input.value = '';
+  };
+
+  window.submitKegOwnerTook = function () {
+    var itemId = document.getElementById('kot-item-select').value;
+    var kg = _kegsById[itemId];
+    var presetId = document.getElementById('kot-preset-select').value;
+    var qty = document.getElementById('kot-qty').value;
+    var errEl = document.getElementById('kot-error');
+    errEl.style.display = 'none';
+
+    if (!kg || !kg.tapped_barrel_id) {
+      errEl.textContent = 'Chagua keg iliyofunguliwa.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!presetId) {
+      errEl.textContent = 'Chagua kiasi.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!qty || parseInt(qty, 10) <= 0) {
+      errEl.textContent = 'Ingiza idadi sahihi.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    var fd = new FormData();
+    fd.append('barrel_id', String(kg.tapped_barrel_id));
+    fd.append('preset_id', presetId);
+    fd.append('qty', qty);
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    var bdRow = document.getElementById('kot-backdate-row');
+    if (bdRow.style.display !== 'none') {
+      var bdVal = document.getElementById('kot-backdated-at').value;
+      if (bdVal) fd.append('backdated_at', bdVal);
+    }
+    fd.append('idempotency_token',
+      (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
+
+    fetch('/stock/bar/owner-draw/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          window.closeKegOwnerTookModal();
+          if (window.showToast) showToast(d.message || '✓ Imerekodiwa.');
+          if (typeof loadBarBoard === 'function') loadBarBoard();
+        } else {
+          errEl.textContent = d.error || 'Imeshindikana. Jaribu tena.';
+          errEl.style.display = 'block';
+        }
+      })
+      .catch(function () {
+        errEl.textContent = 'Hitilafu ya mtandao.';
+        errEl.style.display = 'block';
       });
   };
 })();

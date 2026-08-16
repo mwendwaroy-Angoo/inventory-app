@@ -89,6 +89,7 @@ from core.keg_views import (
     keg_record_missed_sale,
     keg_target_recommendation,
     record_breakage,
+    record_owner_keg_draw,
     bar_shrinkage_report,
     bar_z_report,
     bar_z_report_share,
@@ -471,6 +472,7 @@ urlpatterns = [
     path("stock/bar/deplete/<int:barrel_id>/", deplete_barrel, name="deplete_barrel"),
     path("stock/bar/edit/<int:barrel_id>/", edit_barrel, name="edit_barrel"),
     path("stock/bar/breakage/", record_breakage, name="record_breakage"),
+    path("stock/bar/owner-draw/", record_owner_keg_draw, name="record_owner_keg_draw"),
     # ── Bar Cups — business-wide pool (K6.C) ────────────────────────────────
     path("bar/cups/add/", add_cups, name="add_cups"),
     # ── Bar Tabs (Sprint 3) ───────────────────────────────────────────────────

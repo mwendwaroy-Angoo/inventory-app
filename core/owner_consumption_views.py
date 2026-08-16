@@ -110,16 +110,32 @@ def record_owner_consumption(request):
     except Exception:
         price = (item.selling_price or Decimal('0')) * qty
 
+    # 2026-08-16 live request (Roy): "bar board has no backdating, same as
+    # mmiliki alichukua modal" — a draw recorded today for something the
+    # owner actually took on an earlier day (a catch-up entry, same class
+    # of gap already fixed for Quick Sell/Kitchen/Bar checkout) had no way
+    # to land on the right day. Mirrors those same surfaces' own parsing.
+    backdated_at = None
+    _bd_raw = (request.POST.get('backdated_at') or '').strip()
+    if _bd_raw:
+        try:
+            from datetime import datetime as _dt
+            _naive = _dt.strptime(_bd_raw, '%Y-%m-%dT%H:%M')
+            backdated_at = timezone.make_aware(_naive, timezone.get_current_timezone())
+        except Exception:
+            backdated_at = None
+
     Transaction.objects.create(
         business=business,
         item=item,
         type='OwnerConsumption',
         qty=-qty,
         sale_amount=price,
-        date=timezone.localdate(),
+        date=(timezone.localtime(backdated_at).date() if backdated_at else timezone.localdate()),
         recorded_by=request.user,
         recipient=note or 'Mmiliki',
         payment_method='',
+        **({'created_at': backdated_at} if backdated_at else {}),
     )
 
     new_balance = item.current_balance()

@@ -4695,6 +4695,44 @@ class KegBarrel(models.Model):
             return barrel.record_sale(preset, qty, payment_method, recorded_by,
                                       tab=tab, server_name=server_name, created_at=created_at)
 
+    @classmethod
+    def record_owner_draw_locked(cls, barrel_id, business, preset, qty, recorded_by, created_at=None):
+        """2026-08-16 live request (Roy): "bar board has no back dating,
+        same as mmiliki alichukua modal" — Quick Sell's Mmiliki Alichukua
+        modal deliberately excludes keg items entirely (a plain qty×price
+        draw makes no sense for a keg — the physical unit sold is a preset
+        pour, e.g. a pint, not the item's own base unit), so a keg pour the
+        owner takes had NO way to be recorded as a draw at all, anywhere.
+
+        Deliberately reuses record_sale_locked() UNCHANGED rather than
+        writing separate envelope-update math — the barrel's revenue_
+        collected/volume_dispensed_ml/cup-pint-jug counters and its own
+        target-reached/auto-deplete logic all update EXACTLY as they would
+        for a real paid pour, so "how much is physically left in this keg"
+        stays accurate regardless of whether a pour was sold or given away
+        free — this app's own keg-accounting is document-flagged as its
+        most sensitive area, so this intentionally introduces zero new
+        envelope math. The one difference: the resulting Transaction is
+        immediately reclassified 'Issue' → 'OwnerConsumption' (the same
+        in-place type flip OwnerConsumptionTransferRequest._accept_to_owner
+        already trusts), which is what makes it invisible to revenue/cash/
+        analytics aggregates by construction — Transaction.cost()/
+        loss_value() still correctly attribute a proportional cost share to
+        it via their existing keg_barrel branch, so it still shows up
+        (as a cost, not a sale) on the Owner Drawings analytics tile.
+        """
+        txn = cls.record_sale_locked(
+            barrel_id, business, preset, qty, payment_method='',
+            recorded_by=recorded_by, created_at=created_at,
+        )
+        if txn is None:
+            return None
+        txn.type = 'OwnerConsumption'
+        txn.payment_method = ''
+        txn.recipient = 'Mmiliki'
+        txn.save(update_fields=['type', 'payment_method', 'recipient'])
+        return txn
+
 
 class KegWeightReading(models.Model):
     READING_TYPES = [

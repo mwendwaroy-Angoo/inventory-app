@@ -29975,6 +29975,139 @@ class OwnerConsumptionPartialTransferTest(TestCase):
         self.assertEqual(resp.status_code, 403)
 
 
+class OwnerConsumptionBackdateTest(TestCase):
+    """2026-08-16 live request (Roy): "bar board has no back dating, same
+    as mmiliki alichukua modal" — a catch-up entry for something the owner
+    took on an earlier day had no way to land on that day, on either
+    surface. Covers both record_owner_consumption's new backdated_at param
+    (Quick Sell's non-keg modal) and the new keg-specific draw endpoint
+    (Bar Board, previously had NO way to record a keg draw at all)."""
+
+    def setUp(self):
+        self.biz, self.store, self.staff, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'OC Backdate Biz'
+        )
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.owner = User.objects.create_user(username='ocbd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        self.plain_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Sprite 500ml',
+            material_no='OCBD-01', unit='Bottle', selling_price=Decimal('100'),
+            cost_price=Decimal('60'),
+        )
+
+    def test_record_owner_consumption_honors_backdated_at(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/owner-consumption/', {
+            'item_id': self.plain_item.id, 'qty': '1', 'price': '100',
+            'backdated_at': '2026-08-01T14:30',
+            'idempotency_token': 'ocbd-1',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        txn = Transaction.objects.get(business=self.biz, item=self.plain_item, type='OwnerConsumption')
+        self.assertEqual(txn.date, date(2026, 8, 1))
+        self.assertEqual(timezone.localtime(txn.created_at).hour, 14)
+
+    def test_record_owner_consumption_no_backdate_uses_today(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/owner-consumption/', {
+            'item_id': self.plain_item.id, 'qty': '1', 'price': '100',
+            'idempotency_token': 'ocbd-2',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        txn = Transaction.objects.get(business=self.biz, item=self.plain_item, type='OwnerConsumption')
+        self.assertEqual(txn.date, timezone.localdate())
+
+    def test_keg_owner_draw_creates_owner_consumption_transaction(self):
+        self.client.force_login(self.staff)
+        before_balance = self.item.current_balance()
+        before_revenue = self.barrel.revenue_collected
+        resp = self.client.post('/stock/bar/owner-draw/', {
+            'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': '2',
+            'idempotency_token': 'kegdraw-1',
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='OwnerConsumption')
+        self.assertEqual(txn.qty, Decimal('-1000'))  # 500ml Pint × 2
+        self.assertEqual(txn.payment_method, '')
+        self.assertEqual(txn.recipient, 'Mmiliki')
+        self.assertEqual(txn.keg_barrel_id, self.barrel.id)
+
+        # Item balance deducted exactly like a real pour.
+        self.assertEqual(self.item.current_balance(), before_balance - Decimal('1000'))
+        # Barrel's own envelope tracks it exactly like a real pour would —
+        # so "how much is physically left" stays accurate.
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.revenue_collected, before_revenue + Decimal('400'))
+        # But it's invisible to real revenue (type != 'Issue').
+        self.assertEqual(txn.revenue(), 0)
+
+    def test_keg_owner_draw_honors_backdated_at(self):
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/bar/owner-draw/', {
+            'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': '1',
+            'backdated_at': '2026-08-05T09:00',
+            'idempotency_token': 'kegdraw-2',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='OwnerConsumption')
+        self.assertEqual(txn.date, date(2026, 8, 5))
+        self.assertEqual(timezone.localtime(txn.created_at).hour, 9)
+
+    def test_keg_owner_draw_rejects_untapped_barrel(self):
+        self.barrel.status = 'SEALED'
+        self.barrel.save(update_fields=['status'])
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/bar/owner-draw/', {
+            'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': '1',
+            'idempotency_token': 'kegdraw-3',
+        })
+        self.assertFalse(resp.json()['ok'])
+
+    def test_keg_owner_draw_rejects_preset_from_another_item(self):
+        other_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Other Keg',
+            material_no='OCBD-02', unit='ml', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('9000'),
+        )
+        other_preset = ItemPortionPreset.objects.create(
+            item=other_item, label='Cup', price=Decimal('50'), quantity_consumed=Decimal('300'),
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post('/stock/bar/owner-draw/', {
+            'barrel_id': self.barrel.id, 'preset_id': other_preset.id, 'qty': '1',
+            'idempotency_token': 'kegdraw-4',
+        })
+        self.assertFalse(resp.json()['ok'])
+
+    def test_keg_owner_draw_requires_open_shift_for_staff(self):
+        no_shift_staff = User.objects.create_user(username='ocbd_noshift', password='x')
+        UserProfile.objects.create(user=no_shift_staff, business=self.biz, role='staff')
+        self.client.force_login(no_shift_staff)
+        resp = self.client.post('/stock/bar/owner-draw/', {
+            'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': '1',
+            'idempotency_token': 'kegdraw-5',
+        })
+        self.assertEqual(resp.status_code, 403)
+
+    def test_keg_owner_draw_cross_business_barrel_rejected(self):
+        other_biz, other_store, other_staff, other_item, other_barrel, other_preset = _make_keg_fixtures(
+            'OC Backdate Other Biz'
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post('/stock/bar/owner-draw/', {
+            'barrel_id': other_barrel.id, 'preset_id': other_preset.id, 'qty': '1',
+            'idempotency_token': 'kegdraw-6',
+        })
+        self.assertFalse(resp.json()['ok'])
+
+
 class CustomerLinkAsOwnerTest(TestCase):
     """2026-08-13 live request (Roy) — "the system can be able to know that
     a certain name in either orders/tabs/debt tracker is the owner" (e.g.

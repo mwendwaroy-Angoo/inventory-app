@@ -4726,6 +4726,80 @@ def record_breakage(request):
     return JsonResponse({"ok": True, "message": message})
 
 
+@login_required
+@require_POST
+def record_owner_keg_draw(request):
+    """2026-08-16 live request (Roy): "bar board has no back dating, same
+    as mmiliki alichukua modal" — Quick Sell's Mmiliki Alichukua modal
+    excludes keg items entirely (a plain qty×price draw doesn't fit a keg
+    pour), so there was NO way anywhere to record the owner taking a
+    pint/cup/jug from a tapped keg as a draw. New Bar Board button, own
+    endpoint — see KegBarrel.record_owner_draw_locked's own docstring for
+    why this reuses record_sale_locked unchanged (same envelope math a
+    real pour gets) rather than writing separate keg-accounting logic."""
+    up = _get_up(request)
+    if not up or not up.business:
+        return JsonResponse({'ok': False, 'error': 'Not authenticated.'}, status=403)
+    business = up.business
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
+    barrel_id = request.POST.get('barrel_id')
+    preset_id = request.POST.get('preset_id')
+    qty_str = (request.POST.get('qty') or '').strip()
+    if not barrel_id or not preset_id or not qty_str:
+        return JsonResponse({'ok': False, 'error': 'Taja barrel, kiasi na idadi.'}, status=400)
+
+    try:
+        qty = int(float(qty_str))
+        if qty <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        return JsonResponse({'ok': False, 'error': 'Idadi si sahihi.'}, status=400)
+
+    barrel = KegBarrel.objects.filter(
+        id=barrel_id, business=business, status='TAPPED',
+    ).select_related('item').first()
+    if not barrel:
+        return JsonResponse({'ok': False, 'error': 'Barrel haipatikani au haijafunguliwa.'}, status=404)
+
+    preset = ItemPortionPreset.objects.filter(id=preset_id, item_id=barrel.item_id).first()
+    if not preset:
+        return JsonResponse({'ok': False, 'error': 'Kiasi hiki hakipatikani kwa item hii.'}, status=404)
+
+    backdated_at = None
+    _bd_raw = (request.POST.get('backdated_at') or '').strip()
+    if _bd_raw:
+        try:
+            from datetime import datetime as _dt
+            _naive = _dt.strptime(_bd_raw, '%Y-%m-%dT%H:%M')
+            backdated_at = timezone.make_aware(_naive, timezone.get_current_timezone())
+        except Exception:
+            backdated_at = None
+
+    txn = KegBarrel.record_owner_draw_locked(
+        barrel.id, business, preset, qty, recorded_by=request.user, created_at=backdated_at,
+    )
+    if txn is None:
+        return JsonResponse({'ok': False, 'error': 'Imeshindikana kurekodi.'}, status=400)
+
+    return JsonResponse({
+        'ok': True,
+        'message': f"✓ Mmiliki alichukua {preset.label} ×{qty} — {barrel.item.description}",
+    })
+
+
 # ── F2 — Staff Shrinkage Leaderboard ────────────────────────────────────────
 
 @login_required

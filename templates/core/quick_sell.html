@@ -1418,6 +1418,20 @@
       <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:4px;">Maelezo (optional)</label>
       <input type="text" id="ot-note" placeholder="e.g. personal use" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px;">
     </div>
+    <!-- 2026-08-16 live request (Roy): "bar board has no backdating, same
+         as mmiliki alichukua modal" — a catch-up entry for something the
+         owner took on an earlier day had no way to land on that day. -->
+    <div class="mb-2">
+      <button type="button" id="ot-backdate-toggle-btn" onclick="window.otToggleBackdate()"
+              style="background:none; border:1px solid #555; border-radius:6px; color:#b0b0b0;
+                     font-size:0.76rem; padding:0.3rem 0.6rem; cursor:pointer;">
+        🕐 Haya ni Mauzo ya Nyuma (jana n.k.)
+      </button>
+    </div>
+    <div class="mb-3" id="ot-backdate-row" style="display:none;">
+      <label style="color:#b0b0b0; font-size:0.82rem; display:block; margin-bottom:4px;">Tarehe na Muda Halisi</label>
+      <input type="datetime-local" id="ot-backdated-at" style="width:100%; background:#1a1a1a; border:1px solid #444; border-radius:8px; color:#f0ece4; padding:8px 10px;">
+    </div>
     <div id="ot-error" style="color:#e87c96; font-size:0.82rem; margin-bottom:0.5rem; display:none;"></div>
     <button type="button" onclick="submitOwnerTook()"
             style="width:100%; background:rgba(192,57,90,.15); border:1px solid rgba(192,57,90,.4); color:#e87c96; border-radius:8px; padding:10px; font-size:0.9rem; cursor:pointer; font-weight:600;">
@@ -4178,6 +4192,8 @@ window.openOwnerTookModal = function () {
   document.getElementById('ot-unit-label').textContent = '';
   document.getElementById('ot-preset-wrap').style.display = 'none';
   document.getElementById('ot-preset-select').innerHTML = '<option value="">— Chagua kiasi —</option>';
+  document.getElementById('ot-backdate-row').style.display = 'none';
+  document.getElementById('ot-backdated-at').value = '';
   overlay.style.display = 'flex';
 };
 
@@ -4189,6 +4205,19 @@ window.closeOwnerTookModal = function () {
 document.getElementById('owner-took-overlay').addEventListener('click', function (e) {
   if (e.target === this) closeOwnerTookModal();
 });
+
+window.otToggleBackdate = function () {
+  var row = document.getElementById('ot-backdate-row');
+  var input = document.getElementById('ot-backdated-at');
+  var showing = row.style.display !== 'none';
+  row.style.display = showing ? 'none' : 'block';
+  if (!showing && !input.value) {
+    var now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    input.value = now.toISOString().slice(0, 16);
+  }
+  if (showing) input.value = '';
+};
 
 function _otRecalcPrice() {
   var sel = document.getElementById('ot-item-select');
@@ -4275,6 +4304,11 @@ window.submitOwnerTook = function () {
   body.append('qty', qty);
   body.append('price', price);
   body.append('note', note);
+  var bdRow = document.getElementById('ot-backdate-row');
+  if (bdRow && bdRow.style.display !== 'none') {
+    var bdVal = document.getElementById('ot-backdated-at').value;
+    if (bdVal) body.append('backdated_at', bdVal);
+  }
   body.append('idempotency_token', (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
 
   fetch('{% url "record_owner_consumption" %}', {
