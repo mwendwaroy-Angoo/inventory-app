@@ -505,23 +505,23 @@
                 </div>
             </div>
 
-            <!-- ── Backdated entry (Option B offline sales) ── -->
+            <!-- ── Backdated entry (Option B offline sales / late-entered receipts) ── -->
             <div id="backdateSection" style="display:none; margin-bottom:1rem;">
-              <div class="section-divider"><span>🕐 {% trans 'Wakati Halisi wa Mauzo' %}</span></div>
+              <div class="section-divider"><span>🕐 <span id="backdateHeading">{% trans 'Wakati Halisi wa Mauzo' %}</span></span></div>
               <div style="background:rgba(255,152,0,0.06); border:1px solid rgba(255,152,0,0.25);
                           border-radius:8px; padding:.85rem 1rem;">
-                <p style="font-size:.8rem; color:#ff9800; margin-bottom:.5rem;">
+                <p id="backdateExplain" style="font-size:.8rem; color:#ff9800; margin-bottom:.5rem;">
                   📵 {% trans 'Mauzo haya yalifanyika bila app (mtandao ulikatika, n.k.). Weka wakati sahihi ili yaingie kwenye hesabu ya shift husika.' %}
                 </p>
-                <label class="form-label" style="font-size:.85rem;">{% trans 'Tarehe na saa halisi ya mauzo' %}</label>
+                <label class="form-label" id="backdateLabel" style="font-size:.85rem;">{% trans 'Tarehe na saa halisi ya mauzo' %}</label>
                 <input type="datetime-local" name="backdated_at" id="backdatedAt"
                        class="form-control"
                        style="max-width:280px; background:#1a1a1a; border:1px solid #555; color:#f0ece4;">
-                <div class="form-text" style="color:#888; font-size:.75rem; margin-top:.3rem;">
+                <div id="backdateHint" class="form-text" style="color:#888; font-size:.75rem; margin-top:.3rem;">
                   {% trans 'Ikiwa imejazwa, transaction itaingia kwenye reconciliation ya shift iliyokuwa wazi wakati huo.' %}
                 </div>
                 <div id="backdateNowWarning" style="display:none; margin-top:.4rem; font-size:.75rem; color:#ff9800;">
-                  ⚠️ {% trans 'Wakati huu ni karibu na SASA HIVI. Hakikisha umeweka wakati HALISI mauzo yalipofanyika (jana, mfano), la sivyo hii haitasaidia kutenganisha hesabu ya leo.' %}
+                  ⚠️ <span id="backdateNowWarningText">{% trans 'Wakati huu ni karibu na SASA HIVI. Hakikisha umeweka wakati HALISI mauzo yalipofanyika (jana, mfano), la sivyo hii haitasaidia kutenganisha hesabu ya leo.' %}</span>
                 </div>
               </div>
             </div>
@@ -530,7 +530,7 @@
               <button type="button" class="btn btn-sm"
                       style="background:transparent; border:1px solid #444; color:#888; font-size:.78rem;"
                       onclick="window._toggleBackdate()">
-                🕐 {% trans 'Ilifanyika wakati mwingine? (mauzo ya offline)' %}
+                🕐 <span id="backdateToggleLabel">{% trans 'Ilifanyika wakati mwingine? (mauzo ya offline)' %}</span>
               </button>
             </div>
 
@@ -641,6 +641,44 @@ function updateMultiplierDisplay() {
     $('input[name="quantity"]').val(total);
     var el = document.getElementById('multiplierTotal');
     if (el) el.textContent = mult + ' × KES ' + price.toFixed(0) + ' = KES ' + total_price + ' | ' + total + ' units consumed';
+}
+
+// Backdate UI text swaps between "offline sale" wording (Issue) and
+// "late-entered receipt" wording (Receipt) — same toggle/section/fields,
+// reworded per type so a receiving-stock entry doesn't talk about "mauzo"
+// (sales). 2026-08-16: Receipt-type transactions previously had no
+// backdate path at all (explicitly hidden), even though Add Transaction's
+// Receipt flow is the ONE designed writer of Item.cost_price and the app's
+// own established date/created_at sync convention already existed for
+// every other backdating surface (Quick Sell, Kitchen Board, Bar Board) —
+// this brings the general Add Transaction page to parity for receiving.
+var BACKDATE_TEXT = {
+    Issue: {
+        heading: "{% trans 'Wakati Halisi wa Mauzo' %}",
+        explain: "📵 {% trans 'Mauzo haya yalifanyika bila app (mtandao ulikatika, n.k.). Weka wakati sahihi ili yaingie kwenye hesabu ya shift husika.' %}",
+        label: "{% trans 'Tarehe na saa halisi ya mauzo' %}",
+        hint: "{% trans 'Ikiwa imejazwa, transaction itaingia kwenye reconciliation ya shift iliyokuwa wazi wakati huo.' %}",
+        toggle: "{% trans 'Ilifanyika wakati mwingine? (mauzo ya offline)' %}",
+        warn: "{% trans 'Wakati huu ni karibu na SASA HIVI. Hakikisha umeweka wakati HALISI mauzo yalipofanyika (jana, mfano), la sivyo hii haitasaidia kutenganisha hesabu ya leo.' %}"
+    },
+    Receipt: {
+        heading: "{% trans 'Tarehe Halisi ya Kupokea' %}",
+        explain: "📦 {% trans 'Bidhaa hizi zilipokewa siku nyingine, si leo (uliingiza kwa kuchelewa). Weka tarehe sahihi ili zisichanganyike na hesabu ya leo.' %}",
+        label: "{% trans 'Tarehe na saa halisi ya kupokea' %}",
+        hint: "{% trans 'Ikiwa imejazwa, upokeaji huu utaingia kwenye tarehe hiyo — si leo — kwenye stock, gharama na ripoti zote.' %}",
+        toggle: "{% trans 'Ulipokea lini hasa? (kama si leo)' %}",
+        warn: "{% trans 'Wakati huu ni karibu na SASA HIVI. Hakikisha umeweka wakati HALISI ulipopokea (jana, mfano), la sivyo hii haitasaidia kutenganisha hesabu ya leo.' %}"
+    }
+};
+
+function _applyBackdateWording(type) {
+    var t = BACKDATE_TEXT[type] || BACKDATE_TEXT.Issue;
+    document.getElementById('backdateHeading').textContent = t.heading;
+    document.getElementById('backdateExplain').textContent = t.explain;
+    document.getElementById('backdateLabel').textContent = t.label;
+    document.getElementById('backdateHint').textContent = t.hint;
+    document.getElementById('backdateToggleLabel').textContent = t.toggle;
+    document.getElementById('backdateNowWarningText').textContent = t.warn;
 }
 
 window._toggleBackdate = function() {
@@ -833,7 +871,8 @@ $(document).ready(function () {
             $('#customerSelect').attr('name', '');
             $('#recipientLabel').text(LABEL_RECEIVING_STORE);
             $('#paymentMethodRow').hide();
-            $('#backdateToggle').hide();
+            _applyBackdateWording('Receipt');
+            $('#backdateToggle').show();
             $('#backdateSection').hide();
             $('#backdatedAt').val('');
             $('#expiryDateSection').show();
@@ -853,6 +892,7 @@ $(document).ready(function () {
             $('#requestConfirmCheck').prop('checked', false);
             // Backdate toggle only relevant for Issue (offline sale), not Wastage
             if (type === 'Issue') {
+                _applyBackdateWording('Issue');
                 $('#backdateToggle').show();
             } else {
                 $('#backdateToggle').hide();

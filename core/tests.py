@@ -17816,6 +17816,89 @@ class DirectSalePaymentSplitToDebtTest(TestCase):
         self.assertEqual(float(data['outstanding']), 50.0)
 
 
+class AddTransactionReceiptBackdateTest(TestCase):
+    """2026-08-16 live request (Roy): "add a back date in receiving items in
+    add transaction if it is not there." Add Transaction's own backdate UI
+    (backdated_at) existed for Issue-type "offline sale" entries only —
+    explicitly hidden/cleared for Receipt-type submissions, both client-side
+    (toggleRecipient()) and never actually needed server-side gating since
+    the backend's backdated_at parsing was already type-agnostic. Fixes the
+    UI gap and adds the missing date=/created_at sync this app's own
+    established backdating convention requires (Quick Sell, Kitchen Board,
+    Bar Board all already do this — add_transaction was the one surface
+    that only ever set created_at, leaving Transaction.date to silently
+    default to today regardless of the backdated timestamp)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Receipt Backdate Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='rbd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Rice 2kg',
+            material_no='RBD-01', unit='pcs', cost_price=Decimal('100'),
+            selling_price=Decimal('150'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_backdated_receipt_sets_both_created_at_and_date(self):
+        past = timezone.localtime(timezone.now() - timedelta(days=4)).replace(
+            hour=9, minute=30, second=0, microsecond=0,
+        )
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'backdated_at': past.strftime('%Y-%m-%dT%H:%M'),
+            'idempotency_token': 'rbd-token-1',
+        })
+        self.assertEqual(resp.status_code, 302)
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Receipt')
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past.strftime('%Y-%m-%d %H:%M'),
+        )
+        self.assertEqual(txn.date, past.date())
+        self.assertNotEqual(txn.date, timezone.localdate())
+
+    def test_receipt_with_no_backdate_still_defaults_to_now(self):
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'idempotency_token': 'rbd-token-2',
+        })
+        self.assertEqual(resp.status_code, 302)
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Receipt')
+        self.assertEqual(txn.date, timezone.localdate())
+
+    def test_backdated_receipt_carries_the_backdated_day_in_transaction_history(self):
+        # The whole point of backdating — a receipt entered today for stock
+        # that actually arrived days ago must be attributed to that day
+        # everywhere a report reads Transaction.date, not the day it was
+        # typed in. transaction_history.html renders each row's real date=
+        # value directly (data-date="{{ trans.date|date:'Y-m-d' }}").
+        past = timezone.localtime(timezone.now() - timedelta(days=3)).replace(
+            hour=10, minute=0, second=0, microsecond=0,
+        )
+        self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '10',
+            'backdated_at': past.strftime('%Y-%m-%dT%H:%M'),
+            'idempotency_token': 'rbd-token-3',
+        })
+        resp = self.client.get('/history/')
+        self.assertContains(resp, f'data-date="{past.strftime("%Y-%m-%d")}"')
+        self.assertNotContains(resp, f'data-date="{timezone.localdate().strftime("%Y-%m-%d")}"')
+
+    def test_blank_backdate_is_not_blocked(self):
+        """Malformed/blank backdated_at must never hard-block a Receipt —
+        matching the existing tolerant-parse contract for Issue-type."""
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item.id, 'type': 'Receipt', 'quantity': '5',
+            'backdated_at': 'not-a-real-datetime',
+            'idempotency_token': 'rbd-token-4',
+        })
+        self.assertEqual(resp.status_code, 302)
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Receipt')
+        self.assertEqual(txn.date, timezone.localdate())
+
+
 class StockTakeVarianceItemLockTest(TestCase):
     """2026-07-26 (item 6, live request): an unresolved stock-take variance on
     a SPECIFIC item blocks selling that exact item across counters — never

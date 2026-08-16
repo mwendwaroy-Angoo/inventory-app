@@ -1473,7 +1473,17 @@ def add_transaction(request):
                 else ""
             ),
             expiry_date=expiry_date,
-            **({"created_at": backdated_at} if backdated_at else {}),
+            # Transaction.date/created_at sync — established app-wide
+            # convention (Quick Sell, Kitchen Board, Bar Board all do this)
+            # so a backdated entry can never silently drift between the two:
+            # created_at is the exact timestamp, date is its local calendar
+            # day, both must agree or every date=-filtered report (Daily
+            # Sales, the emailed daily summary, station revenue tiles) shows
+            # a backdated entry under the wrong day.
+            **(
+                {"created_at": backdated_at, "date": timezone.localtime(backdated_at).date()}
+                if backdated_at else {}
+            ),
         )
 
         # ── STOCK RECEIPT CONFIRMATION (2026-07-26 live request) ─────────
