@@ -4762,10 +4762,21 @@
       .catch(function(err){ btn.disabled=false; btn.textContent='Gawanya'; errEl.textContent=_kbNetworkErrorMessage(err); errEl.style.display='block'; });
   };
 
+  // 2026-08-16 live follow-up (Roy): "what about raw potatoes/whole gunia
+  // tracking from which the chipo is drawn from" — the card only ever
+  // showed the FIXED original delivery (qty received @ unit cost), never
+  // how much of that gunia is actually left; the live remaining balance
+  // was already correctly tracked (l.current_balance, from the item's own
+  // ordinary Receipt/Draw transaction history) and already shown inside
+  // the close-receipt confirmation modal (openStockReceiptCloseModal,
+  // "kilichobaki: X") — just never surfaced on the card itself, so seeing
+  // it meant opening that modal first. Same "(kilichobaki: X)" wording,
+  // now on the card too.
   function _ksrLineHtml(r) {
     return r.lines.map(function(l){
       var lbl = l.preset_label ? (l.item_name + ' — ' + l.preset_label) : l.item_name;
-      return '<span style="display:inline-block;margin-right:.6rem;color:#b0b0b0;">' + lbl + ': ' + l.qty_received + ' @ KES ' + l.unit_cost.toFixed(2) + '</span>';
+      return '<span style="display:inline-block;margin-right:.6rem;color:#b0b0b0;">' + lbl + ': ' + l.qty_received + ' @ KES ' + l.unit_cost.toFixed(2) +
+        ' <span style="color:#6ee7b7;">(kilichobaki: ' + l.current_balance + ')</span></span>';
     }).join('');
   }
 

@@ -33742,6 +33742,99 @@ class KitchenStockReceiptRawMaterialForTest(TestCase):
         r = listing['open'][0]
         self.assertEqual(r['raw_material_for'], [])
 
+    def test_raw_material_for_reflects_post_split_batch(self):
+        """2026-08-16 live follow-up (Roy), right after the Gawanya split
+        crash was fixed: "ensure also the respective stock receipt adjusts
+        accordingly" — once split_by_date_locked() closes the ORIGINAL
+        batch (DEPLETED) and opens a NEW one (OPEN, with its own fresh
+        raw-material draw + recomputed cost/revenue), the Stock Receipt
+        card's "→ Chipo" cross-reference must show the NEW batch's own
+        numbers, not the old pre-split ones — and the old batch must drop
+        out entirely, matching the already-established "only OPEN batches
+        count" rule (test_closed_batch_excluded_from_raw_material_for)."""
+        self._create_raw_receipt(qty='10', cost='1000')
+        from datetime import datetime as _dt
+        day1 = timezone.make_aware(_dt(2026, 8, 10, 9, 0))
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.chipo,
+            recorded_by=self.owner, draw_qty=Decimal('1'),
+            received_on=day1.date(),
+        )
+        # Two sales before the cutoff (stay on the original, now-closed
+        # batch) and one after (belongs to the new split-off batch).
+        txn1 = Transaction.objects.create(
+            business=self.biz, item=self.chipo, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), kitchen_batch=batch, date=day1.date(),
+        )
+        Transaction.objects.filter(id=txn1.id).update(created_at=day1 + timedelta(hours=1))
+        batch.revenue_collected = Decimal('100')
+        batch.save(update_fields=['revenue_collected'])
+
+        pre_split = self.client.get('/kitchen/stock-receipt/list/').json()['open'][0]
+        self.assertEqual(pre_split['raw_material_for'][0]['open_batch_count'], 1)
+        self.assertEqual(pre_split['raw_material_for'][0]['revenue'], 100.0)
+
+        cutoff = day1 + timedelta(days=1)
+        new_txn = Transaction.objects.create(
+            business=self.biz, item=self.chipo, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('250'), kitchen_batch=batch, date=cutoff.date(),
+        )
+        Transaction.objects.filter(id=new_txn.id).update(created_at=cutoff + timedelta(hours=1))
+
+        batches = KitchenBatch.split_by_date_locked(
+            batch.id, self.biz, [cutoff], self.owner,
+        )
+        original, new_batch = batches
+        self.assertEqual(original.status, 'DEPLETED')
+        self.assertEqual(new_batch.status, 'OPEN')
+        self.assertEqual(new_batch.source_item_id, self.raw_potatoes.id)
+
+        post_split = self.client.get('/kitchen/stock-receipt/list/').json()['open'][0]
+        linked = post_split['raw_material_for']
+        self.assertEqual(len(linked), 1, 'The now-DEPLETED original batch must not still be counted')
+        self.assertEqual(linked[0]['open_batch_count'], 1)
+        self.assertEqual(linked[0]['cost'], float(new_batch.cost_total))
+        self.assertEqual(linked[0]['revenue'], 250.0, "The new batch's own revenue, not the old batch's 100")
+        self.assertEqual(linked[0]['profit'], 250.0 - float(new_batch.cost_total))
+
+    def test_receipt_line_current_balance_tracks_the_whole_gunia_drawdown(self):
+        """2026-08-16 live follow-up (Roy): "what about raw potatoes/whole
+        gunia tracking from which the chipo is drawn from" — the receipt's
+        own KES total is (correctly) the FIXED cost of what was originally
+        delivered, never live; the LIVE remaining-balance figure lives on
+        each line's current_balance field instead (Item.current_balance()
+        sums every real Transaction — the Receipt that brought the gunia
+        in, AND every Draw a batch/split has taken from it since — with no
+        type filter, so a Draw genuinely depletes it same as a sale would
+        for an ordinary item). This locks in that the whole chain actually
+        moves the number: receive 6, open one batch (draws 2), split it
+        (draws another 2 for the fresh segment) → 2 left, visible on the
+        receipt line, not just buried in the item's own stock list."""
+        self._create_raw_receipt(qty='6', cost='6800')
+        self.assertEqual(self.raw_potatoes.current_balance(), Decimal('6'))
+
+        from datetime import datetime as _dt
+        day1 = timezone.make_aware(_dt(2026, 8, 10, 9, 0))
+        batch = KitchenBatch.open_batch(
+            business=self.biz, store=self.store, item=self.chipo,
+            recorded_by=self.owner, draw_qty=Decimal('2'), received_on=day1.date(),
+        )
+        self.assertEqual(self.raw_potatoes.current_balance(), Decimal('4'))
+
+        cutoff = day1 + timedelta(days=1)
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.chipo, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), kitchen_batch=batch, date=cutoff.date(),
+        )
+        Transaction.objects.filter(id=txn.id).update(created_at=cutoff + timedelta(hours=1))
+        KitchenBatch.split_by_date_locked(batch.id, self.biz, [cutoff], self.owner)
+        self.assertEqual(self.raw_potatoes.current_balance(), Decimal('2'))
+
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        line = listing['open'][0]['lines'][0]
+        self.assertEqual(line['current_balance'], 2.0)
+        self.assertEqual(line['line_cost'], 6800.0, "the receipt's own KES total stays the fixed original delivery")
+
 
 class KitchenStockReceiptDeleteTest(TestCase):
     """2026-08-09 live report (Roy): "you have made the previous receipt
