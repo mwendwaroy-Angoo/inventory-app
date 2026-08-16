@@ -11527,6 +11527,170 @@ class DiagnoseReceiptCommandTest(TestCase):
         self.assertIn('--receipt', out.getvalue())
 
 
+class UnlinkTabFromReceiptCommandTest(TestCase):
+    """2026-08-16 correction tool, requested by Roy right after the
+    resolve_master_receipt/_sync_master_receipt_customer_name fixes shipped
+    — those stop FUTURE merges but do nothing for an already-wrongly-linked
+    receipt like the real, confirmed Receipt #705 (Monsoon Inn). Detaches
+    one BarTab from a receipt's linked_tab_ids and gives it a fresh
+    standalone receipt built from its own real entries."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Unlink Tab Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.chrome_gin = Item.objects.create(
+            business=self.biz, store=self.store, description='Chrome Gin 250ML',
+            material_no='UTB-01', unit='Pcs', selling_price=Decimal('150'),
+        )
+        self.kc = Item.objects.create(
+            business=self.biz, store=self.store, description='KC Smooth 750ML',
+            material_no='UTB-02', unit='Pcs', selling_price=Decimal('1100'),
+        )
+
+        self.peter_a = Customer.objects.create(business=self.biz, name='Peter')
+        self.peter_b = Customer.objects.create(business=self.biz, name='Peter')
+
+        self.old_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Peter', customer=self.peter_a,
+            status='SETTLED', tab_pin='8054',
+        )
+        old_txn = Transaction.objects.create(
+            business=self.biz, item=self.chrome_gin, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('150'), payment_method='mpesa', recipient='Peter',
+        )
+        BarTabEntry.objects.create(
+            tab=self.old_tab, transaction=old_txn, description='Chrome Gin 250ML',
+            amount=Decimal('150'), is_paid=True, payment_method='mpesa',
+        )
+        self.old_receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=705, token='ut-old-tok',
+            customer_name='Peter', payment_method='mpesa', total=Decimal('150'),
+            meta={'tab_id': self.old_tab.id, 'linked_tab_ids': []},
+        )
+
+        self.new_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Peter', customer=self.peter_b,
+            status='OPEN', tab_pin='5407',
+        )
+        new_txn = Transaction.objects.create(
+            business=self.biz, item=self.kc, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('1100'), payment_method='', recipient='Peter',
+        )
+        BarTabEntry.objects.create(
+            tab=self.new_tab, transaction=new_txn, description='KC Smooth 750ML',
+            amount=Decimal('1100'), is_paid=False,
+        )
+        # The wrongful merge itself — exactly what the old, unfixed code did.
+        self.old_receipt.meta['linked_tab_ids'] = [self.new_tab.id]
+        self.old_receipt.save(update_fields=['meta'])
+
+    def test_dry_run_writes_nothing(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command(
+            'unlink_tab_from_receipt', business='Unlink Tab', receipt=705,
+            tab=self.new_tab.id, dry_run=True, stdout=out,
+        )
+        self.assertIn('DRY RUN', out.getvalue())
+        self.old_receipt.refresh_from_db()
+        self.assertIn(self.new_tab.id, self.old_receipt.meta.get('linked_tab_ids', []))
+        self.assertEqual(Receipt.objects.filter(business=self.biz).count(), 1)
+
+    def test_unlink_detaches_tab_and_creates_standalone_receipt(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command(
+            'unlink_tab_from_receipt', business='Unlink Tab', receipt=705,
+            tab=self.new_tab.id, stdout=out,
+        )
+        self.assertIn('unlinked', out.getvalue())
+
+        self.old_receipt.refresh_from_db()
+        self.assertNotIn(self.new_tab.id, self.old_receipt.meta.get('linked_tab_ids', []))
+        self.assertEqual(self.old_receipt.meta.get('tab_id'), self.old_tab.id)
+        # The old receipt itself must be completely untouched otherwise.
+        self.assertEqual(self.old_receipt.total, Decimal('150'))
+        self.assertEqual(self.old_receipt.customer_name, 'Peter')
+
+        new_rcpt = Receipt.objects.filter(business=self.biz).exclude(id=self.old_receipt.id).first()
+        self.assertIsNotNone(new_rcpt)
+        self.assertEqual(new_rcpt.meta.get('tab_id'), self.new_tab.id)
+        self.assertEqual(new_rcpt.customer_name, 'Peter')
+        self.assertEqual(new_rcpt.payment_method, 'tab')
+        self.assertEqual(new_rcpt.total, Decimal('1100'))
+        self.assertEqual(len(new_rcpt.lines), 1)
+        self.assertEqual(new_rcpt.lines[0]['name'], 'KC Smooth 750ML')
+
+    def test_public_url_resolution_now_points_to_the_new_receipt(self):
+        from django.core.management import call_command
+        from core.keg_views import _resolve_tab_public_url
+        call_command('unlink_tab_from_receipt', business='Unlink Tab', receipt=705, tab=self.new_tab.id)
+        new_rcpt = Receipt.objects.filter(business=self.biz).exclude(id=self.old_receipt.id).first()
+        self.assertEqual(_resolve_tab_public_url(self.new_tab), f'/r/{new_rcpt.token}/')
+        # The old tab's own resolution is completely unaffected.
+        self.assertEqual(_resolve_tab_public_url(self.old_tab), f'/r/{self.old_receipt.token}/')
+
+    def test_refuses_to_unlink_the_receipts_own_primary_tab(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command(
+            'unlink_tab_from_receipt', business='Unlink Tab', receipt=705,
+            tab=self.old_tab.id, stdout=out,
+        )
+        self.assertIn('OWN primary tab', out.getvalue())
+        self.old_receipt.refresh_from_db()
+        self.assertEqual(self.old_receipt.meta.get('tab_id'), self.old_tab.id)
+        self.assertEqual(Receipt.objects.filter(business=self.biz).count(), 1)
+
+    def test_refuses_when_tab_not_linked_at_all(self):
+        from io import StringIO
+        from django.core.management import call_command
+        unrelated_tab = BarTab.objects.create(business=self.biz, customer_name='Nobody', status='OPEN')
+        out = StringIO()
+        call_command(
+            'unlink_tab_from_receipt', business='Unlink Tab', receipt=705,
+            tab=unrelated_tab.id, stdout=out,
+        )
+        self.assertIn('not in this receipt', out.getvalue())
+        self.assertEqual(Receipt.objects.filter(business=self.biz).count(), 1)
+
+    def test_lookup_by_token(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command(
+            'unlink_tab_from_receipt', business='Unlink Tab', token='ut-old-tok',
+            tab=self.new_tab.id, stdout=out,
+        )
+        self.assertIn('unlinked', out.getvalue())
+
+    def test_no_matching_receipt_does_not_crash(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command(
+            'unlink_tab_from_receipt', business='Unlink Tab', receipt=999,
+            tab=self.new_tab.id, stdout=out,
+        )
+        self.assertIn('No matching receipt', out.getvalue())
+
+    def test_ambiguous_business_match_refused(self):
+        Business.objects.create(name='Unlink Tab Biz Two')
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command(
+            'unlink_tab_from_receipt', business='Unlink Tab', receipt=705,
+            tab=self.new_tab.id, stdout=out,
+        )
+        self.assertIn('Ambiguous', out.getvalue())
+        self.old_receipt.refresh_from_db()
+        self.assertIn(self.new_tab.id, self.old_receipt.meta.get('linked_tab_ids', []))
+
+
 class BackfillWasCreditRetiredTest(TestCase):
     """2026-08-15, same day it shipped — RETIRED. Live report (Roy, with
     screenshots): running this command resurrected EVERY customer's ENTIRE
