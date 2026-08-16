@@ -6680,7 +6680,25 @@ class KitchenBatch(models.Model):
         """
         from django.db import transaction as _txn
         with _txn.atomic():
-            batch = cls.objects.select_for_update().select_related('item', 'store').get(
+            # 2026-08-16 live report (Roy): the REAL crash — confirmed via
+            # Render's own traceback, not guessed — was
+            # `psycopg2.errors.FeatureNotSupported: FOR UPDATE cannot be
+            # applied to the nullable side of an outer join`.
+            # KitchenBatch.store is `null=True` (unlike .item, which is
+            # NOT NULL) — select_related('store') therefore forces a LEFT
+            # OUTER JOIN, and PostgreSQL refuses to combine that with
+            # select_for_update() no matter what the actual data is (this
+            # fails on every call, unconditionally — not data-dependent).
+            # SQLite has no such restriction, so no test in this sandbox
+            # could have caught it. Swept every other select_for_update()
+            # + select_related() pairing in this file (BarTabEntry's
+            # .transaction/.tab, both NOT NULL) — none of them touch a
+            # nullable FK, so this was an isolated case, not a systemic
+            # pattern. Fixed by dropping 'store' from select_related — Django
+            # lazy-loads batch.store via a separate, ordinary query the one
+            # time it's read below, which is fully safe; 'item' (NOT NULL,
+            # a safe INNER JOIN) stays.
+            batch = cls.objects.select_for_update().select_related('item').get(
                 id=batch_id, business=business,
             )
             if batch.status != 'OPEN':
