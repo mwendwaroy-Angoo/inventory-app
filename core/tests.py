@@ -15771,6 +15771,88 @@ class PettyCashAccountabilityTest(TestCase):
         self.assertEqual(len(list(resp.context['entries'])), 1)
 
 
+class HomeDashboardStaffPettyCashBannerTest(TestCase):
+    """2026-08-17 live request (Roy, third time asked): the /petty-cash/
+    self-service page already lets staff view/edit their own entries
+    (2026-07-26, widened 2026-08-11), but nothing on the home dashboard
+    ever told a staffer it existed — only the owner's "pending your
+    review" banner was ever wired into home.html. Staff now get a
+    parallel banner naming their OWN pending/rejected entries."""
+
+    def setUp(self):
+        from core.models import PettyCash
+        self.PettyCash = PettyCash
+        self.biz = Business.objects.create(name='Dash Petty Cash Biz')
+        self.owner = User.objects.create_user(username='dpc_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='dpc_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.other_staff = User.objects.create_user(username='dpc_other', password='x')
+        UserProfile.objects.create(user=self.other_staff, business=self.biz, role='staff')
+
+    def test_staff_sees_own_pending_entry_banner(self):
+        self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('200'), reason='fuel',
+            recorded_by=self.staff, date=timezone.localdate(), status='pending',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['my_petty_cash_pending_count'], 1)
+        self.assertContains(resp, 'inasubiri idhini ya mmiliki')
+
+    def test_staff_sees_rejected_entry_banner_worded_differently(self):
+        self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('200'), reason='fuel',
+            recorded_by=self.staff, date=timezone.localdate(), status='rejected',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['my_petty_cash_rejected_count'], 1)
+        self.assertContains(resp, 'zilikataliwa')
+
+    def test_staff_never_sees_another_staffers_entries_in_their_own_count(self):
+        self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('200'), reason='fuel',
+            recorded_by=self.other_staff, date=timezone.localdate(), status='pending',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['my_petty_cash_pending_count'], 0)
+        self.assertNotContains(resp, 'inasubiri idhini ya mmiliki')
+
+    def test_no_banner_when_staff_has_nothing_pending_or_rejected(self):
+        self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('200'), reason='fuel',
+            recorded_by=self.staff, date=timezone.localdate(), status='approved',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['my_petty_cash_pending_count'], 0)
+        self.assertEqual(resp.context['my_petty_cash_rejected_count'], 0)
+
+    def test_owner_never_sees_the_staff_self_banner(self):
+        """Owner sees the existing review-facing banner instead — the new
+        staff banner must always compute to 0 for owner/manager."""
+        self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('200'), reason='fuel',
+            recorded_by=self.staff, date=timezone.localdate(), status='pending',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['my_petty_cash_pending_count'], 0)
+        self.assertEqual(resp.context['my_petty_cash_rejected_count'], 0)
+        self.assertNotContains(resp, 'inasubiri idhini ya mmiliki')
+
+    def test_pending_link_goes_to_petty_cash_page(self):
+        self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('200'), reason='fuel',
+            recorded_by=self.staff, date=timezone.localdate(), status='pending',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/')
+        self.assertContains(resp, '/petty-cash/')
+
+
 class PettyCashReviewUndoTest(TestCase):
     """2026-07-25 live report: Roy rejected a petty cash entry by mistake and had
     no way to reverse it. review_petty_cash() never actually blocked re-review —
@@ -26756,6 +26838,95 @@ class StockListBatchMetricsTest(TestCase):
             f"stock_list issued {len(ctx.captured_queries)} queries for 23 items — "
             "the batch-metrics helper should keep this roughly constant, not scale per item.",
         )
+
+
+class NeedsReorderRespectsExplicitLevelTest(TestCase):
+    """2026-08-17 live report (Roy): Dallas — reorder_level=6, reorder_
+    quantity=12, balance=21 — still showed "Reorder" on the stock list.
+    Root cause: needs_reorder() took max(reorder_level, reorder_point()),
+    and reorder_point() (lead_time_days × avg_daily_issues + safety_days ×
+    avg_daily_issues) uses field defaults of 7 and 2 days — never zero
+    unless an owner explicitly changes them — so for any item selling
+    briskly enough this dynamic, forecast-based number silently climbed
+    ABOVE the owner's own explicitly-configured reorder_level, with
+    nothing on the stock list showing why. Fixed so the owner's own
+    configured reorder_level (once set, non-zero) is authoritative;
+    reorder_point() is now only a fallback SUGGESTION for an item that has
+    never had one configured at all."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Reorder Threshold Biz')
+        self.store = Store.objects.create(business=self.biz, name='Liquor Store')
+        self.owner = User.objects.create_user(username='reorder_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+    def _make_fast_seller(self, reorder_level, balance, daily_qty=9, days=10):
+        # avg_daily_issues() always divides by a fixed 30-day window
+        # regardless of how many days actually have history — daily_qty=9
+        # over 10 days = 90 total issued, i.e. avg_daily_issues=3.0/day,
+        # driving reorder_point() = round(3*7) + round(3*2) = 27, comfortably
+        # above a balance of 21.
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Dallas',
+            material_no='RT-DALLAS', unit='250ml', selling_price=Decimal('200'),
+            opening_bin_balance=balance + daily_qty * days,
+            reorder_level=reorder_level, reorder_quantity=12,
+            lead_time_days=7, safety_days=2,  # the real, never-zero defaults
+        )
+        for day_offset in range(1, days + 1):
+            Transaction.objects.create(
+                business=self.biz, item=item, type='Issue',
+                qty=Decimal(str(-daily_qty)), recorded_by=self.owner,
+                date=timezone.now().date() - timedelta(days=day_offset),
+            )
+        return item
+
+    def test_explicit_reorder_level_wins_over_a_higher_computed_reorder_point(self):
+        """The literal reported scenario: balance 21, reorder_level 6, but
+        brisk enough sales history that reorder_point() alone computes
+        above 21 — must NOT flag Reorder."""
+        item = self._make_fast_seller(reorder_level=6, balance=21)
+        # Sanity: this scenario genuinely exercises the interesting case —
+        # the computed ROP really is above both the balance and the level.
+        self.assertGreater(item.reorder_point(), 21)
+        self.assertGreater(item.reorder_point(), 6)
+        self.assertFalse(item.needs_reorder())
+
+    def test_balance_genuinely_below_explicit_level_still_flags(self):
+        item = self._make_fast_seller(reorder_level=6, balance=5)
+        self.assertTrue(item.needs_reorder())
+
+    def test_zero_reorder_level_falls_back_to_computed_reorder_point(self):
+        """An item with NO reorder_level ever configured (0/blank) still
+        gets a sensible default via the forecast-based reorder_point() —
+        this fallback is unchanged, only the priority when a real level IS
+        set has flipped."""
+        item = self._make_fast_seller(reorder_level=0, balance=21)
+        self.assertGreater(item.reorder_point(), 21)
+        self.assertTrue(item.needs_reorder())
+
+    def test_stock_list_reflects_the_fix_end_to_end(self):
+        item = self._make_fast_seller(reorder_level=6, balance=21)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/')
+        body = resp.content.decode()
+        idx = body.find('Dallas')
+        self.assertNotEqual(idx, -1)
+        # The badge for this row must say Available, not Reorder — scope
+        # the check to a window right after the item's own name so an
+        # unrelated row's badge can't accidentally satisfy the assertion.
+        window = body[idx:idx + 800]
+        self.assertNotIn('Reorder', window)
+
+    def test_batch_metrics_matches_the_fixed_model_method(self):
+        """The stock_list page uses _batch_stock_metrics(), a separate
+        hand-mirrored implementation for query-count reasons — must move
+        in lockstep with the real fix, not just Item.needs_reorder()."""
+        from core.views import _batch_stock_metrics
+        item = self._make_fast_seller(reorder_level=6, balance=21)
+        _batch_stock_metrics([item])
+        self.assertEqual(item.stock_needs_reorder, item.needs_reorder())
+        self.assertFalse(item.stock_needs_reorder)
 
 
 class AddTransactionStoreAccessGateTest(TestCase):

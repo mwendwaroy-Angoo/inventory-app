@@ -356,7 +356,7 @@ def home(request):
                 context['items_missing_cost_price'] = []
                 context['missing_cost_price_count'] = 0
 
-            # Petty cash pending review count
+            # Petty cash pending review count (owner/manager banner)
             try:
                 from .models import PettyCash as _PettyCash
                 context['pending_petty_cash_count'] = _PettyCash.objects.filter(
@@ -364,6 +364,29 @@ def home(request):
                 ).count()
             except Exception:
                 context['pending_petty_cash_count'] = 0
+
+            # Staff's OWN counter cash (petty cash) entries needing attention —
+            # 2026-08-17 live request (Roy, third time asked): the underlying
+            # self-service page (/petty-cash/, 2026-07-26/2026-08-11 — staff
+            # can already view/edit/respond to their own entries there) had
+            # no entry point from the home dashboard, unlike the owner's own
+            # "pending your review" banner above. Never computed for owner/
+            # manager, who see the review-facing banner instead.
+            try:
+                if not user_profile.is_owner_or_manager:
+                    from .models import PettyCash as _PettyCashMine
+                    context['my_petty_cash_pending_count'] = _PettyCashMine.objects.filter(
+                        business=business, recorded_by=request.user, status='pending'
+                    ).count()
+                    context['my_petty_cash_rejected_count'] = _PettyCashMine.objects.filter(
+                        business=business, recorded_by=request.user, status='rejected'
+                    ).count()
+                else:
+                    context['my_petty_cash_pending_count'] = 0
+                    context['my_petty_cash_rejected_count'] = 0
+            except Exception:
+                context['my_petty_cash_pending_count'] = 0
+                context['my_petty_cash_rejected_count'] = 0
 
             # Expiry alerts
             try:
@@ -1014,7 +1037,12 @@ def _batch_stock_metrics(items):
             item.stock_recommended_order_qty = max(min_qty, int(req))
 
         try:
-            item.stock_needs_reorder = (balance + on_order) <= max(item.reorder_level or 0, reorder_point)
+            # Mirrors Item.needs_reorder()'s own 2026-08-17 fix exactly —
+            # the owner's explicit reorder_level is authoritative once set,
+            # reorder_point is only a fallback for an item with none
+            # configured. See that method's docstring for the live bug.
+            threshold = item.reorder_level if item.reorder_level else reorder_point
+            item.stock_needs_reorder = (balance + on_order) <= threshold
         except Exception:
             item.stock_needs_reorder = balance <= item.reorder_level
 

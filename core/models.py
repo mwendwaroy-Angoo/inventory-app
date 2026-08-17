@@ -949,9 +949,23 @@ class Item(models.Model):
         return max(min_qty, int(req))
 
     def needs_reorder(self):
-        # Prefer computed ROP if available; fall back to legacy reorder_level
+        # 2026-08-17 live report (Roy): Dallas — reorder_level=6,
+        # balance=21 — still showed "Reorder" business-wide. Root cause:
+        # the OLD formula took max(reorder_level, reorder_point()), and
+        # reorder_point() (lead_time_days × avg_daily_issues + safety_days
+        # × avg_daily_issues) uses field defaults of 7 and 2 days — NEVER
+        # zero unless an owner explicitly changes them — so for any
+        # reasonably fast-selling item this dynamic, forecast-based number
+        # can silently climb ABOVE an owner's own explicitly-configured
+        # reorder_level, with nothing on the stock list showing why. An
+        # owner who types "6" is saying "alert me at 6," not "alert me at
+        # 6 unless the system privately disagrees." The owner's own
+        # configured reorder_level is now authoritative once set (non-
+        # zero) — reorder_point() is only a fallback SUGGESTION for an
+        # item that has never had one configured at all.
         try:
-            return (self.current_balance() + self.on_order()) <= max(self.reorder_level or 0, self.reorder_point())
+            threshold = self.reorder_level if self.reorder_level else self.reorder_point()
+            return (self.current_balance() + self.on_order()) <= threshold
         except Exception:
             return self.current_balance() <= self.reorder_level
 
