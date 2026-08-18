@@ -10845,6 +10845,321 @@ class DoSettleDebtPaymentTransactionSyncTest(TestCase):
         self.assertFalse(open_entry.is_paid, "an OPEN tab's own entries are not debt yet")
 
 
+class RevertDebtPaymentTest(TestCase):
+    """2026-08-18 live request (Roy): "create a way for the business user
+    ... to revert recorded debt back to the status it was before ... staff
+    recorded a debt mistakenly when it was not paid for ... make sure the
+    accounts for that day adjust accordingly." A recorded CustomerDebtPayment
+    can now be soft-reverted (never hard-deleted — matches this app's
+    correction convention) by the owner, or by a manager/staff member
+    explicitly granted can_revert_debt_payment. Restores the customer's
+    outstanding balance and rebuilds tab-linked entry state by replaying
+    every remaining payment, which then automatically flows through to
+    every live-computed accounting figure (till_expected_cash,
+    shift_views._reconcile, credit_policy scoring, haki contribution) since
+    none of them cache — see revert_debt_payment()'s own docstring for the
+    full swept list."""
+
+    def setUp(self):
+        from core.models import CustomerDebtPayment
+        self.CustomerDebtPayment = CustomerDebtPayment
+        self.biz = Business.objects.create(name='Revert Debt Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rdp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='rdp_manager', password='x')
+        self.manager_profile = UserProfile.objects.create(
+            user=self.manager, business=self.biz, role='manager',
+        )
+        self.staff = User.objects.create_user(username='rdp_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff, business=self.biz, role='staff',
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='RDP-01', unit='Pcs', selling_price=Decimal('80'),
+            cost_price=Decimal('40'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Roy', credit_approved=True,
+        )
+
+    def _debt_converted_tab_with_entry(self, amount, day=None):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=amount, payment_method='credit', recipient='Roy',
+            **({'date': day} if day else {}),
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Keg Gold', amount=amount,
+            is_paid=False,
+        )
+        return tab, entry, txn
+
+    # ── Permission gate ──────────────────────────────────────────────────
+
+    def test_owner_always_allowed(self):
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'mistake'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_staff_without_toggle_blocked(self):
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'mistake'})
+        self.assertEqual(resp.status_code, 403)
+        payment.refresh_from_db()
+        self.assertFalse(payment.reverted)
+
+    def test_manager_without_toggle_blocked(self):
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'mistake'})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_staff_with_toggle_and_open_shift_allowed(self):
+        from core.debt_views import _do_settle_debt_payment
+        self.staff_profile.can_revert_debt_payment = True
+        self.staff_profile.save(update_fields=['can_revert_debt_payment'])
+        Shift.objects.create(business=self.biz, store=self.store, staff=self.staff, status='OPEN')
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'mistake'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_staff_with_toggle_but_no_shift_blocked(self):
+        from core.debt_views import _do_settle_debt_payment
+        self.staff_profile.can_revert_debt_payment = True
+        self.staff_profile.save(update_fields=['can_revert_debt_payment'])
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'mistake'})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_manager_with_toggle_allowed_no_shift_needed(self):
+        from core.debt_views import _do_settle_debt_payment
+        self.manager_profile.can_revert_debt_payment = True
+        self.manager_profile.save(update_fields=['can_revert_debt_payment'])
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'mistake'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_already_reverted_returns_conflict(self):
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.owner)
+        self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'x'})
+        resp = self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'y'})
+        self.assertEqual(resp.status_code, 409)
+
+    # ── Correctness: non-tab-linked (direct credit sale) debt ──────────────
+
+    def test_non_tab_linked_debt_restored_after_revert(self):
+        from core.debt_views import _do_settle_debt_payment, _get_customer_debt_data
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Roy',
+        )
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('80'), 'mpesa', 'bar')
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(float(data['outstanding']), 0.0)
+
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'never paid'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertEqual(resp.json()['outstanding'], 80.0)
+
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(float(data['outstanding']), 80.0, 'the debt must be fully restored')
+        payment.refresh_from_db()
+        self.assertTrue(payment.reverted)
+        self.assertEqual(payment.reverted_by_id, self.owner.id)
+        self.assertEqual(payment.revert_reason, 'never paid')
+
+    # ── Correctness: tab-linked (debt-converted tab) debt ───────────────────
+
+    def test_tab_linked_entry_restored_after_revert(self):
+        from core.debt_views import _do_settle_debt_payment, _get_customer_debt_data
+        tab, entry, txn = self._debt_converted_tab_with_entry(Decimal('80'))
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('80'), 'mpesa', 'bar')
+        entry.refresh_from_db()
+        txn.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(txn.payment_method, 'mpesa')
+
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.owner)
+        self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'mistake'})
+
+        entry.refresh_from_db()
+        txn.refresh_from_db()
+        self.assertFalse(entry.is_paid, 'the entry must go back to unpaid')
+        self.assertEqual(entry.amount_paid, Decimal('0'))
+        self.assertEqual(
+            txn.payment_method, 'credit',
+            "the transaction must go back to 'credit' — genuinely owed again",
+        )
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(float(data['outstanding']), 80.0)
+
+    def test_reverting_an_earlier_payment_reassigns_fifo_coverage_correctly(self):
+        """The real edge case this feature's whole design (reset + replay,
+        not a surgical un-apply pinned to specific entries) exists for:
+        this app's own FIFO policy never ties a specific payment to a
+        specific transaction (CustomerDebtPayment's own docstring: "oldest
+        debt is cleared first") — it dynamically covers whichever debt is
+        OLDEST at the time each payment lands. So reverting the FIRST of
+        three payments correctly means the two REMAINING real payments
+        (160 KES) now cover the two OLDEST debts (e1+e2, 160 KES total),
+        leaving the NEWEST (e3) outstanding — not "e1 alone reopens,"
+        which would require entry-to-payment pinning this app never does."""
+        from core.debt_views import _do_settle_debt_payment, _get_customer_debt_data
+        t1, e1, txn1 = self._debt_converted_tab_with_entry(Decimal('80'), day=date(2026, 8, 1))
+        t2, e2, txn2 = self._debt_converted_tab_with_entry(Decimal('80'), day=date(2026, 8, 5))
+        t3, e3, txn3 = self._debt_converted_tab_with_entry(Decimal('80'), day=date(2026, 8, 9))
+
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('80'), 'cash', 'bar')  # originally covers e1
+        p1 = self.CustomerDebtPayment.objects.filter(customer=self.customer).order_by('paid_at').first()
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('80'), 'mpesa', 'bar')  # originally covers e2
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('80'), 'cash', 'bar')  # originally covers e3
+
+        e1.refresh_from_db(); e2.refresh_from_db(); e3.refresh_from_db()
+        self.assertTrue(e1.is_paid and e2.is_paid and e3.is_paid)
+
+        # Revert the FIRST payment (80 KES, phantom — customer never paid it).
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/payment/{p1.id}/revert/', {'reason': 'never paid'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+        e1.refresh_from_db(); e2.refresh_from_db(); e3.refresh_from_db()
+        txn1.refresh_from_db(); txn2.refresh_from_db(); txn3.refresh_from_db()
+        # The two remaining REAL payments (mpesa 80 + cash 80 = 160) now
+        # FIFO-cover the two OLDEST debts (e1 + e2), each attributed to
+        # whichever remaining payment reached it first in the replay.
+        self.assertTrue(e1.is_paid, 'e1 (oldest) is now covered by the first remaining real payment')
+        self.assertEqual(txn1.payment_method, 'mpesa')
+        self.assertTrue(e2.is_paid, 'e2 is covered by the second remaining real payment')
+        self.assertEqual(txn2.payment_method, 'cash')
+        self.assertFalse(e3.is_paid, 'e3 (newest) is the one still genuinely unpaid — only 160 of 240 is real')
+        self.assertEqual(txn3.payment_method, 'credit')
+
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(float(data['outstanding']), 80.0, 'exactly one 80 KES debt remains unpaid')
+
+    # ── Accounts adjust correctly ("for that day") ──────────────────────────
+
+    def test_reverted_payment_excluded_from_shift_reconcile_cash_recovered(self):
+        from core.debt_views import _do_settle_debt_payment
+        from core.shift_views import _reconcile
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner, status='OPEN',
+        )
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+
+        before = _reconcile(shift)
+        self.assertGreaterEqual(before['debt_recovered_cash'], 100.0)
+
+        self.client.force_login(self.owner)
+        self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'never paid'})
+
+        after = _reconcile(shift)
+        self.assertEqual(
+            after['debt_recovered_cash'], before['debt_recovered_cash'] - 100.0,
+            "reverting must remove exactly this payment's amount from the shift's "
+            'cash-recovered-from-debt figure',
+        )
+
+    def test_reverted_payment_excluded_from_till_expected_cash(self):
+        from core.debt_views import _do_settle_debt_payment
+        from core.shift_views import till_expected_cash
+        # till_expected_cash() anchors on the last CLOSED/CONFIRMED shift
+        # with a real physical cash count — excludes an owner-staffed shift
+        # (see that function's own docstring) — so the anchor must belong
+        # to a non-owner staffer, already ended, before the debt payment.
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff, status='CLOSED',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('0'), station='bar',
+        )
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+
+        before = till_expected_cash(self.biz, 'bar')
+        self.client.force_login(self.owner)
+        self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'never paid'})
+        after = till_expected_cash(self.biz, 'bar')
+        self.assertEqual(
+            after['expected_cash'], before['expected_cash'] - 100.0,
+            'the continuous till figure must also drop by the reverted amount',
+        )
+
+    # ── Notification ─────────────────────────────────────────────────────
+
+    def test_owner_manager_notified_of_revert(self):
+        from core.debt_views import _do_settle_debt_payment
+        from core.models import Notification
+        _do_settle_debt_payment(
+            self.customer, self.biz, Decimal('100'), 'cash', 'bar', recorded_by=self.staff,
+        )
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.manager)
+        self.manager_profile.can_revert_debt_payment = True
+        self.manager_profile.save(update_fields=['can_revert_debt_payment'])
+        self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'never paid'})
+        self.assertTrue(
+            Notification.objects.filter(user=self.owner, title__icontains='Tenguliwa').exists(),
+            'owner must be notified a debt payment was reverted',
+        )
+        self.assertTrue(
+            Notification.objects.filter(user=self.staff, title__icontains='Tenguliwa').exists(),
+            'the original recorder must be notified too, since it was their entry',
+        )
+
+    # ── Template surfaces ────────────────────────────────────────────────
+
+    def test_revert_button_shown_only_when_permitted(self):
+        # The revertDebtPayment() JS function definition is always present
+        # in the page (unconditional <script> block) — what must actually
+        # be gated is the per-row button that CALLS it.
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        self.client.force_login(self.staff)
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertNotContains(resp, 'onclick="revertDebtPayment(')
+
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertContains(resp, 'onclick="revertDebtPayment(')
+
+    def test_reverted_payment_shows_badge_not_hidden(self):
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('100'), 'cash', 'bar')
+        payment = self.CustomerDebtPayment.objects.get(customer=self.customer)
+        self.client.force_login(self.owner)
+        self.client.post(f'/debt/payment/{payment.id}/revert/', {'reason': 'never paid'})
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertContains(resp, 'Reverted')
+
+
 class TransactionWasCreditFieldTest(TestCase):
     """2026-08-15 live report (Roy, Monsoon Inn): "Total Paid" exceeding
     "Total Credit" on the debt tracker, with genuinely-still-owed items

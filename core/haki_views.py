@@ -113,7 +113,7 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
             recorded_by=user,
             paid_at__date__gte=date_from,
             paid_at__date__lte=date_to,
-        ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        ).exclude(reverted=True).aggregate(total=Sum('amount_paid'))['total'] or 0
     )
 
     # ── Keg clean-handling from shrinkage module ──

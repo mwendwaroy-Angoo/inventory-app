@@ -192,7 +192,7 @@ def _count_late_repayments(customer, business, scope, window, threshold):
     payments = list(
         CustomerDebtPayment.objects.filter(
             customer=customer, business=business
-        ).order_by('paid_at')
+        ).exclude(reverted=True).order_by('paid_at')
     )
     if not payments:
         return 0

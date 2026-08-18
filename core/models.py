@@ -2651,6 +2651,22 @@ class CustomerDebtPayment(models.Model):
         null=True, blank=True,
         related_name='debt_payments_recorded',
     )
+    # 2026-08-18 live request (Roy — "staff recorded a debt mistakenly when
+    # it was not paid for"): soft-delete/correction fields, not a hard
+    # delete — this app never destroys a financial record for a correction,
+    # it marks it and keeps the trail (same convention as WriteOffRequest,
+    # BarTab.void_reason, etc). Every query that sums/lists real payments
+    # (debt outstanding, till/shift cash figures, staff contribution,
+    # late-repayment scoring) must exclude reverted=True — see
+    # revert_debt_payment()'s own docstring in debt_views.py for the full
+    # list of call sites this was swept across.
+    reverted = models.BooleanField(default=False)
+    reverted_at = models.DateTimeField(null=True, blank=True)
+    reverted_by = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='debt_payments_reverted',
+    )
+    revert_reason = models.CharField(max_length=200, blank=True)
 
     class Meta:
         ordering = ['-paid_at']

@@ -608,9 +608,9 @@
 <div class="section-card">
     <div class="section-card-header">
         <h6>✅ {% trans 'Payment History' %}</h6>
-        <span style="color:#888; font-size:0.78rem;">{{ payments|length }} {% trans 'payment(s)' %}</span>
+        <span style="color:#888; font-size:0.78rem;">{{ payment_history|length }} {% trans 'payment(s)' %}</span>
     </div>
-    {% if payments %}
+    {% if payment_history %}
     <div class="table-responsive">
         <table class="table mb-0">
             <thead style="background:rgba(255,255,255,0.02);">
@@ -620,12 +620,13 @@
                     <th class="py-2 text-end">{% trans 'Amount' %}</th>
                     <th class="py-2">{% trans 'Recorded By' %}</th>
                     <th class="py-2 pe-4">{% trans 'Notes' %}</th>
+                    <th class="py-2 pe-4"></th>
                 </tr>
             </thead>
             <tbody>
-                {% for payment in payments %}
-                <tr class="txn-row">
-                    <td class="ps-4">{{ payment.paid_at|date:"d M Y, H:i" }}</td>
+                {% for payment in payment_history %}
+                <tr class="txn-row" {% if payment.reverted %}style="opacity:.55;"{% endif %}>
+                    <td class="ps-4" {% if payment.reverted %}style="text-decoration:line-through;"{% endif %}>{{ payment.paid_at|date:"d M Y, H:i" }}</td>
                     <td>
                         {% if payment.payment_method == 'mpesa' %}
                         <span style="color:#6ee7b7;">📱 M-Pesa</span>
@@ -633,7 +634,7 @@
                         <span style="color:#fbbf24;">💵 {% trans 'Cash' %}</span>
                         {% endif %}
                     </td>
-                    <td class="text-end" style="color:#6ee7b7; font-weight:600;">
+                    <td class="text-end" style="font-weight:600; {% if payment.reverted %}text-decoration:line-through; color:#888;{% else %}color:#6ee7b7;{% endif %}">
                         KES {{ payment.amount_paid|floatformat:2 }}
                     </td>
                     <td style="color:#b0b0b0; font-size:0.82rem;">
@@ -652,7 +653,21 @@
                         {% endif %}
                     </td>
                     <td style="color:#888; font-size:0.82rem;" class="pe-4">
+                        {% if payment.reverted %}
+                        <span style="color:#f87171; font-weight:600;">↩️ {% trans 'Reverted' %}</span>
+                        {% if payment.reverted_by %} — {{ payment.reverted_by.get_full_name|default:payment.reverted_by.username }}{% endif %}
+                        {% if payment.revert_reason %}: {{ payment.revert_reason }}{% endif %}
+                        {% else %}
                         {{ payment.notes|default:'—' }}
+                        {% endif %}
+                    </td>
+                    <td class="pe-4 text-end">
+                        {% if not payment.reverted and can_revert_debt_payment %}
+                        <button type="button" class="btn btn-sm" onclick="revertDebtPayment({{ payment.id }}, '{{ payment.amount_paid|floatformat:0 }}')"
+                                style="background:transparent; border:1px solid #f87171; color:#f87171; font-size:0.75rem;">
+                            ↩️ {% trans 'Tengua' %}
+                        </button>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -665,6 +680,25 @@
     </div>
     {% endif %}
 </div>
+
+<script>
+function revertDebtPayment(paymentId, amount) {
+    if (!confirm('Una uhakika unataka kutengua malipo ya KES ' + amount + '? Deni litarudi kuonekana halijalipwa, na hesabu za siku hiyo zitasahihishwa.')) return;
+    var reason = prompt('Sababu ya kutengua (hiari):', '') || '';
+    var csrf = document.querySelector('[name=csrfmiddlewaretoken]');
+    fetch('/debt/payment/' + paymentId + '/revert/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'reason=' + encodeURIComponent(reason) + '&csrfmiddlewaretoken=' + encodeURIComponent(csrf ? csrf.value : ''),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) { alert(d.message); location.reload(); }
+        else { alert('Hitilafu: ' + (d.error || 'Jaribu tena.')); }
+    })
+    .catch(function() { alert('Hitilafu ya mtandao. Jaribu tena.'); });
+}
+</script>
 
 <!-- Per-customer credit settings (staff + owner) -->
 <div class="section-card">

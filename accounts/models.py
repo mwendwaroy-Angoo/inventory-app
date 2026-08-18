@@ -540,6 +540,19 @@ class UserProfile(models.Model):
             'that final decision always requires the owner.'
         ),
     )
+    can_revert_debt_payment = models.BooleanField(
+        default=False,
+        help_text=(
+            '2026-08-18 live request (Roy — "staff recorded a debt mistakenly when it was '
+            'not paid for"): staff or manager may revert (undo) a recorded debt payment — '
+            'restoring the customer\'s outstanding balance and correctly removing the amount '
+            "from that day's cash/mpesa till figures. Owner/manager-only by default; grant "
+            'explicitly to a specific staffer or manager to let them self-correct without '
+            "waiting for the owner. Distinct from can_approve_debt_erase (that toggle is for "
+            "erasing a debt that was never real; this one is for un-recording a payment that "
+            "was never actually received)."
+        ),
+    )
 
     # ── Session Control ────────────────────────────────────────────────
     current_session_key = models.CharField(

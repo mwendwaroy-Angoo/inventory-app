@@ -602,7 +602,7 @@ def _reconcile(shift):
     debt_qs = CustomerDebtPayment.objects.filter(
         _segments_q('paid_at', segments),
         business=shift.business,
-    )
+    ).exclude(reverted=True)
     if staff_role != 'owner':
         debt_qs = debt_qs.filter(source=_shift_stn)
     debt_recovered_cash  = float(debt_qs.filter(payment_method='cash' ).aggregate(t=Sum('amount_paid'))['t'] or 0)
@@ -833,7 +833,7 @@ def till_expected_cash(business, station, as_of=None):
     debt_qs = CustomerDebtPayment.objects.filter(
         business=business, payment_method='cash',
         source=('kitchen' if is_kitchen else 'bar'), paid_at__lte=as_of,
-    )
+    ).exclude(reverted=True)
     if window_start:
         debt_qs = debt_qs.filter(paid_at__gt=window_start)
     debt_recovered = float(debt_qs.aggregate(t=Sum('amount_paid'))['t'] or 0)

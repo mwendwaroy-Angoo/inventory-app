@@ -240,7 +240,7 @@ def _get_customer_debt_data(customer, business, scope='all'):
     payment_qs = CustomerDebtPayment.objects.filter(
         customer=customer,
         business=business,
-    ).order_by('paid_at')
+    ).exclude(reverted=True).order_by('paid_at')
 
     if scope == 'kitchen':
         credit_qs = credit_qs.filter(item__store__is_kitchen=True)
@@ -445,7 +445,7 @@ def _calc_avg_payment_days(customer, business, scope='all'):
     payment_qs = CustomerDebtPayment.objects.filter(
         customer=customer,
         business=business,
-    ).order_by('paid_at')
+    ).exclude(reverted=True).order_by('paid_at')
 
     txn_qs = Transaction.objects.filter(
         Q(payment_method='credit') | Q(was_credit=True),
@@ -657,6 +657,21 @@ def customer_debt_profile(request, customer_id):
     # record_debt_payment's session-stashed pending payment).
     pending_dup_confirm = request.session.get(f'debt_dup_pending_{customer.id}')
 
+    # 2026-08-18 — Payment History must show a reverted payment too (with a
+    # visible badge), not just silently drop it — this app never hides a
+    # correction, it explains it (see the wording/accountability standard).
+    # Deliberately a SEPARATE query from data['payments'] (which now
+    # correctly excludes reverted rows everywhere it feeds a financial
+    # figure) — this one is display-only.
+    payment_history = CustomerDebtPayment.objects.filter(
+        customer=customer, business=business,
+    ).select_related('recorded_by', 'reverted_by').order_by('-paid_at')
+    if scope != 'all':
+        payment_history = payment_history.filter(source=scope)
+    payment_history = list(payment_history[:50])
+
+    can_revert_debt_payment = _can_revert_debt_payment(user_profile)
+
     return render(request, 'core/customer_debt_profile.html', {
         **data,
         'is_owner':        is_owner,
@@ -672,7 +687,248 @@ def customer_debt_profile(request, customer_id):
         'pending_dup_confirm': pending_dup_confirm,
         'debt_erase_requires_approval': business.debt_erase_requires_approval,
         'can_approve_debt_erase': can_approve_debt_erase,
+        'payment_history': payment_history,
+        'can_revert_debt_payment': can_revert_debt_payment,
     })
+
+
+def _reconcile_tab_entries_for_debt_payment(customer, business, amount, payment_method, unpaid_before):
+    """FIFO-apply one debt payment's worth of money against this customer's
+    tab-linked unpaid BarTabEntries — only flips is_paid once an entry is
+    FULLY covered, and keeps the underlying Transaction.payment_method in
+    sync with the entry (the 2026-08-14 fix — see the long comment this
+    function used to carry inline, still true, just moved here).
+
+    Extracted out of _do_settle_debt_payment (2026-08-18) so
+    revert_debt_payment() can REPLAY this exact same, already-proven logic
+    when rebuilding a customer's tab-entry state after one payment out of a
+    possibly-longer sequence is reverted — see
+    _rebuild_tab_entry_state_for_customer()'s own docstring for why replay
+    (not a surgical un-apply) is the safe way to undo one payment without
+    needing to know in advance which entries any one payment touched.
+
+    `unpaid_before` must be freshly computed (via _get_customer_debt_data)
+    immediately before calling this — it reflects state BEFORE this
+    specific payment is applied.
+    """
+    from .models import BarTabEntry, BarTab
+    try:
+        now = timezone.now()
+        settled_tab_ids = list(BarTab.objects.filter(
+            business=business, customer=customer, status='SETTLED',
+        ).values_list('id', flat=True))
+        if not settled_tab_ids:
+            return
+        paid_remaining = float(amount)
+        for entry in unpaid_before:
+            if paid_remaining <= 0:
+                break
+            txn = entry['txn']
+            entry_amount = float(entry['amount'])  # already remaining-after-amount_paid
+            covered = round(min(entry_amount, paid_remaining), 2)
+            paid_remaining = round(paid_remaining - covered, 2)
+            if covered >= entry_amount:
+                BarTabEntry.objects.filter(
+                    tab__id__in=settled_tab_ids,
+                    transaction=txn,
+                    is_paid=False,
+                ).update(
+                    is_paid=True, paid_at=now, payment_method=payment_method,
+                    amount_paid=F('amount'),
+                )
+                if txn.payment_method != payment_method:
+                    txn.payment_method = payment_method
+                    txn.save(update_fields=['payment_method'])
+            elif covered > 0:
+                # A PARTIAL cover of a tab-linked entry must not be silently
+                # discarded — is_paid stays False (genuinely not fully
+                # resolved) and its Transaction must STAY 'credit' (still
+                # genuinely, partially owed) — but the covered amount needs
+                # to persist so _get_customer_debt_data reports the TRUE
+                # remainder next time. F() keeps this safe under concurrent
+                # partial payments (never overwrites with a stale read).
+                BarTabEntry.objects.filter(
+                    tab__id__in=settled_tab_ids,
+                    transaction=txn,
+                    is_paid=False,
+                ).update(amount_paid=F('amount_paid') + Decimal(str(covered)))
+    except Exception:
+        logger.exception('_reconcile_tab_entries_for_debt_payment failed (customer=%s)', customer.id)
+
+
+def _rebuild_tab_entry_state_for_customer(customer, business):
+    """After a CustomerDebtPayment is reverted, put this customer's
+    tab-linked entries back to exactly the state they'd be in if that
+    payment had never happened — regardless of how many OTHER payments
+    came before or after it.
+
+    Why replay instead of surgically undoing just the one payment: no
+    record exists anywhere of exactly which BarTabEntry rows any ONE
+    payment settled (_reconcile_tab_entries_for_debt_payment applies FIFO
+    fresh each time and never tags the entries it touches with which
+    payment did it) — reconstructing that after the fact for an arbitrary
+    payment in an arbitrary position in the sequence would mean guessing.
+    Resetting every touched entry back to "never paid" and then replaying
+    every remaining (non-reverted) payment in chronological order through
+    the exact same, already-proven reconciliation function is
+    deterministic and correct no matter which payment was reverted or how
+    many others exist — it doesn't need to know.
+
+    Non-tab-linked ("direct credit sale") debt needs NO code here at all —
+    _get_customer_debt_data computes it live from summing valid
+    CustomerDebtPayment rows, so excluding the reverted one there already
+    fixes it for free.
+    """
+    from .models import BarTabEntry, BarTab
+    from django.db.models import Q as _Q
+
+    settled_tab_ids = list(BarTab.objects.filter(
+        business=business, customer=customer, status='SETTLED',
+    ).values_list('id', flat=True))
+    if settled_tab_ids:
+        touched_entries = BarTabEntry.objects.filter(
+            tab__id__in=settled_tab_ids,
+        ).filter(
+            _Q(is_paid=True) | _Q(amount_paid__gt=0),
+        ).filter(
+            _Q(transaction__payment_method='credit') | _Q(transaction__was_credit=True),
+            transaction__type='Issue',
+        ).select_related('transaction').distinct()
+        for entry in touched_entries:
+            entry.is_paid = False
+            entry.amount_paid = Decimal('0')
+            entry.paid_at = None
+            entry.payment_method = ''
+            entry.save(update_fields=['is_paid', 'amount_paid', 'paid_at', 'payment_method'])
+            if entry.transaction.was_credit and entry.transaction.payment_method != 'credit':
+                entry.transaction.payment_method = 'credit'
+                entry.transaction.save(update_fields=['payment_method'])
+
+    remaining_payments = CustomerDebtPayment.objects.filter(
+        customer=customer, business=business, reverted=False,
+    ).order_by('paid_at', 'id')
+    for payment in remaining_payments:
+        fresh_data = _get_customer_debt_data(customer, business, payment.source)
+        _reconcile_tab_entries_for_debt_payment(
+            customer, business, payment.amount_paid, payment.payment_method,
+            fresh_data['unpaid_transactions'],
+        )
+
+
+@login_required
+@require_POST
+def revert_debt_payment(request, payment_id):
+    """Undo a recorded CustomerDebtPayment — the 2026-08-18 live request
+    (Roy): "staff recorded a debt mistakenly when it was not paid for."
+    Soft-reverts (marks reverted, never deletes — matches this app's
+    correction convention everywhere else), restores the customer's real
+    outstanding balance, and rebuilds any tab-linked entry state that
+    payment had settled — which then automatically flows through to every
+    live-computed accounting figure that reads CustomerDebtPayment
+    (_get_customer_debt_data's outstanding/total_paid, shift_views.
+    _reconcile()'s debt_recovered_cash/mpesa, till_expected_cash()'s same
+    figure, credit_policy's late-repayment scoring, haki's staff
+    contribution) since none of them cache — they all query fresh, every
+    call, and now all exclude reverted=True.
+
+    Gated the same way every other delegated financial-correction action
+    in this app is: owner always; a manager or staff member only with the
+    explicit can_revert_debt_payment toggle (default off for both roles).
+    """
+    up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+    if not _can_revert_debt_payment(up):
+        return JsonResponse(
+            {'ok': False, 'error': 'Huna ruhusa ya kutengua malipo ya deni. Muulize mmiliki wa biashara.'},
+            status=403,
+        )
+
+    payment = get_object_or_404(CustomerDebtPayment, id=payment_id, business=up.business)
+    if payment.reverted:
+        return JsonResponse({'ok': False, 'error': 'Malipo haya tayari yamekwisha tenguliwa.'}, status=409)
+
+    # Same shift-gate as recording a payment in the first place — a
+    # non-owner/manager correcting their own mistake still needs an open
+    # shift, matching every other staff-initiated financial correction.
+    if not up.is_owner_or_manager:
+        from .shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'error': 'Fungua shift yako kwanza kabla ya kutengua malipo.'},
+                status=403,
+            )
+
+    reason = (request.POST.get('reason') or '').strip()
+    customer = payment.customer
+    amount = payment.amount_paid
+    method_label = 'M-Pesa' if payment.payment_method == 'mpesa' else 'Cash'
+
+    payment.reverted = True
+    payment.reverted_at = timezone.now()
+    payment.reverted_by = request.user
+    payment.revert_reason = reason[:200]
+    payment.save(update_fields=['reverted', 'reverted_at', 'reverted_by', 'revert_reason'])
+
+    _rebuild_tab_entry_state_for_customer(customer, up.business)
+
+    # Debt no longer genuinely cleared once this payment is undone — an
+    # earlier last_cleared_at stamp from THIS payment clearing the balance
+    # to zero would now be stale/misleading.
+    post_data = _get_customer_debt_data(customer, up.business, 'all')
+    if float(post_data['outstanding']) > 0 and customer.last_cleared_at:
+        Customer.objects.filter(pk=customer.pk).update(last_cleared_at=None)
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b, %H:%M')
+    msg = (
+        f"↩️ {who} ametengua malipo ya deni ya KES {amount:,.0f} ({method_label}) kwa "
+        f"{customer.name} — {when}."
+        + (f" Sababu: {reason}." if reason else " Hakuna sababu iliyotolewa.")
+        + f" Deni lililobaki sasa: KES {post_data['outstanding']:,.0f}."
+    )
+    try:
+        from .models import Notification
+        from accounts.models import UserProfile as _UP
+        from .notifications import normalize_ke_phone, send_sms_notification_async
+        recipients = {
+            op.user_id: op for op in
+            _UP.objects.filter(business=up.business, role__in=['owner', 'manager'])
+            .exclude(user=request.user)
+        }
+        if payment.recorded_by_id and payment.recorded_by_id != request.user.id:
+            recorder_profile = getattr(payment.recorded_by, 'userprofile', None)
+            if recorder_profile:
+                recipients[recorder_profile.user_id] = recorder_profile
+        for op in recipients.values():
+            Notification.objects.create(
+                user=op.user, title='↩️ Malipo ya Deni Yametenguliwa',
+                message=msg, notification_type='warning',
+                link_url=f'/debt/{customer.id}/',
+            )
+            if op.phone:
+                normalized = normalize_ke_phone(op.phone)
+                if normalized:
+                    send_sms_notification_async(msg, normalized)
+    except Exception:
+        logger.exception('revert_debt_payment: notify failed payment=%s', payment.id)
+
+    return JsonResponse({
+        'ok': True,
+        'message': f'Malipo yametenguliwa. Deni lililobaki: KES {post_data["outstanding"]:,.0f}.',
+        'outstanding': float(post_data['outstanding']),
+    })
+
+
+def _can_revert_debt_payment(up):
+    """Owner always. A manager OR a plain staff member may revert a
+    recorded debt payment only when explicitly granted
+    can_revert_debt_payment (off by default for both roles) — reverting
+    un-reconciles real, already-accounted-for cash/mpesa, so this is not
+    automatic for either role the way viewing the debt tracker is."""
+    if up.is_owner:
+        return True
+    return getattr(up, 'can_revert_debt_payment', False)
 
 
 def _do_settle_debt_payment(customer, business, amount, payment_method, source,
@@ -711,70 +967,7 @@ def _do_settle_debt_payment(customer, business, amount, payment_method, source,
         **({'paid_at': paid_at} if paid_at else {}),
     )
 
-    # FIFO BarTabEntry reconciliation — only flip is_paid when fully covered
-    try:
-        now = timezone.now()
-        settled_tab_ids = list(BarTab.objects.filter(
-            business=business, customer=customer, status='SETTLED',
-        ).values_list('id', flat=True))
-        if settled_tab_ids:
-            paid_remaining = float(amount)
-            for entry in unpaid_before:
-                if paid_remaining <= 0:
-                    break
-                txn = entry['txn']
-                entry_amount = float(entry['amount'])  # already remaining-after-amount_paid
-                covered = round(min(entry_amount, paid_remaining), 2)
-                paid_remaining = round(paid_remaining - covered, 2)
-                if covered >= entry_amount:
-                    BarTabEntry.objects.filter(
-                        tab__id__in=settled_tab_ids,
-                        transaction=txn,
-                        is_paid=False,
-                    ).update(
-                        is_paid=True, paid_at=now, payment_method=payment_method,
-                        amount_paid=F('amount'),
-                    )
-                    # 2026-08-14 live report (Roy, via audit_debt_ledger_integrity
-                    # --all-customers): the BarTabEntry .update() above never
-                    # touched the underlying Transaction — every OTHER settle
-                    # path in this app (tick_entry, settle_tab, settle_entries_
-                    # amount_locked, _settle_tab_from_payment, _settle_receipt_
-                    # entries_from_payment) syncs BOTH the entry AND its
-                    # Transaction together; this one only fixed the entry side,
-                    # leaving the Transaction permanently stuck at
-                    # payment_method='credit' even though it was now genuinely
-                    # paid off. Confirmed live: dozens of real transactions
-                    # across many customers, all routed through a debt payment
-                    # against a tab that had already been converted to debt —
-                    # the debt tracker (and anything else reading Transaction.
-                    # payment_method directly, e.g. promo_views.py's "has debt"
-                    # segment) kept counting each one as still-owed credit
-                    # forever. See backfill_split_paid_txn_payment_method for
-                    # the retroactive repair of every already-corrupted row.
-                    if txn.payment_method != payment_method:
-                        txn.payment_method = payment_method
-                        txn.save(update_fields=['payment_method'])
-                elif covered > 0:
-                    # 2026-08-15, fourth fix same day: a PARTIAL cover of a
-                    # tab-linked entry (settle_tab's own amount= param routed
-                    # here via the debt-redirect, or a debt-tracker payment
-                    # too small to clear the whole item) must not be
-                    # silently discarded — is_paid stays False (the entry
-                    # genuinely isn't fully resolved) and its Transaction
-                    # must STAY 'credit' (still genuinely, partially owed) —
-                    # but the covered amount needs to persist so
-                    # _get_customer_debt_data reports the TRUE remainder next
-                    # time, not the full original amount again. F() keeps
-                    # this safe under concurrent partial payments (never
-                    # overwrites with a stale read).
-                    BarTabEntry.objects.filter(
-                        tab__id__in=settled_tab_ids,
-                        transaction=txn,
-                        is_paid=False,
-                    ).update(amount_paid=F('amount_paid') + Decimal(str(covered)))
-    except Exception:
-        pass
+    _reconcile_tab_entries_for_debt_payment(customer, business, amount, payment_method, unpaid_before)
 
     # Recompute score AFTER payment
     post_data = _get_customer_debt_data(customer, business, source)
@@ -1638,7 +1831,7 @@ def debtors_list_api(request):
         if t.recipient:
             credit_by_name[t.recipient] += float(t.revenue())
 
-    payment_qs = CustomerDebtPayment.objects.filter(business=business)
+    payment_qs = CustomerDebtPayment.objects.filter(business=business).exclude(reverted=True)
     if scope == 'kitchen':
         payment_qs = payment_qs.filter(source='kitchen')
     elif scope == 'bar':

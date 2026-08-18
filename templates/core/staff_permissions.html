@@ -68,6 +68,30 @@
             </div>
         </div>
 
+        <!-- Revert a recorded debt payment (2026-08-18 live request) -->
+        <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        ↩️ {% trans 'Revert a Recorded Debt Payment' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans "Allow this staff member or manager to undo a debt payment that was recorded by mistake (customer had not actually paid) — restores the outstanding balance and corrects that day's cash/mpesa till figures." %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'Off by default for both roles.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_revert_debt_payment"
+                           id="can_revert_debt_payment"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_revert_debt_payment %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+
         <!-- Cost price -->
         <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
             <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">

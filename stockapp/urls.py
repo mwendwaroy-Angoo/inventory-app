@@ -307,6 +307,7 @@ from core.debt_views import (
     link_customer_as_owner,
     unlink_customer_as_owner,
     owner_alias_debt_search,
+    revert_debt_payment,
 )
 from core.haki_views import (
     staff_contribution_report,
@@ -639,6 +640,7 @@ urlpatterns = [
     path("debt/", debt_dashboard, name="debt_dashboard"),
     path("debt/<int:customer_id>/", customer_debt_profile, name="customer_debt_profile"),
     path("debt/<int:customer_id>/payment/", record_debt_payment, name="record_debt_payment"),
+    path("debt/payment/<int:payment_id>/revert/", revert_debt_payment, name="revert_debt_payment"),
     path("debt/<int:customer_id>/stk-push/", debt_stk_push, name="debt_stk_push"),
     path("debt/<int:customer_id>/reminder/", send_debt_reminder, name="send_debt_reminder"),
     path("debt/<int:customer_id>/toggle-credit/", toggle_credit_approval, name="toggle_credit_approval"),
