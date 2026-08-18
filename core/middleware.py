@@ -5,9 +5,59 @@ For staff users in bar businesses (has keg items), blocks access to all
 operational pages unless they have personally opened an active shift.
 Owners are never blocked. Non-bar businesses are never affected.
 """
+import logging
+import time
+
 from django.contrib import messages
 from django.shortcuts import redirect
 from django.urls import resolve
+
+logger = logging.getLogger(__name__)
+
+
+class SlowRequestLoggingMiddleware:
+    """Logs any request taking >= SLOW_THRESHOLD_SECONDS, with method,
+    path, duration, and status code.
+
+    2026-08-18 live incident (Roy, repeated 502s — "why does this always
+    have to happen, what else am I to do"): every prior fix for this
+    failure signature (Render's health check timing out because all
+    gunicorn threads were busy — 2026-08-09, 2026-08-11, 2026-08-12) was a
+    good-faith inference from the FAILURE'S OWN timing, never a confirmed
+    trace of which specific request was actually slow — this app's
+    production logs had zero per-request duration visibility at all
+    (Procfile's gunicorn has no --access-logfile, and nothing in Django
+    itself timed a request). Each fix (more workers, shorter SMS
+    timeouts, fully-async SMS) closed a real, evidenced gap, but "why does
+    this keep happening" could never be answered with certainty because
+    the actual slow request was never SEEN, only guessed at from the
+    surrounding log lines.
+
+    This closes that visibility gap going forward: the NEXT time gunicorn
+    threads are saturated, Render's Logs tab will show a
+    "SLOW REQUEST" line naming the exact path and duration BEFORE the
+    health check ever times out, instead of another guess. Deliberately a
+    thin, dependency-free middleware (no APM package) — wraps the full
+    request/response cycle including every other middleware and the view
+    itself, so it also catches CPU-bound and DB-bound slowness, not just
+    the specific SMS-blocking-thread class already fixed.
+    """
+    SLOW_THRESHOLD_SECONDS = 3.0
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        start = time.monotonic()
+        response = self.get_response(request)
+        duration = time.monotonic() - start
+        if duration >= self.SLOW_THRESHOLD_SECONDS:
+            logger.warning(
+                'SLOW REQUEST %.2fs %s %s status=%s',
+                duration, request.method, request.get_full_path(),
+                getattr(response, 'status_code', '?'),
+            )
+        return response
 
 # URL names that are always allowed regardless of shift status
 _SHIFT_EXEMPT_NAMES = {

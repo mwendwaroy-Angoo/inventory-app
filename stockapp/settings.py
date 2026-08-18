@@ -85,6 +85,12 @@ except Exception:
 
 
 MIDDLEWARE = [
+    # 2026-08-18 — must be FIRST so it times the full request/response
+    # cycle, including every other middleware and the view itself. See
+    # core.middleware.SlowRequestLoggingMiddleware's own docstring for why
+    # this exists — closing the "we never actually saw which request was
+    # slow" gap behind the repeated live 502 incidents.
+    "core.middleware.SlowRequestLoggingMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",

@@ -36161,6 +36161,140 @@ class NotificationAsyncDispatchTest(TestCase):
             time.sleep(0.1)
 
 
+class SlowRequestLoggingMiddlewareTest(TestCase):
+    """2026-08-18 live incident (Roy, repeated 502s — "why does this keep
+    happening, what else am I to do"): every prior fix was a good-faith
+    guess from the health-check-timeout SIGNATURE alone — no production
+    log ever showed which specific request was actually slow. This
+    middleware closes that gap: any request taking >= 3s gets a
+    "SLOW REQUEST" WARNING log line with its path and duration, so the
+    NEXT incident is diagnosable from real evidence instead of another
+    guess."""
+
+    def test_slow_request_is_logged(self):
+        from core.middleware import SlowRequestLoggingMiddleware
+        import time as _time
+
+        def slow_get_response(request):
+            from django.http import HttpResponse
+            return HttpResponse('ok')
+
+        mw = SlowRequestLoggingMiddleware(slow_get_response)
+        request = type('R', (), {'method': 'GET', 'get_full_path': lambda self: '/slow/'})()
+
+        calls = iter([1000.0, 1004.5])  # 4.5s apart — over the 3s threshold
+        with patch.object(_time, 'monotonic', lambda: next(calls)), \
+             self.assertLogs('core.middleware', level='WARNING') as log_ctx:
+            mw(request)
+        self.assertTrue(any('SLOW REQUEST' in m for m in log_ctx.output))
+        self.assertTrue(any('/slow/' in m for m in log_ctx.output))
+
+    def test_fast_request_is_not_logged(self):
+        from core.middleware import SlowRequestLoggingMiddleware
+        import time as _time
+        import logging
+
+        def fast_get_response(request):
+            from django.http import HttpResponse
+            return HttpResponse('ok')
+
+        mw = SlowRequestLoggingMiddleware(fast_get_response)
+        request = type('R', (), {'method': 'GET', 'get_full_path': lambda self: '/fast/'})()
+
+        calls = iter([1000.0, 1000.2])  # 0.2s — under the threshold
+        logger = logging.getLogger('core.middleware')
+        handler = logging.Handler()
+        records = []
+        handler.emit = records.append
+        logger.addHandler(handler)
+        try:
+            with patch.object(_time, 'monotonic', lambda: next(calls)):
+                mw(request)
+        finally:
+            logger.removeHandler(handler)
+        self.assertFalse(any('SLOW REQUEST' in r.getMessage() for r in records))
+
+    def test_end_to_end_real_request_is_fast_and_unlogged(self):
+        """Sanity check against a real view through the real middleware
+        stack — an ordinary page load must not trip this at all."""
+        biz = Business.objects.create(name='Slow MW Biz')
+        owner = User.objects.create_user(username='slowmw_owner', password='x')
+        UserProfile.objects.create(user=owner, business=biz, role='owner')
+        self.client.force_login(owner)
+        with self.assertNoLogs('core.middleware', level='WARNING'):
+            resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+
+
+class DebtDashboardDuplicateComputationTest(TestCase):
+    """2026-08-18, same live-incident investigation: debt_dashboard()
+    computes _get_customer_debt_data() once per customer (itself not
+    cheap — recurses into two full sub-computations for scope='all') and
+    then, for owner/manager, recomputed it AGAIN from scratch for every
+    customer appearing in a duplicate-name group — pure wasted work.
+    Fixed to reuse the already-computed result. Flagged (not confirmed)
+    as a credible contributor to the live slow-request/502 pattern for a
+    business with a real customer base; this is a safe, mechanical
+    dedup fix regardless."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Dash Dup Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ddd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='DDD-01', unit='Pcs', selling_price=Decimal('250'),
+        )
+        # Two Customer rows sharing a name — the duplicate-group scenario.
+        self.cust_a = Customer.objects.create(business=self.biz, name='Peter')
+        self.cust_b = Customer.objects.create(business=self.biz, name='Peter')
+        for cust in (self.cust_a, self.cust_b):
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+                sale_amount=Decimal('250'), payment_method='credit', recipient=cust.name,
+            )
+
+    def test_get_customer_debt_data_called_at_most_once_per_customer(self):
+        """_get_customer_debt_data(scope='all') recurses into itself once for
+        'bar' and once for 'kitchen' — that recursion is real, unavoidable
+        work, not the bug. What must NOT happen is a SECOND top-level
+        (scope='all') call for a customer already computed in the main
+        loop, so only scope='all' invocations are counted here."""
+        from core import debt_views
+        top_level_call_counts = {}
+        original = debt_views._get_customer_debt_data
+
+        def counting_wrapper(customer, business, scope='all'):
+            if scope == 'all':
+                top_level_call_counts[customer.id] = top_level_call_counts.get(customer.id, 0) + 1
+            return original(customer, business, scope)
+
+        self.client.force_login(self.owner)
+        with patch('core.debt_views._get_customer_debt_data', side_effect=counting_wrapper):
+            resp = self.client.get('/debt/')
+        self.assertEqual(resp.status_code, 200)
+        for cust_id, count in top_level_call_counts.items():
+            self.assertEqual(
+                count, 1,
+                f'customer {cust_id} had {count} top-level (scope=\'all\') computations — '
+                'duplicate-group lookup must reuse the already-computed result',
+            )
+
+    def test_duplicate_groups_still_show_correct_outstanding(self):
+        # Both Customer rows share the name "Peter", and debt is matched by
+        # recipient name (not the Customer FK) — so each row's own
+        # _get_customer_debt_data() correctly sums BOTH transactions (this
+        # is the real, documented duplicate-name behavior this app already
+        # has a merge tool for, not something this fix changes).
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/')
+        groups = resp.context['duplicate_groups']
+        self.assertEqual(len(groups), 1)
+        outstandings = sorted(e['outstanding'] for e in groups[0])
+        self.assertEqual(outstandings, [500.0, 500.0])
+
+
 class TransactionDateCreatedAtSyncTest(TestCase):
     """2026-08-12 live report (Roy): "I backdated everything from 7th to
     11th... kitchen staff has not yet made sales but the system is showing

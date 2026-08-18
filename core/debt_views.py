@@ -523,9 +523,23 @@ def debt_dashboard(request):
     dashboard_rows = []
     total_outstanding = 0.0
     total_overdue = 0.0
+    # 2026-08-18 — one _get_customer_debt_data() result per customer, kept
+    # for the duplicate-groups block below to reuse. This function
+    # recurses into two full sub-computations for scope='all' and is
+    # genuinely not cheap per customer — a business with a real customer
+    # base makes this loop the single heaviest thing on this page (see
+    # the live 502 investigation this same day: no per-request timing was
+    # ever visible in production, so this was a credible but unconfirmed
+    # suspect — fixing the one clearly redundant DOUBLE-computation below
+    # is a safe, mechanical win regardless of whether it was the actual
+    # cause; a deeper batch rewrite of _get_customer_debt_data itself is
+    # deliberately NOT attempted here — same caution this function's own
+    # extensive edit history already demonstrates is warranted.
+    data_by_customer_id = {}
 
     for customer in customers_with_credit:
         data = _get_customer_debt_data(customer, business, scope)
+        data_by_customer_id[customer.id] = data
         if data['outstanding'] > 0 or data['txn_count'] > 0:
             dashboard_rows.append(data)
             total_outstanding += data['outstanding']
@@ -546,7 +560,9 @@ def debt_dashboard(request):
         for group in _find_duplicate_customer_groups(business):
             entries = []
             for c in group:
-                d = _get_customer_debt_data(c, business, scope)
+                # Reuse the result already computed above instead of
+                # recomputing it a second time for the same customer.
+                d = data_by_customer_id.get(c.id) or _get_customer_debt_data(c, business, scope)
                 entries.append({'customer': c, 'outstanding': d['outstanding']})
             duplicate_groups.append(entries)
 
