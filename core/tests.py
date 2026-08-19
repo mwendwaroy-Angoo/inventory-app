@@ -4451,6 +4451,86 @@ class AnalyticsUnitsFloatRoundingTest(TestCase):
         self.assertEqual(units, 0.3)
 
 
+class AnalyticsDashboardKitchenBatchPresetQueryCountTest(TestCase):
+    """2026-08-19 live incident (Roy, correlated with a real Render
+    "HTTP health check failed" 502): "the period filter... is not
+    responding or taking too long to respond when selecting a period
+    other than 30 days". Root cause — current_sales/prev_sales/all_sales/
+    _kitchen_txns in analytics_dashboard() were missing kitchen_batch and
+    preset from select_related(), while Transaction.cost()'s proportional
+    logic (_stock_movement_cost()) lazily fetches exactly those FKs for
+    any kitchen-batch or preset-attributed sale — a real N+1, one extra
+    query per affected transaction, scaling directly with how many
+    transactions fall in the selected period (longer period = more
+    transactions = more extra queries), exactly matching the report."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Analytics NPlus1 Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='ana_nplus1_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.batch_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            unit='Batch', material_no='ANP1-01', selling_price=Decimal('100'),
+            is_kitchen_batch=True,
+        )
+        self.preset_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            unit='Pcs', material_no='ANP1-02',
+        )
+        self.preset = ItemPortionPreset.objects.create(
+            item=self.preset_item, label='Paja', price=Decimal('150'),
+            quantity_consumed=Decimal('1'), cost_price=Decimal('80'),
+        )
+
+    def _make_transactions(self, count):
+        today = timezone.localdate()
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.batch_item,
+            cost_total=Decimal('1500'),
+        )
+        for i in range(count):
+            batch.record_sale(Decimal('50'), payment_method='cash')
+            Transaction.objects.create(
+                business=self.biz, item=self.preset_item, type='Issue',
+                qty=-self.preset.quantity_consumed, sale_amount=self.preset.price,
+                payment_method='cash', date=today, preset=self.preset,
+            )
+
+    def test_query_count_does_not_scale_with_kitchen_batch_and_preset_txn_count(self):
+        self._make_transactions(25)
+        self.client.force_login(self.owner)
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get('/analytics/?period=90')
+        self.assertEqual(resp.status_code, 200)
+        self.assertLess(
+            len(ctx.captured_queries), 150,
+            f"analytics_dashboard() issued {len(ctx.captured_queries)} queries for "
+            "50 kitchen_batch/preset-linked transactions — select_related must keep "
+            "this roughly constant, not one extra query per transaction.",
+        )
+
+    def test_cost_figures_still_correct_with_full_select_related(self):
+        """The fix must not change what the numbers actually are — only
+        how many queries it takes to compute them."""
+        self._make_transactions(3)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/analytics/?period=90')
+        self.assertEqual(resp.status_code, 200)
+        kitchen_rows = {row['name']: row for row in resp.context['kitchen_rows']}
+        self.assertIn('Chipo', kitchen_rows)
+        self.assertIn('Kuku — Paja', kitchen_rows)
+        # 3 batch sales of 50 each = 150 revenue; cost is proportional
+        # (sale_amount * cost_total / revenue_collected) = 50 * 1500/150 = 500 each.
+        self.assertAlmostEqual(kitchen_rows['Chipo']['revenue'], 150.0, places=2)
+        self.assertAlmostEqual(kitchen_rows['Chipo']['cost'], 1500.0, places=2)
+        # 3 preset sales at 150 revenue / 80 cost each.
+        self.assertAlmostEqual(kitchen_rows['Kuku — Paja']['revenue'], 450.0, places=2)
+        self.assertAlmostEqual(kitchen_rows['Kuku — Paja']['cost'], 240.0, places=2)
+
+
 class AnalyticsTileBreakdownTest(TestCase):
     """2026-08-11 live request (Roy): tap-to-expand breakdowns for Revenue,
     Gross Profit, Net Profit, Total Expenses, Owner Drawings, and Hasara/

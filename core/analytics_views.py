@@ -88,15 +88,31 @@ def analytics_dashboard(request):
             selected_product = None
 
     # ── Current period sales ──
+    # 2026-08-19 live report (Roy, correlated with a real health-check-timeout
+    # 502): the period filter "not responding" for anything longer than 30
+    # days. Root cause — select_related here was missing kitchen_batch and
+    # preset, both of which Transaction.cost()'s proportional keg/bunch/
+    # batch/preset-aware logic (_stock_movement_cost()) lazily fetches for
+    # any kitchen-batch or preset-attributed sale (e.g. every Chipo sale,
+    # every Kuku-cut sale). Since current_sales/prev_sales are iterated many
+    # times over this function (revenue/cost/profit rollups, daily trends,
+    # day-of-week, top products, margin alerts), each MISSING relation was
+    # one extra synchronous DB round-trip per affected transaction on first
+    # access — genuine N+1, growing directly with period length (more days
+    # = more transactions), matching the report exactly.
     current_sales = Transaction.objects.filter(
         business=business, type='Issue',
         date__gte=start_date, date__lte=today,
-    ).exclude(payment_method='void').select_related('item', 'keg_barrel', 'produce_bunch')
+    ).exclude(payment_method='void').select_related(
+        'item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
+    )
 
     prev_sales = Transaction.objects.filter(
         business=business, type='Issue',
         date__gte=prev_start, date__lte=prev_end,
-    ).exclude(payment_method='void').select_related('item', 'keg_barrel', 'produce_bunch')
+    ).exclude(payment_method='void').select_related(
+        'item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
+    )
 
     if selected_product:
         current_sales = current_sales.filter(item_id=selected_product)
@@ -535,9 +551,17 @@ def analytics_dashboard(request):
 
     if total_capital > 0:
         # All-time sales and expenses — not period filtered
+        # Same 2026-08-19 select_related gap as current_sales/prev_sales
+        # above — worse here specifically, since this query has NO date
+        # filter at all (the break-even section is deliberately all-time)
+        # and re-scans the business's entire transaction history on every
+        # single analytics page load, regardless of which period is
+        # selected.
         all_sales = Transaction.objects.filter(
             business=business, type='Issue'
-        ).exclude(payment_method='void').select_related('item', 'keg_barrel', 'produce_bunch').order_by('date')
+        ).exclude(payment_method='void').select_related(
+            'item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
+        ).order_by('date')
 
         all_expenses = BusinessExpense.objects.filter(
             business=business
@@ -968,12 +992,15 @@ def analytics_dashboard(request):
     total_kitchen_revenue = 0.0
     kitchen_share = 0.0
     if business.has_kitchen:
+        # Same 2026-08-19 select_related gap — missing kitchen_batch
+        # specifically, which is exactly the FK every Chipo/batch-item sale
+        # in this kitchen-only section needs for cost().
         _kitchen_txns = list(
             Transaction.objects.filter(
                 business=business, type='Issue',
                 item__store__is_kitchen=True,
                 date__gte=start_date, date__lte=today,
-            ).select_related('item', 'produce_bunch', 'preset')
+            ).select_related('item', 'produce_bunch', 'preset', 'kitchen_batch')
         )
         _km = {}
         for t in _kitchen_txns:
