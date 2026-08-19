@@ -193,7 +193,8 @@
         <tbody>
             {% for item in items %}
             <tr class="clickable-row
-                {% if item.stock_balance <= 0 %}out-of-stock
+                {% if item.stock_envelope_tracked %}
+                {% elif item.stock_balance <= 0 %}out-of-stock
                 {% elif item.stock_needs_reorder %}reorder{% endif %}"
                 onclick="window.location='{% url 'item_detail' item.id %}'">
                 <td><strong>{{ item.material_no }}</strong></td>
@@ -219,7 +220,11 @@
                 <td>{{ item.selling_price|default:"—" }}</td>
                 {% endif %}
                 <td onclick="event.stopPropagation()">
-                    {% if item.stock_balance <= 0 %}
+                    {% if item.stock_envelope_tracked %}
+                        <span class="badge" style="background:rgba(201,168,76,.12); color:var(--gold); border:1px solid rgba(201,168,76,.3);" title="{% trans 'Imefuatiliwa kupitia bechi/pipa lake, si salio la kawaida — angalia malighafi yake badala yake.' %}">
+                            {% trans 'Batch/Envelope' %}
+                        </span>
+                    {% elif item.stock_balance <= 0 %}
                         <span class="badge bg-danger">{% trans 'Out of Stock' %}</span>
                     {% elif item.stock_needs_reorder %}
                         <span class="badge bg-warning">{% trans 'Reorder' %}</span>
@@ -230,7 +235,7 @@
                         <span class="badge mt-1 d-block" style="background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3); font-weight:500; font-size:.72rem;">
                             📦 Requested
                         </span>
-                    {% elif not is_owner %}
+                    {% elif not is_owner and not item.stock_envelope_tracked %}
                         {% if item.stock_balance <= 0 or item.stock_needs_reorder %}
                         <button
                             class="btn btn-sm mt-1 d-block w-100"

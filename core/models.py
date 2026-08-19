@@ -791,6 +791,45 @@ class Item(models.Model):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
         return self.opening_bin_balance + total_movement
 
+    def uses_envelope_stock_tracking(self):
+        """True for an item whose real stock lives in a separate envelope
+        model (KegBarrel, ProduceBunch, KitchenBatch) rather than in its own
+        ordinary Transaction-qty balance — so current_balance() on the item
+        itself is structurally meaningless, not just occasionally wrong.
+
+        2026-08-19 live report (Roy, screenshot): Chipo (is_kitchen_batch,
+        drawn from a raw_material_source sack) showed "Chipo > Ndoo > -72"
+        under Items Needing Urgent Reorder — nonsensical, since nobody
+        reorders "chipo," they reorder the sack of raw potatoes (which
+        already tracks its own real balance correctly and independently via
+        KitchenBatch.open_batch()'s Draw transactions on that separate
+        Item). Root cause: KitchenBatch.record_sale() writes a constant
+        qty=-1 per sale directly onto the Chipo Item with no offsetting
+        Receipt ever recorded on Chipo itself (stock comes in via the raw
+        item's Draw, not a Receipt on the batch item) — current_balance()
+        can therefore only ever monotonically decrease, forever, with no
+        floor. Auditing this surfaced that keg items and BUNCH-mode produce
+        items have the exact same structural issue and were ALREADY
+        excluded from analytics' own Stock Health / Velocity Ranking
+        sections (2026-06-2x era) — but that exclusion was never carried
+        into the actual reorder-alert machinery (needs_reorder(),
+        _batch_stock_metrics(), the home dashboard's Low Stock tile, Stock
+        List's own low_stock/out-of-stock filters and badges, the reorder
+        SMS/email trigger) or into stock_value(), which is why the bug
+        reached Chipo specifically but was silently already latent for keg/
+        BUNCH items too. This single helper is now the ONE place that
+        answers "does this item's own balance mean anything" — reused by
+        needs_reorder(), stock_value(), _batch_stock_metrics(), and
+        analytics_views.py's Stock Health/Velocity sections, replacing the
+        three separately-duplicated is_keg/BUNCH checks that already
+        existed there.
+        """
+        if self.is_keg or self.is_kitchen_batch:
+            return True
+        if self.is_produce and self.produce_mode == 'BUNCH':
+            return True
+        return False
+
     def reserved_qty(self):
         """UBA §6.2 (Sprint P0-B) — physical stock held against an OPEN
         PaymentPlan (layaway). Reserved stock is not available stock: a
@@ -963,6 +1002,13 @@ class Item(models.Model):
         # configured reorder_level is now authoritative once set (non-
         # zero) — reorder_point() is only a fallback SUGGESTION for an
         # item that has never had one configured at all.
+        # 2026-08-19 — envelope-tracked items (see uses_envelope_stock_
+        # tracking()'s own docstring) never reach this "reorder me"
+        # question via their own balance; a raw_material_source item (e.g.
+        # Chipo's "Raw Potatoes") already tracks its own real balance
+        # independently and correctly, so there is nothing lost here.
+        if self.uses_envelope_stock_tracking():
+            return False
         try:
             threshold = self.reorder_level if self.reorder_level else self.reorder_point()
             return (self.current_balance() + self.on_order()) <= threshold
@@ -977,6 +1023,20 @@ class Item(models.Model):
                 total=models.Sum('cost_price')
             )['total'] or 0
             return float(sealed)
+        if self.uses_envelope_stock_tracking():
+            # 2026-08-19 — is_kitchen_batch's own item.cost_price is a
+            # moving batch-total (see KitchenBatch.open_batch()'s own
+            # docstring), not a stable per-unit cost, and current_balance()
+            # is structurally meaningless for it (see
+            # uses_envelope_stock_tracking()) — multiplying the two would
+            # produce a nonsense figure, same class of bug as the reorder
+            # one above. BUNCH produce has no ordinary per-unit cost_price
+            # either (cost lives on each ProduceBunch). Neither has a
+            # sealed-barrel-style substitute the way keg does, so 0 is the
+            # honest answer — their real value is in the KitchenBatch/
+            # ProduceBunch envelopes themselves, not in this Item's own
+            # inventory-value rollup.
+            return 0
         if self.cost_price and self.current_balance() > 0:
             return float(self.cost_price) * float(self.current_balance())
         return 0

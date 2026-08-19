@@ -113,7 +113,11 @@
                 <td><strong>{{ item.current_balance }}</strong></td>
                 <td>{{ item.reorder_level }}</td>
                 <td>
-                    {% if item.current_balance <= 0 %}
+                    {% if item.uses_envelope_stock_tracking %}
+                        <span class="badge" style="background:rgba(201,168,76,.12); color:var(--gold); border:1px solid rgba(201,168,76,.3);" title="{% trans 'Imefuatiliwa kupitia bechi/pipa lake, si salio la kawaida — angalia malighafi yake badala yake.' %}">
+                            {% trans 'Batch/Envelope' %}
+                        </span>
+                    {% elif item.current_balance <= 0 %}
                         <span class="badge bg-danger">{% trans 'Out of Stock' %}</span>
                     {% elif item.needs_reorder %}
                         <span class="badge bg-warning">{% trans 'Reorder' %}</span>

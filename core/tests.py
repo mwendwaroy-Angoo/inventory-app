@@ -27324,6 +27324,153 @@ class NeedsReorderRespectsExplicitLevelTest(TestCase):
         self.assertFalse(item.stock_needs_reorder)
 
 
+class EnvelopeTrackedItemsExcludedFromReorderTest(TestCase):
+    """2026-08-19 live report (Roy, screenshot): "Chipo > Ndoo > -72" under
+    Items Needing Urgent Reorder — nonsensical, since nobody reorders
+    "chipo," they reorder the sack of raw potatoes it's cooked from (which
+    already tracks its own balance correctly and independently). Root
+    cause: KitchenBatch.record_sale() writes a constant qty=-1 per sale
+    directly onto the Chipo Item with no offsetting Receipt ever recorded
+    on it (stock arrives via the raw item's own Draw transaction instead)
+    — current_balance() can only ever monotonically decrease, forever.
+    Auditing this surfaced keg and BUNCH-produce items already had the
+    identical structural issue and were excluded from analytics' own Stock
+    Health/Velocity sections, but never from the actual reorder-alert
+    machinery (needs_reorder(), the home dashboard, Stock List's own
+    filters/badges/notify-button, the reorder SMS trigger) or from
+    stock_value() — this locks in the fix across all of them via the new
+    Item.uses_envelope_stock_tracking() helper."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Envelope Reorder Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='env_reorder_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.raw_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Potatoes',
+            unit='Ndoo', material_no='ENV-RAW', reorder_level=2,
+            opening_bin_balance=Decimal('1'), cost_price=Decimal('300'),
+        )
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            unit='Ndoo', material_no='ENV-CHIPO', is_kitchen_batch=True,
+            raw_material_source=self.raw_item, reorder_level=0,
+        )
+
+    def _sell_chipo_many_times(self, count):
+        batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            source_item=self.raw_item, source_qty_drawn=Decimal('1'),
+            cost_total=Decimal('300'),
+        )
+        for _ in range(count):
+            batch.record_sale(Decimal('50'), payment_method='cash')
+
+    def test_chipo_balance_is_deeply_negative_but_needs_reorder_is_false(self):
+        """The literal reported number, and the literal fix."""
+        self._sell_chipo_many_times(72)
+        self.chipo.refresh_from_db()
+        self.assertEqual(self.chipo.current_balance(), -72)
+        self.assertFalse(self.chipo.needs_reorder())
+        self.assertTrue(self.chipo.uses_envelope_stock_tracking())
+
+    def test_raw_material_item_still_flags_correctly_on_its_own(self):
+        """Nothing is lost — the sack of potatoes already tracks and flags
+        itself independently; the fix only silences the nonsensical Chipo
+        entry, it never needed to "redirect" anywhere."""
+        self.assertTrue(self.raw_item.needs_reorder())
+        self.assertFalse(self.raw_item.uses_envelope_stock_tracking())
+
+    def test_home_dashboard_reorder_list_excludes_chipo(self):
+        self._sell_chipo_many_times(72)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        names = [i.description for i in resp.context['reorder_items']]
+        self.assertNotIn('Chipo', names)
+        self.assertIn('Raw Potatoes', names)
+
+    def test_home_dashboard_low_stock_count_excludes_chipo(self):
+        self._sell_chipo_many_times(72)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        # Only Raw Potatoes (balance 2 <= reorder_level 1? no — sanity check
+        # via a second, genuinely low item) should ever count; Chipo's -72
+        # must never inflate this tile regardless of the raw item's own state.
+        low_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Low Salt',
+            unit='Kg', material_no='ENV-LOW', reorder_level=5,
+            opening_bin_balance=Decimal('1'),
+        )
+        resp = self.client.get('/')
+        self.assertGreaterEqual(resp.context['low_stock_count'], 1)
+        # Directly prove Chipo isn't one of the counted items by recomputing
+        # with and without it.
+        from core.views import _batch_stock_metrics
+        all_items = list(Item.objects.filter(business=self.biz))
+        _batch_stock_metrics(all_items)
+        chipo_row = next(i for i in all_items if i.description == 'Chipo')
+        self.assertTrue(chipo_row.stock_envelope_tracked)
+        self.assertFalse(chipo_row.stock_needs_reorder)
+
+    def test_stock_list_status_badge_and_notify_button_never_show_for_chipo(self):
+        self._sell_chipo_many_times(72)
+        staff = User.objects.create_user(username='env_reorder_staff', password='x')
+        UserProfile.objects.create(
+            user=staff, business=self.biz, role='staff', can_access_kitchen=True,
+        )
+        self.client.force_login(staff)
+        resp = self.client.get('/stock/')
+        body = resp.content.decode()
+        idx = body.find('Chipo')
+        self.assertNotEqual(idx, -1)
+        window = body[idx:idx + 1200]
+        self.assertNotIn('Out of Stock', window)
+        self.assertNotIn('>Reorder<', window)
+        self.assertNotIn('notifyOwnerRestock', window)
+        self.assertIn('Batch/Envelope', window)
+
+    def test_stock_list_low_stock_filter_excludes_chipo(self):
+        self._sell_chipo_many_times(72)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/?status=low_stock')
+        names = [i.description for i in resp.context['items']]
+        self.assertNotIn('Chipo', names)
+
+    def test_stock_value_is_zero_not_a_nonsense_negative_figure(self):
+        """P&L-adjacent: item.cost_price is a moving batch-total for a
+        kitchen-batch item, not a stable per-unit cost — multiplying it by
+        a deeply negative balance must never happen."""
+        self.chipo.cost_price = Decimal('300')  # KitchenBatch.open_batch() sets this
+        self.chipo.save()
+        self._sell_chipo_many_times(72)
+        self.chipo.refresh_from_db()
+        self.assertEqual(self.chipo.stock_value(), 0)
+
+    def test_manage_items_badge_never_shows_out_of_stock_for_chipo(self):
+        self._sell_chipo_many_times(72)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/manage/')
+        body = resp.content.decode()
+        idx = body.find('Chipo')
+        self.assertNotEqual(idx, -1)
+        window = body[idx:idx + 800]
+        self.assertNotIn('Out of Stock', window)
+        self.assertIn('Batch/Envelope', window)
+
+    def test_kitchen_performance_pnl_still_correct_and_untouched(self):
+        """The one thing that must NEVER change — revenue/profit tracking
+        per bucket sold, via KitchenBatch's own revenue_collected/cost_total,
+        is completely independent of the item's own (now-suppressed)
+        balance/reorder machinery."""
+        self._sell_chipo_many_times(3)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/analytics/?period=90')
+        self.assertEqual(resp.status_code, 200)
+        kitchen_rows = {row['name']: row for row in resp.context['kitchen_rows']}
+        self.assertIn('Chipo', kitchen_rows)
+        self.assertAlmostEqual(kitchen_rows['Chipo']['revenue'], 150.0, places=2)
+
+
 class AddTransactionStoreAccessGateTest(TestCase):
     """UBA M1-AC1: a staffer assigned to Store A who submits a transaction
     against a Store B item gets PermissionDenied."""

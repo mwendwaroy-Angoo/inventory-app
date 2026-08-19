@@ -311,9 +311,15 @@ def home(request):
             _batch_stock_metrics(all_items)
 
             reorder_items = [item for item in all_items if item.stock_needs_reorder]
-            low_stock_count = len(
-                [item for item in all_items if item.stock_balance <= item.reorder_level]
-            )
+            # 2026-08-19 — same envelope-tracking guard as stock_needs_reorder
+            # itself; this tile independently re-checked stock_balance <=
+            # reorder_level with no such guard, so a kitchen-batch/keg/BUNCH
+            # item could still inflate the Low Stock count even after
+            # stock_needs_reorder was fixed.
+            low_stock_count = len([
+                item for item in all_items
+                if not item.stock_envelope_tracked and item.stock_balance <= item.reorder_level
+            ])
             reorder_count = len(reorder_items)
 
             _reorder_sorted = sorted(reorder_items, key=lambda x: x.stock_balance)[:20]
@@ -1015,6 +1021,15 @@ def _batch_stock_metrics(items):
         item.stock_deficit = max(0, balance - physical)
         item.stock_surplus = max(0, physical - balance)
 
+        # 2026-08-19 — mirrors Item.uses_envelope_stock_tracking() exactly.
+        # An envelope-tracked item's own balance is structurally
+        # meaningless (see that method's docstring) — stock_needs_reorder
+        # and stock_recommended_order_qty must never fire off it, same as
+        # needs_reorder()/recommended_order_qty() now correctly don't.
+        # stock_balance itself is left computed above purely as an honest
+        # raw number for anything that still displays it informationally.
+        item.stock_envelope_tracked = item.uses_envelope_stock_tracking()
+
         issues_total = abs(issues_map.get(item.id) or 0)
         try:
             avg_daily_issues = float(issues_total) / 30.0
@@ -1028,6 +1043,11 @@ def _batch_stock_metrics(items):
         on_order = on_order_map.get(item.id, 0)
         item.stock_on_order = on_order
         item.stock_reorder_point = reorder_point
+
+        if item.stock_envelope_tracked:
+            item.stock_recommended_order_qty = 0
+            item.stock_needs_reorder = False
+            continue
 
         req = target_stock - (balance + on_order)
         if req <= 0:
@@ -1102,7 +1122,11 @@ def stock_list(request):
     _batch_stock_metrics(all_items)
 
     if status_filter == "low_stock":
-        all_items = [i for i in all_items if i.stock_balance <= i.reorder_level]
+        # 2026-08-19 — same envelope-tracking guard as home()'s low_stock_count.
+        all_items = [
+            i for i in all_items
+            if not i.stock_envelope_tracked and i.stock_balance <= i.reorder_level
+        ]
     elif status_filter == "reorder":
         all_items = [i for i in all_items if i.stock_needs_reorder]
 
@@ -2459,11 +2483,18 @@ def export_stock_excel(request):
     )
 
     for item in items:
-        status = (
-            "OUT OF STOCK"
-            if item.current_balance() <= 0
-            else "REORDER" if item.needs_reorder() else "AVAILABLE"
-        )
+        # 2026-08-19 — a keg/BUNCH-produce/kitchen-batch item's own balance
+        # is structurally meaningless (see Item.uses_envelope_stock_
+        # tracking()'s docstring); labelling it OUT OF STOCK/REORDER here
+        # would be the same nonsense already fixed on the reorder alerts.
+        if item.uses_envelope_stock_tracking():
+            status = "TRACKED SEPARATELY"
+        else:
+            status = (
+                "OUT OF STOCK"
+                if item.current_balance() <= 0
+                else "REORDER" if item.needs_reorder() else "AVAILABLE"
+            )
         ws.append(
             [
                 item.material_no,
