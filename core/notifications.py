@@ -560,8 +560,6 @@ def notify_new_order(order):
 
 def send_daily_summary(business):
     from datetime import date
-    from collections import defaultdict
-    from core.models import Transaction
 
     # Idempotency: a duplicate cron fire, a manual retry, or anyone hitting
     # daily_summary_webhook with the fallback token would otherwise re-send
@@ -585,31 +583,28 @@ def send_daily_summary(business):
     owner_phone = owner_profile.phone or business.phone
 
     today = date.today()
-    sales = Transaction.objects.filter(
-        business=business,
-        type="Issue",
-        date=today,
-    ).select_related("item")
 
-    receipts = Transaction.objects.filter(
-        business=business,
-        type="Receipt",
-        date=today,
-    ).count()
+    # 2026-08-19 live report (Roy): this email used to reimplement its own
+    # cruder version of the day's numbers — voided sales were never
+    # excluded (inflating revenue/cost/profit), confirmed (cash/mpesa)
+    # revenue was blended with still-unpaid credit, there was no cost or
+    # net profit at all, no yesterday comparison, and the per-item "units"
+    # figure was a raw abs(qty) sum with no regard for what qty even means
+    # for that item type — a keg pour's qty is in millilitres (so 3 pints
+    # would show as "1500 units"), and a kitchen-batch sale's qty is a
+    # hardcoded -1 per sale regardless of price point (so "2 units" was
+    # really "2 sales happened," never a physical packet/bucket count).
+    # compute_day_over_day() is the single, already-tested source of truth
+    # for all of this — same helper the /daily/ page itself now uses.
+    from core.daily_financials import compute_day_over_day
+    comparison = compute_day_over_day(business, today)
+    day = comparison['today']
 
-    # Single pass — avoids evaluating the queryset three times
-    item_sales = defaultdict(int)
-    total_revenue = 0
-    total_cost = 0
-    total_transactions = 0
-
-    for t in sales:
-        total_revenue += t.revenue()
-        total_cost += t.cost()
-        item_sales[t.item.description] += abs(t.qty)
-        total_transactions += 1
-
-    total_profit = total_revenue - total_cost
+    def _fmt_change(pct):
+        if pct is None:
+            return "n/a (no revenue yesterday to compare)"
+        arrow = "▲" if pct >= 0 else "▼"
+        return f"{arrow} {abs(pct):.0f}% vs jana"
 
     subject = f"📊 Daily Summary — {business.name} — {today}"
     message = (
@@ -619,20 +614,29 @@ def send_daily_summary(business):
         f"{'='*40}\n"
         f"SALES SUMMARY\n"
         f"{'='*40}\n"
-        f"Total Transactions: {total_transactions} sales, {receipts} receipts\n"
-        f"Total Revenue:  KES {total_revenue:,.2f}\n"
-        f"Total Cost:     KES {total_cost:,.2f}\n"
-        f"Gross Profit:   KES {total_profit:,.2f}\n"
-        f"Profit Margin:  "
-        f"{round(total_profit/total_revenue*100, 1) if total_revenue > 0 else 0}%\n\n"
+        f"Total Transactions: {day['txn_count']} sales, {day['receipt_count']} receipts\n"
+        f"Confirmed Revenue (cash+mpesa): KES {day['confirmed_rev']:,.2f}\n"
+        f"Credit / Deni (unpaid):         KES {day['credit_rev']:,.2f}\n"
+        f"Total Cost:                     KES {day['total_cost']:,.2f}\n"
+        f"Gross Profit:                   KES {day['gross_profit']:,.2f} ({day['profit_margin']}% margin)\n"
+        f"Net Profit (after expenses/wastage/drawings): KES {day['net_profit']:,.2f}\n"
+        f"Revenue {_fmt_change(comparison['revenue_change_pct'])}\n\n"
         f"{'='*40}\n"
         f"TOP ITEMS SOLD TODAY\n"
         f"{'='*40}\n"
     )
 
-    top = sorted(item_sales.items(), key=lambda x: x[1], reverse=True)[:5]
-    for item_name, qty in top:
-        message += f"• {item_name}: {qty} units\n"
+    top = sorted(day['item_rows'], key=lambda r: -r['revenue'])[:5]
+    for row in top:
+        if row['row_kind'] == 'keg':
+            qty_desc = f"{row['sale_count']} pours"
+        elif row['row_kind'] == 'bunch':
+            qty_desc = f"{row['sale_count']} servings"
+        elif row['row_kind'] == 'batch':
+            qty_desc = f"{row['sale_count']} sales"
+        else:
+            qty_desc = f"{row['qty']:g} {row['unit']}"
+        message += f"• {row['name']}: {qty_desc}, KES {row['revenue']:,.0f} revenue\n"
 
     message += f"\n{'='*40}\n"
     message += (

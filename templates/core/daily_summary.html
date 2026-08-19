@@ -169,6 +169,89 @@
 </div>
 {% endif %}
 
+<!-- P&L tiles (2026-08-19) — directly answers "how much profit today" -->
+{% if is_owner %}
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="ds-tile">
+            <div class="ds-label">📉 {% trans 'Cost of Goods' %}</div>
+            <div class="ds-value" style="color:#b0b0b0;">KES {{ total_cost|floatformat:0 }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="ds-tile">
+            <div class="ds-label">📈 {% trans 'Gross Profit' %}</div>
+            <div class="ds-value" style="color:#6ee7b7;">KES {{ gross_profit|floatformat:0 }}</div>
+            <div class="ds-sub">{{ profit_margin|floatformat:1 }}% {% trans 'margin' %}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="ds-tile">
+            <div class="ds-label">💰 {% trans 'Net Profit' %}</div>
+            <div class="ds-value" style="color:{% if net_profit >= 0 %}var(--gold){% else %}#f87171{% endif %};">
+                KES {{ net_profit|floatformat:0 }}
+            </div>
+            <div class="ds-sub">{% trans 'after expenses, wastage & drawings' %}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="ds-tile">
+            <div class="ds-label">📊 {% trans 'vs Yesterday' %}</div>
+            {% if net_profit_change_pct is not None %}
+            <div class="ds-value" style="color:{% if net_profit_change_pct >= 0 %}#6ee7b7{% else %}#f87171{% endif %}; font-size:1.15rem;">
+                {% if net_profit_change_pct >= 0 %}▲{% else %}▼{% endif %} {{ net_profit_change_pct|floatformat:0 }}%
+            </div>
+            <div class="ds-sub">{% trans 'net profit change' %}</div>
+            {% else %}
+            <div class="ds-value" style="color:#666; font-size:1rem;">—</div>
+            <div class="ds-sub">{% trans 'no profit yesterday to compare' %}</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Today / Yesterday / Day-before mini comparison -->
+<div class="ds-card">
+    <div class="ds-card-header">
+        <h6>📅 {% trans 'Last 3 Days' %}</h6>
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0 ds-table">
+            <thead>
+                <tr>
+                    <th style="padding-left:1.25rem !important;"></th>
+                    <th class="text-end">{% trans 'Revenue' %}</th>
+                    <th class="text-end">{% trans 'Net Profit' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="padding-left:1.25rem !important; color:var(--gold); font-weight:600;">
+                        {{ selected_date|date:"D, d M" }}{% if is_today %} ({% trans 'Leo' %}){% endif %}
+                    </td>
+                    <td class="text-end">{{ total_rev|floatformat:0 }}</td>
+                    <td class="text-end">{{ net_profit|floatformat:0 }}</td>
+                </tr>
+                <tr>
+                    <td style="padding-left:1.25rem !important; color:#b0b0b0;">
+                        {{ yesterday.date|date:"D, d M" }} ({% trans 'Jana' %})
+                    </td>
+                    <td class="text-end" style="color:#b0b0b0;">{{ yesterday.total_rev|floatformat:0 }}</td>
+                    <td class="text-end" style="color:#b0b0b0;">{{ yesterday.net_profit|floatformat:0 }}</td>
+                </tr>
+                <tr>
+                    <td style="padding-left:1.25rem !important; color:#888;">
+                        {{ day_before.date|date:"D, d M" }} ({% trans 'Juzi' %})
+                    </td>
+                    <td class="text-end" style="color:#888;">{{ day_before.total_rev|floatformat:0 }}</td>
+                    <td class="text-end" style="color:#888;">{{ day_before.net_profit|floatformat:0 }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 {% if is_owner and has_kitchen %}
 <!-- Bar / Kitchen split -->
 <div class="row g-3 mb-4">
@@ -200,8 +283,9 @@
                 <tr>
                     <th style="padding-left:1.25rem !important;">{% trans 'Item' %}</th>
                     {% if is_owner and has_kitchen %}<th style="width:30px;"></th>{% endif %}
-                    <th class="text-end">{% trans 'Units' %}</th>
+                    <th class="text-end">{% trans 'Sold' %}</th>
                     <th class="text-end">{% trans 'Revenue' %}</th>
+                    {% if is_owner %}<th class="text-end">{% trans 'Profit' %}</th>{% endif %}
                     <th class="text-end">{% trans 'Cash' %}</th>
                     <th class="text-end">M-Pesa</th>
                     <th class="text-end" style="padding-right:1.25rem !important;">{% trans 'Credit' %}</th>
@@ -220,8 +304,36 @@
                         {% endif %}
                     </td>
                     {% endif %}
-                    <td class="text-end" style="color:#b0b0b0;">{{ row.qty|floatformat:1 }} {{ row.unit }}</td>
+                    <!-- 2026-08-19 — honest per-row_kind labeling. A keg/
+                    bunch pour or a kitchen-batch sale (KitchenBatch.
+                    record_sale() always writes a constant qty=-1 per sale,
+                    regardless of price point) is a SALE COUNT, never a real
+                    physical unit — labelling it with the item's own unit
+                    (e.g. "2.0 Ndoo") would falsely claim a bucket count that
+                    was never actually measured per sale. Only a 'plain' row
+                    (a real item, or a preset-consuming sale like a tot or a
+                    half chicken leg) shows a genuine physical quantity. -->
+                    <td class="text-end" style="color:#b0b0b0;" title="
+                        {% if row.row_kind == 'keg' %}{% trans 'Keg pours — a serving count, not a bottle/litre count' %}
+                        {% elif row.row_kind == 'bunch' %}{% trans 'Portions sold from an envelope-tracked batch' %}
+                        {% elif row.row_kind == 'batch' %}{% trans 'Sales from this batch — not a physical packet/bucket count' %}
+                        {% else %}{% trans 'Real physical quantity' %}{% endif %}">
+                        {% if row.row_kind == 'keg' %}
+                            {{ row.sale_count }} {% trans 'pours' %}
+                        {% elif row.row_kind == 'bunch' %}
+                            {{ row.sale_count }} {% trans 'servings' %}
+                        {% elif row.row_kind == 'batch' %}
+                            {{ row.sale_count }} {% trans 'sales' %}
+                        {% else %}
+                            {{ row.qty|floatformat:2 }} {{ row.unit }}
+                        {% endif %}
+                    </td>
                     <td class="text-end" style="color:var(--gold); font-weight:600;">{{ row.revenue|floatformat:0 }}</td>
+                    {% if is_owner %}
+                    <td class="text-end" style="color:{% if row.profit >= 0 %}#6ee7b7{% else %}#f87171{% endif %};">
+                        {{ row.profit|floatformat:0 }}
+                    </td>
+                    {% endif %}
                     <td class="text-end" style="color:#fbbf24;">
                         {% if row.cash > 0 %}{{ row.cash|floatformat:0 }}{% else %}<span style="color:#555;">—</span>{% endif %}
                     </td>

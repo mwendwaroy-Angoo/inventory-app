@@ -4633,6 +4633,433 @@ class AnalyticsTileBreakdownTest(TestCase):
         self.assertContains(resp, 'Tap for daily breakdown')
 
 
+class ComputeDayFinancialsTest(TestCase):
+    """2026-08-19 (Roy, full autonomy): compute_day_financials() /
+    compute_day_over_day() (core/daily_financials.py) — the shared helper
+    now behind /daily/ and the cron daily summary email. Verifies the
+    three things Roy asked about (per-product profit today, cumulative
+    profit today, today-vs-yesterday) and the honest row_kind labelling
+    that replaces the old ambiguous/wrong "N units" figure."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='DayFin Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.plain_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Dallas',
+            unit='250ml', material_no='DF-01', selling_price=Decimal('200'), cost_price=Decimal('80'),
+        )
+        self.keg_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Tusker',
+            unit='ml', material_no='DF-02', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        self.barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.bar_store, item=self.keg_item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('18000'), status='TAPPED',
+        )
+        self.batch_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            unit='Ndoo', material_no='DF-03', is_kitchen_batch=True,
+        )
+        self.batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.batch_item,
+            cost_total=Decimal('1500'),
+        )
+
+    def test_plain_item_revenue_cost_profit(self):
+        from core.daily_financials import compute_day_financials
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('400'), payment_method='cash', date=today,
+        )
+        day = compute_day_financials(self.biz, today)
+        self.assertEqual(day['total_rev'], 400.0)
+        self.assertEqual(day['total_cost'], 160.0)  # 2 * 80
+        self.assertEqual(day['gross_profit'], 240.0)
+        row = next(r for r in day['item_rows'] if r['name'] == 'Dallas')
+        self.assertEqual(row['row_kind'], 'plain')
+        self.assertEqual(row['qty'], 2.0)
+        self.assertEqual(row['profit'], 240.0)
+
+    def test_void_sale_excluded_from_revenue_but_cost_deducted_from_net_profit(self):
+        """2026-08-19 bug found in send_daily_summary(): voided sales were
+        never excluded, inflating revenue/cost/profit."""
+        from core.daily_financials import compute_day_financials
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='void', date=today,
+        )
+        day = compute_day_financials(self.biz, today)
+        self.assertEqual(day['total_rev'], 0.0)
+        self.assertEqual(day['total_cost'], 0.0)
+        self.assertEqual(day['gross_profit'], 0.0)
+        # Cost of the voided goods still reduces net profit — void_loss.
+        self.assertEqual(day['void_loss'], 80.0)
+        self.assertEqual(day['net_profit'], -80.0)
+
+    def test_confirmed_vs_credit_split(self):
+        from core.daily_financials import compute_day_financials
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash', date=today,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='credit', recipient='Peter', date=today,
+        )
+        day = compute_day_financials(self.biz, today)
+        self.assertEqual(day['confirmed_rev'], 200.0)
+        self.assertEqual(day['credit_rev'], 200.0)
+        self.assertEqual(day['total_rev'], 400.0)
+        # Gross profit is recognised on ALL revenue, cash or credit alike
+        # (accrual, matching analytics_dashboard's own established
+        # definition) — not just the confirmed/collected portion.
+        self.assertEqual(day['gross_profit'], 240.0)
+
+    def test_keg_pour_shown_as_serving_count_not_raw_millilitres(self):
+        """The literal reported risk: a keg pour's qty is stored in ml —
+        summing it raw would show something like '1500 units' for 3 pints."""
+        from core.daily_financials import compute_day_financials
+        today = timezone.localdate()
+        for _ in range(3):
+            Transaction.objects.create(
+                business=self.biz, item=self.keg_item, type='Issue', qty=Decimal('-500'),
+                sale_amount=Decimal('150'), payment_method='cash',
+                keg_barrel=self.barrel, date=today,
+            )
+        day = compute_day_financials(self.biz, today)
+        row = next(r for r in day['item_rows'] if r['name'] == 'Tusker')
+        self.assertEqual(row['row_kind'], 'keg')
+        self.assertEqual(row['sale_count'], 3)
+        self.assertEqual(row['qty'], 3.0)  # NOT 1500
+
+    def test_kitchen_batch_sale_is_a_sale_count_not_a_physical_unit(self):
+        """The literal reported confusion: "Chipo: 2.0000 units" — must be
+        represented as a sale count (row_kind='batch'), never implied to be
+        a physical packet/bucket count."""
+        from core.daily_financials import compute_day_financials
+        today = timezone.localdate()
+        self.batch.record_sale(Decimal('50'), payment_method='cash')
+        self.batch.record_sale(Decimal('100'), payment_method='cash')
+        day = compute_day_financials(self.biz, today)
+        row = next(r for r in day['item_rows'] if r['name'] == 'Chipo')
+        self.assertEqual(row['row_kind'], 'batch')
+        self.assertEqual(row['sale_count'], 2)
+        self.assertEqual(row['qty'], 2.0)
+        self.assertEqual(row['revenue'], 150.0)
+
+    def test_net_profit_deducts_expenses_wastage_and_drawings(self):
+        from core.daily_financials import compute_day_financials
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('1000'), payment_method='cash', date=today,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Wastage', qty=Decimal('-1'), date=today,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='OwnerConsumption', qty=Decimal('-1'), date=today,
+        )
+        BusinessExpense.objects.create(
+            business=self.biz, description='Rent share', amount=Decimal('50'),
+            category='rent', date=today,
+        )
+        day = compute_day_financials(self.biz, today)
+        # revenue 1000, cost 5*80=400 -> gross 600
+        self.assertEqual(day['gross_profit'], 600.0)
+        self.assertEqual(day['wastage_value'], 80.0)
+        self.assertEqual(day['owner_drawings_cost'], 80.0)
+        self.assertEqual(day['expenses_total'], 50.0)
+        self.assertEqual(day['net_profit'], 600.0 - 80.0 - 80.0 - 50.0)
+
+    def test_station_scoping_matches_pre_refactor_behavior(self):
+        """A kitchen-only view must never see bar revenue/cost, and vice
+        versa — same station-scoping shape daily_sales() already had."""
+        from core.daily_financials import compute_day_financials
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash', date=today,
+        )
+        self.batch.record_sale(Decimal('50'), payment_method='cash')
+        kitchen_only = compute_day_financials(self.biz, today, is_kitchen_only=True)
+        bar_only = compute_day_financials(self.biz, today, is_kitchen_only=False)
+        self.assertEqual(kitchen_only['total_rev'], 50.0)
+        self.assertEqual(bar_only['total_rev'], 200.0)
+
+    def test_day_over_day_percentage_change(self):
+        from core.daily_financials import compute_day_over_day
+        from datetime import timedelta
+        today = timezone.localdate()
+        yesterday = today - timedelta(days=1)
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash', date=today,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='cash', date=yesterday,
+        )
+        comparison = compute_day_over_day(self.biz, today)
+        self.assertEqual(comparison['today']['total_rev'], 200.0)
+        self.assertEqual(comparison['yesterday']['total_rev'], 100.0)
+        self.assertEqual(comparison['revenue_change_pct'], 100.0)
+
+    def test_day_over_day_none_when_no_revenue_yesterday(self):
+        from core.daily_financials import compute_day_over_day
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash', date=today,
+        )
+        comparison = compute_day_over_day(self.biz, today)
+        self.assertIsNone(comparison['revenue_change_pct'])
+
+
+class DailySalesPnLViewTest(TestCase):
+    """2026-08-19 — /daily/ page now shows real cost/profit (previously
+    absent entirely) and a today/yesterday/day-before comparison strip."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='DailySales PnL Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='dspnl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='dspnl_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Widget',
+            material_no='DSPNL-01', unit='Pcs', selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+
+    def test_owner_sees_net_profit_and_comparison(self):
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('200'), payment_method='cash', date=today,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/daily/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['gross_profit'], 120.0)
+        self.assertEqual(resp.context['net_profit'], 120.0)
+        self.assertContains(resp, 'Net Profit')
+        self.assertContains(resp, 'Last 3 Days')
+
+    def test_staff_does_not_see_pnl_tiles(self):
+        """Matches the existing wastage-cost-gate convention — profit
+        figures are owner/manager-only, same tier as cost price."""
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('200'), payment_method='cash', date=today,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/daily/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Net Profit')
+        self.assertNotContains(resp, 'Cost of Goods')
+
+    def test_owner_consumes_never_leaked_to_staff(self):
+        """Regression lock — compute_day_financials() always computes
+        owner_consumes regardless of caller role (it's a shared, role-
+        agnostic helper); the VIEW must still gate it to owner/manager, or
+        this refactor would have introduced a real information leak."""
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='OwnerConsumption',
+            qty=Decimal('-1'), date=today,
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.get('/daily/')
+        self.assertEqual(resp.context['owner_consumes'], [])
+        self.assertNotContains(resp, 'Owner Drawings')
+
+        self.client.force_login(self.owner)
+        resp = self.client.get('/daily/')
+        self.assertEqual(len(resp.context['owner_consumes']), 1)
+        self.assertContains(resp, 'Owner Drawings')
+
+
+class SendDailySummaryPnLTest(TestCase):
+    """2026-08-19 — send_daily_summary() rebuilt on compute_day_over_day();
+    locks in the bug fixes (void exclusion, honest per-item labelling, net
+    profit, yesterday comparison line)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='SendSummary PnL Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(
+            username='sspnl_owner', password='x', email='owner@x.com',
+        )
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner', phone='0712345678')
+        self.plain_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Dallas',
+            unit='250ml', material_no='SSPNL-01', selling_price=Decimal('200'), cost_price=Decimal('80'),
+        )
+        self.keg_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            unit='ml', material_no='SSPNL-02', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        self.barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.keg_item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('18000'), status='TAPPED',
+        )
+
+    @patch('core.notifications.send_sms_notification_async')
+    @patch('core.notifications.send_email_notification_async')
+    def test_summary_shows_net_profit_and_excludes_void(self, mock_email, mock_sms):
+        from core.notifications import send_daily_summary
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash', date=today,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.plain_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='void', date=today,
+        )
+        send_daily_summary(self.biz)
+        message = self._find_daily_summary_message(mock_email)
+        self.assertIn('Net Profit', message)
+        # Void must not have inflated revenue — only the one real cash sale counts.
+        self.assertIn('KES 200.00', message)
+        self.assertNotIn('KES 400.00', message)
+
+    @patch('core.notifications.send_sms_notification_async')
+    @patch('core.notifications.send_email_notification_async')
+    def test_keg_pour_shown_as_pours_not_raw_millilitres(self, mock_email, mock_sms):
+        from core.notifications import send_daily_summary
+        today = timezone.localdate()
+        for _ in range(3):
+            Transaction.objects.create(
+                business=self.biz, item=self.keg_item, type='Issue', qty=Decimal('-500'),
+                sale_amount=Decimal('150'), payment_method='cash',
+                keg_barrel=self.barrel, date=today,
+            )
+        send_daily_summary(self.biz)
+        message = self._find_daily_summary_message(mock_email)
+        self.assertIn('3 pours', message)
+        self.assertNotIn('1500', message)
+
+    @staticmethod
+    def _find_daily_summary_message(mock_email):
+        """Creating an Issue transaction can also fire a real, separate
+        background-thread reorder-alert email (notify_transaction_async) —
+        a genuine, documented async race (see this app's own known-issues
+        notes on notify_transaction_async) independent of this feature.
+        Searching call_args_list by this email's own distinctive subject
+        avoids assuming the daily summary was necessarily the LAST call."""
+        for call in mock_email.call_args_list:
+            args, kwargs = call
+            subject = args[1] if len(args) > 1 else kwargs.get('subject', '')
+            if subject and 'Daily Summary' in subject:
+                return kwargs.get('text_message') or (args[3] if len(args) > 3 else None)
+        raise AssertionError(
+            f'No Daily Summary email found among {len(mock_email.call_args_list)} '
+            f'send_email_notification_async call(s)'
+        )
+
+
+class AnalyticsFinancialHealthTest(TestCase):
+    """2026-08-19 — new Financial Health section (Cash Position, Inventory
+    Turnover, Days Sales/Payable Outstanding, Capital Recovery link)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='FinHealth Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='finhealth_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Widget',
+            material_no='FH-01', unit='Pcs', selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_inventory_turnover_matches_cost_over_stock_value(self):
+        today = timezone.localdate()
+        # Receive stock (sets a real balance/stock value), then sell some.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'), date=today,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('500'), payment_method='cash', date=today,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        fh = resp.context['financial_health']
+        # cur_cost = 5*40=200; stock_value = current_balance(15) * cost_price(40) = 600
+        self.assertEqual(resp.context['cur_cost'], 200.0)
+        self.assertEqual(resp.context['stock_value'], 600.0)
+        self.assertEqual(fh['inventory_turnover'], round(200.0 / 600.0, 2))
+
+    def test_inventory_turnover_none_when_no_stock_value(self):
+        resp = self.client.get('/analytics/?period=30')
+        fh = resp.context['financial_health']
+        self.assertIsNone(fh['inventory_turnover'])
+
+    def test_cash_position_reflects_receivables_and_payables(self):
+        from core.models import SupplierInvoice
+        today = timezone.localdate()
+        Customer.objects.create(business=self.biz, name='Jane')
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('200'), payment_method='credit', recipient='Jane', date=today,
+        )
+        SupplierInvoice.objects.create(
+            business=self.biz, supplier_name='Distributor', amount=Decimal('300'),
+            invoice_date=today,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        fh = resp.context['financial_health']
+        self.assertEqual(fh['cash_position']['receivables'], 200.0)
+        self.assertEqual(fh['cash_position']['payables'], 300.0)
+        self.assertEqual(fh['cash_position']['net'], -100.0)
+
+    def test_days_sales_outstanding_none_when_no_credit_issued(self):
+        resp = self.client.get('/analytics/?period=30')
+        fh = resp.context['financial_health']
+        self.assertIsNone(fh['days_sales_outstanding'])
+
+    def test_days_sales_outstanding_standard_formula(self):
+        today = timezone.localdate()
+        Customer.objects.create(business=self.biz, name='Jane')
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Jane', date=today,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        fh = resp.context['financial_health']
+        # outstanding=100, period credit issued=100, period days=30 -> DSO=30
+        self.assertEqual(fh['days_sales_outstanding'], 30.0)
+
+    def test_days_payable_outstanding_standard_formula(self):
+        from core.models import SupplierInvoice
+        today = timezone.localdate()
+        SupplierInvoice.objects.create(
+            business=self.biz, supplier_name='Distributor', amount=Decimal('300'),
+            invoice_date=today,
+        )
+        resp = self.client.get('/analytics/?period=30')
+        fh = resp.context['financial_health']
+        # outstanding=300, period purchases=300, period days=30 -> DPO=30
+        self.assertEqual(fh['days_payable_outstanding'], 30.0)
+
+    def test_financial_health_section_renders(self):
+        resp = self.client.get('/analytics/?period=30')
+        self.assertContains(resp, 'Financial Health')
+        self.assertContains(resp, 'Cash Position')
+        self.assertContains(resp, 'Inventory Turnover')
+        self.assertContains(resp, 'Days Sales Outstanding')
+        self.assertContains(resp, 'Days Payable Outstanding')
+
+
 class TabLiveOutstandingTileTest(TestCase):
     """K8-Task4: the 'Bado kulipa' tile must be hidden once outstanding drops to 0."""
 

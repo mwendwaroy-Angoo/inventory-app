@@ -1040,6 +1040,85 @@ def analytics_dashboard(request):
         total_kitchen_revenue = round(sum(r['revenue'] for r in kitchen_rows), 2)
         kitchen_share = round(100 * total_kitchen_revenue / float(cur_revenue), 1) if cur_revenue > 0 else 0
 
+    # ── Financial Health: liquidity + efficiency (2026-08-19 request) ──
+    # Roy's own audit question — does this app track profitability,
+    # liquidity/cash flow, efficiency, and leverage metrics. Profitability
+    # was already well covered above (Revenue/Gross Profit/Net Profit/
+    # Margin/per-product profit). This section adds the other three,
+    # reusing figures already computed above wherever possible rather than
+    # re-deriving them — cur_cost/stock_value/breakeven_data all already
+    # exist by this point in the function.
+    from .payables import cash_position as _cash_position_fn, payables_aging_summary as _payables_aging_fn
+
+    try:
+        financial_cash_position = _cash_position_fn(business)
+    except Exception:
+        financial_cash_position = None
+
+    # Inventory Turnover — how many times over the CURRENT stock value's
+    # worth of goods was sold through during this period. Deliberately
+    # labelled as an estimate against current stock value, not a true
+    # textbook average-inventory ratio — this app has no daily stock-value
+    # snapshot history to average against (a real limitation, not hidden).
+    inventory_turnover = round(cur_cost / stock_value, 2) if stock_value > 0 else None
+
+    # Days Sales Outstanding / Days Payable Outstanding — the standard
+    # small-business formula: Outstanding ÷ Period Activity × Period Days.
+    # Deliberately does NOT try to pin an individual payment to an
+    # individual sale/invoice — this app's own debt/payables ledgers are
+    # FIFO and dynamically reassigned by design (see
+    # _get_customer_debt_data()'s own docstring), so a per-transaction
+    # aging calculation would fight that design rather than use it.
+    from .models import SupplierInvoice
+    from .payables import total_receivables as _total_receivables_fn
+    try:
+        receivables_outstanding = _total_receivables_fn(business)
+    except Exception:
+        receivables_outstanding = 0.0
+
+    period_credit_issued = 0.0
+    _credit_txns = (
+        Transaction.objects.filter(
+            business=business, type='Issue',
+            date__gte=start_date, date__lte=today,
+        )
+        .filter(Q(payment_method='credit') | Q(was_credit=True))
+        .exclude(payment_method='void')
+        .select_related('item')
+    )
+    for _t in _credit_txns:
+        period_credit_issued += _t.revenue()
+
+    days_sales_outstanding = (
+        round(receivables_outstanding / period_credit_issued * days, 1)
+        if period_credit_issued > 0 else None
+    )
+
+    try:
+        payables_outstanding = _payables_aging_fn(business)['total_outstanding']
+    except Exception:
+        payables_outstanding = 0.0
+
+    period_credit_purchased = float(
+        SupplierInvoice.objects.filter(
+            business=business, invoice_date__gte=start_date, invoice_date__lte=today,
+        ).aggregate(total=Sum('amount'))['total'] or 0
+    )
+    days_payable_outstanding = (
+        round(payables_outstanding / period_credit_purchased * days, 1)
+        if period_credit_purchased > 0 else None
+    )
+
+    financial_health = {
+        'cash_position': financial_cash_position,
+        'inventory_turnover': inventory_turnover,
+        'days_sales_outstanding': days_sales_outstanding,
+        'days_payable_outstanding': days_payable_outstanding,
+        'capital_recovery_pct': breakeven_data.get('recovery_pct') if breakeven_data else None,
+        'receivables_outstanding': round(receivables_outstanding, 2),
+        'payables_outstanding': round(payables_outstanding, 2),
+    }
+
     context = {
         'period': days,
         'start_date': start_date,
@@ -1153,6 +1232,8 @@ def analytics_dashboard(request):
         'kitchen_share':          kitchen_share,
         # UBA §M0-6 — additive section registry, not read by analytics.html yet
         'uba_analytics_sections': uba_analytics_sections,
+        # Financial Health (2026-08-19)
+        'financial_health': financial_health,
     }
     return render(request, 'core/analytics.html', context)
 
@@ -1959,7 +2040,13 @@ def expense_report(request):
 
 @login_required
 def daily_sales(request):
-    """Pick any date and see all sales, revenue by channel, and item breakdown."""
+    """Pick any date and see all sales, revenue by channel, item breakdown,
+    full P&L (cost/profit — 2026-08-19), and a today-vs-yesterday-vs-day-
+    before comparison. Built on core.daily_financials.compute_day_over_day()
+    — see that module's own docstring for why this single-day computation
+    is deliberately factored out and shared with the daily summary email."""
+    from core.daily_financials import compute_day_over_day
+
     user_profile = request.user.userprofile
     business     = user_profile.business
     is_owner     = user_profile.is_owner_or_manager
@@ -1976,128 +2063,21 @@ def daily_sales(request):
     next_date = selected_date + timedelta(days=1)
     is_today  = (selected_date == today)
 
-    # ── Station scoping ──
+    # ── Station scoping — same shape as before this refactor: a pure
+    # single-station staffer's whole day view (revenue, cost, profit, item
+    # rows) is scoped to their own station; anyone with combined/owner
+    # access sees the whole business. ──
     show_bar, show_kitchen = _station_scope(user_profile)
     has_kitchen = getattr(business, 'has_kitchen', False)
+    if show_bar and show_kitchen:
+        station_filter = None
+    elif show_kitchen:
+        station_filter = True
+    else:
+        station_filter = False
 
-    # ── Issue transactions for the day (voids excluded) ──
-    txns_qs = (
-        Transaction.objects
-        .filter(business=business, type='Issue', date=selected_date)
-        .exclude(payment_method='void')
-        .select_related('item', 'item__store', 'keg_barrel', 'produce_bunch')
-    )
-
-    # Apply station filter for non-owner/manager staff
-    if not (show_bar and show_kitchen):
-        if show_kitchen and not show_bar:
-            txns_qs = txns_qs.filter(item__store__is_kitchen=True)
-        else:
-            txns_qs = txns_qs.filter(item__store__is_kitchen=False)
-
-    txns = list(txns_qs.order_by('id'))
-
-    # ── Revenue rollup ──
-    cash_rev    = 0.0
-    mpesa_rev   = 0.0
-    credit_rev  = 0.0
-    bar_rev     = 0.0
-    kitchen_rev = 0.0
-    item_map    = {}   # item_id → summary dict
-
-    for txn in txns:
-        rev = txn.revenue()
-        pm  = txn.payment_method or 'cash'
-
-        if pm == 'mpesa':
-            mpesa_rev += rev
-        elif pm == 'credit':
-            credit_rev += rev
-        else:
-            cash_rev += rev
-
-        # Bar / kitchen split (owners with kitchen only)
-        if is_owner and has_kitchen:
-            store = txn.item.store
-            if store and store.is_kitchen:
-                kitchen_rev += rev
-            else:
-                bar_rev += rev
-
-        # Per-item rollup
-        iid = txn.item_id
-        if iid not in item_map:
-            item_map[iid] = {
-                'name':       txn.item.description,
-                'unit':       txn.item.unit,
-                'is_kitchen': bool(txn.item.store and txn.item.store.is_kitchen),
-                'qty':        0.0,
-                'revenue':    0.0,
-                'cash':       0.0,
-                'mpesa':      0.0,
-                'credit':     0.0,
-            }
-        row = item_map[iid]
-        # Keg pours (qty in ml) and bunch sales count as 1 serving each
-        if getattr(txn, 'keg_barrel_id', None) or getattr(txn, 'produce_bunch_id', None):
-            row['qty'] += 1.0
-        else:
-            row['qty'] += float(abs(txn.qty or 0))
-        row['revenue'] += rev
-        if pm == 'mpesa':
-            row['mpesa'] += rev
-        elif pm == 'credit':
-            row['credit'] += rev
-        else:
-            row['cash'] += rev
-
-    # 2026-07-31 live report — "cash sales and mpesa for the daily sales does
-    # not include confirmed unpaid bills and debts, only what was confirmed
-    # ... there is a huge gap". confirmed_rev (cash+mpesa) is what was
-    # ACTUALLY collected; credit_rev is stock given out on a tab/deni that's
-    # still owed — a stock-reduction event, not money in hand. The headline
-    # figure on this page must be confirmed_rev, never a silent sum that
-    # folds unpaid credit into what reads as "Total Revenue".
-    confirmed_rev = cash_rev + mpesa_rev
-    total_rev = confirmed_rev + credit_rev
-    item_rows = sorted(item_map.values(), key=lambda x: -x['revenue'])
-
-    # ── Wastage (station-scoped) ──
-    # invoice_no='[ADJ-NOLOSS]' excluded — see analytics_dashboard's
-    # wastage_loss for the full reasoning (2026-07-31 live report).
-    wastage_qs = (
-        Transaction.objects
-        .filter(business=business, type='Wastage', date=selected_date)
-        .exclude(invoice_no='[ADJ-NOLOSS]')
-        .select_related('item', 'item__store', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset')
-    )
-    if not (show_bar and show_kitchen):
-        if show_kitchen and not show_bar:
-            wastage_qs = wastage_qs.filter(item__store__is_kitchen=True)
-        else:
-            wastage_qs = wastage_qs.filter(item__store__is_kitchen=False)
-    wastage_list  = list(wastage_qs)
-    # loss_value() (not a raw abs(qty)*item.cost_price formula) — same
-    # 2026-08-11 fix as analytics_dashboard's wastage_loss; a bunch/batch-
-    # linked discard's qty isn't in item.cost_price's own unit of account.
-    wastage_value = sum(w.loss_value() for w in wastage_list)
-
-    # ── Owner consumption (owner/manager only) ──
-    owner_consumes = []
-    if is_owner:
-        owner_consumes = list(
-            Transaction.objects
-            .filter(business=business, type='OwnerConsumption', date=selected_date)
-            .select_related('item')
-        )
-
-    # ── Receipts issued on this day ──
-    receipt_count = (
-        Receipt.objects
-        .filter(business=business, created_at__date=selected_date)
-        .exclude(payment_method='statement')
-        .count()
-    )
+    comparison = compute_day_over_day(business, selected_date, station_filter)
+    day = comparison['today']
 
     return render(request, 'core/daily_summary.html', {
         'selected_date':  selected_date,
@@ -2109,17 +2089,33 @@ def daily_sales(request):
         'has_kitchen':    has_kitchen,
         'show_bar':       show_bar,
         'show_kitchen':   show_kitchen,
-        'total_rev':      round(total_rev, 2),
-        'confirmed_rev':  round(confirmed_rev, 2),
-        'cash_rev':       round(cash_rev, 2),
-        'mpesa_rev':      round(mpesa_rev, 2),
-        'credit_rev':     round(credit_rev, 2),
-        'bar_rev':        round(bar_rev, 2),
-        'kitchen_rev':    round(kitchen_rev, 2),
-        'item_rows':      item_rows,
-        'txn_count':      len(txns),
-        'wastage_list':   wastage_list,
-        'wastage_value':  round(wastage_value, 2),
-        'owner_consumes': owner_consumes,
-        'receipt_count':  receipt_count,
+        'total_rev':      day['total_rev'],
+        'confirmed_rev':  day['confirmed_rev'],
+        'cash_rev':       day['cash_rev'],
+        'mpesa_rev':      day['mpesa_rev'],
+        'credit_rev':     day['credit_rev'],
+        'bar_rev':        day['bar_rev'],
+        'kitchen_rev':    day['kitchen_rev'],
+        'total_cost':     day['total_cost'],
+        'gross_profit':   day['gross_profit'],
+        'profit_margin':  day['profit_margin'],
+        'expenses_total': day['expenses_total'],
+        'net_profit':     day['net_profit'],
+        'item_rows':      day['item_rows'],
+        'txn_count':      day['txn_count'],
+        'wastage_list':   day['wastage_list'],
+        'wastage_value':  day['wastage_value'],
+        'void_loss':      day['void_loss'],
+        # Owner Drawings stays owner/manager-only — matches the pre-refactor
+        # behaviour exactly (compute_day_financials() itself always computes
+        # this, since it's a shared, role-agnostic helper; visibility is a
+        # view-layer decision).
+        'owner_consumes': day['owner_consumes'] if is_owner else [],
+        'owner_drawings_cost': day['owner_drawings_cost'],
+        'receipt_count':  day['receipt_count'],
+        # Today vs yesterday vs the day before (2026-08-19 request)
+        'yesterday':              comparison['yesterday'],
+        'day_before':             comparison['day_before'],
+        'revenue_change_pct':     comparison['revenue_change_pct'],
+        'net_profit_change_pct':  comparison['net_profit_change_pct'],
     })

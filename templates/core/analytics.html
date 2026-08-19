@@ -251,7 +251,7 @@
   · {% blocktrans with p=period %}Compared to previous {{ p }} days{% endblocktrans %}
 </div>
 
-{% if greens_items or keg_item_rows or kitchen_rows or store_list %}
+{% if greens_items or keg_item_rows or kitchen_rows or store_list or financial_health %}
 <!-- ═══ JUMP TO STORE/MODULE ANALYTICS ═══ -->
 <div class="store-jump-nav">
   <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; align-self:center;">{% trans 'Jump to:' %}</span>
@@ -266,6 +266,9 @@
   {% endif %}
   {% if store_list %}
   <a href="#section-store-performance" class="store-jump-btn">🏪 {% trans 'All Stores — Revenue Table' %} →</a>
+  {% endif %}
+  {% if financial_health %}
+  <a href="#section-financial-health" class="store-jump-btn">💰 {% trans 'Financial Health' %} →</a>
   {% endif %}
 </div>
 {% endif %}
@@ -1311,6 +1314,92 @@
   </div>
   {% endif %}
 </div>
+
+<!-- ═══ FINANCIAL HEALTH (2026-08-19) ═══ -->
+{% if financial_health %}
+<div class="section-title" id="section-financial-health">💰 {% trans 'Financial Health' %}</div>
+<div style="font-size:0.8rem; color:var(--muted); margin-top:-0.75rem; margin-bottom:1rem;">
+  {% trans 'Liquidity, efficiency and credit-exposure indicators — beyond revenue and profit.' %}
+</div>
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="stat-card" style="border-top: 3px solid {% if financial_health.cash_position.net >= 0 %}var(--success){% else %}var(--danger){% endif %};">
+      <div class="stat-label" title="{% trans 'What customers owe you, minus what you owe suppliers — the most honest single cash number in the app.' %}">
+        {% trans 'Cash Position' %}
+      </div>
+      {% if financial_health.cash_position %}
+      <div class="stat-value" style="color: {% if financial_health.cash_position.net >= 0 %}var(--success){% else %}var(--danger){% endif %};">
+        {{ financial_health.cash_position.net|floatformat:0 }}
+      </div>
+      <div class="stat-change" style="color: var(--muted);">
+        {% trans 'Receivables' %} {{ financial_health.cash_position.receivables|floatformat:0 }}
+        − {% trans 'Payables' %} {{ financial_health.cash_position.payables|floatformat:0 }}
+      </div>
+      {% else %}
+      <div class="stat-value" style="color: var(--muted); font-size: 1rem;">—</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="stat-card" style="border-top: 3px solid #6c8ebf;">
+      <div class="stat-label" title="{% trans 'How many times your current stock value was sold through this period — a higher number means stock moves fast, not sits.' %}">
+        {% trans 'Inventory Turnover' %}
+      </div>
+      {% if financial_health.inventory_turnover is not None %}
+      <div class="stat-value" style="color: #6c8ebf;">{{ financial_health.inventory_turnover }}×</div>
+      <div class="stat-change" style="color: var(--muted);">{% trans 'this period, vs current stock value' %}</div>
+      {% else %}
+      <div class="stat-value" style="color: var(--muted); font-size: 1rem;">—</div>
+      <div class="stat-change" style="color: var(--muted);">{% trans 'no stock value to compare against' %}</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="stat-card" style="border-top: 3px solid #fbbf24;">
+      <div class="stat-label" title="{% trans 'Average days customers take to pay off credit issued this period.' %}">
+        {% trans 'Days Sales Outstanding' %}
+      </div>
+      {% if financial_health.days_sales_outstanding is not None %}
+      <div class="stat-value" style="color: #fbbf24;">{{ financial_health.days_sales_outstanding }}</div>
+      <div class="stat-change" style="color: var(--muted);">{% trans 'days, on average' %}</div>
+      {% else %}
+      <div class="stat-value" style="color: var(--muted); font-size: 1rem;">—</div>
+      <div class="stat-change" style="color: var(--muted);">{% trans 'no credit issued this period' %}</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="stat-card" style="border-top: 3px solid #C8752A;">
+      <div class="stat-label" title="{% trans 'Average days you take to pay suppliers on invoices this period.' %}">
+        {% trans 'Days Payable Outstanding' %}
+      </div>
+      {% if financial_health.days_payable_outstanding is not None %}
+      <div class="stat-value" style="color: #C8752A;">{{ financial_health.days_payable_outstanding }}</div>
+      <div class="stat-change" style="color: var(--muted);">{% trans 'days, on average' %}</div>
+      {% else %}
+      <div class="stat-value" style="color: var(--muted); font-size: 1rem;">—</div>
+      <div class="stat-change" style="color: var(--muted);">{% trans 'no supplier invoices this period' %}</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% if financial_health.capital_recovery_pct is not None %}
+<div style="font-size:0.82rem; color:var(--muted); margin-top:-0.5rem; margin-bottom:1.5rem;">
+  💼 {% trans 'Owner capital recovered so far:' %}
+  <strong style="color:var(--gold);">{{ financial_health.capital_recovery_pct }}%</strong>
+  — {% trans 'see Break-Even Analysis below for the full picture.' %}
+</div>
+{% endif %}
+{% if financial_health.days_sales_outstanding and financial_health.days_payable_outstanding %}
+<div style="font-size:0.8rem; color:var(--muted); margin-top:-0.5rem; margin-bottom:1.5rem;">
+  {% if financial_health.days_sales_outstanding > financial_health.days_payable_outstanding %}
+  ⚠️ {% trans 'Customers are taking longer to pay you than you take to pay suppliers — this can strain cash even while the business is profitable on paper.' %}
+  {% else %}
+  ✅ {% trans 'You collect from customers faster than you pay suppliers — a healthier cash position than the reverse.' %}
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}
 
 <!-- ═══ BREAK-EVEN DASHBOARD ═══ -->
 {% if breakeven_data %}
