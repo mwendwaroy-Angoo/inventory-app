@@ -352,6 +352,75 @@ class VoidTabClearsDebtTest(TestCase):
         self.assertEqual(all_issue, 0, "Analytics (exclude void) should count 0 revenue transactions")
 
 
+class VoidTabRestoresStockTest(TestCase):
+    """2026-08-19 fix (bar-ops transactional audit, narrowed per Roy's own
+    correction — "ensure that once stock is removed... and revertions of
+    the same transactions work well"). void_tab() (whole-tab void) never
+    restored stock or reversed the source keg barrel's envelope, unlike
+    its sibling remove_tab_entry() (single-entry void), which already did
+    both correctly — even though one of the reasons this button explicitly
+    offers is "Tab ya makosa / nakala" (tab was a mistake/duplicate),
+    implying the goods were never really served."""
+
+    def setUp(self):
+        self.business, self.store, self.owner, self.item, self.barrel, self.preset = (
+            _make_keg_fixtures('Void Tab Restores Biz')
+        )
+        UserProfile.objects.create(user=self.owner, business=self.business, role='owner')
+        self.barrel.revenue_collected = Decimal('600')
+        self.barrel.volume_dispensed_ml = Decimal('1500')
+        self.barrel.save(update_fields=['revenue_collected', 'volume_dispensed_ml'])
+
+    def test_void_tab_restores_item_stock_and_barrel_envelope(self):
+        tab = _make_tab_with_entries(
+            self.business, self.owner, self.barrel, self.preset,
+            customer_name='Mistake Tab', num_entries=3,
+        )
+        before_balance = self.item.current_balance()
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/void/', {
+            'reason': 'Tab ya makosa / nakala',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+
+        # All 3 pours (500ml each) restored to the item's own balance
+        self.assertEqual(self.item.current_balance(), before_balance + 1500)
+
+        # And every underlying transaction's qty was zeroed, not just left
+        # marked void with the deduction still standing
+        for entry in tab.entries.all():
+            entry.transaction.refresh_from_db()
+            self.assertEqual(entry.transaction.qty, Decimal('0'))
+            self.assertEqual(entry.transaction.payment_method, 'void')
+
+        # And the barrel's own envelope (revenue_collected/volume_dispensed_ml)
+        # was reversed by exactly the 3 pours' worth — not left overstated
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.revenue_collected, Decimal('0'))
+        self.assertEqual(self.barrel.volume_dispensed_ml, Decimal('0'))
+
+    def test_void_tab_envelope_reversal_floors_at_zero(self):
+        """If the barrel's envelope was already independently corrected
+        (e.g. Hariri Gharama) since these entries were sold, the reversal
+        must never go negative — same defensive floor as remove_tab_entry."""
+        tab = _make_tab_with_entries(
+            self.business, self.owner, self.barrel, self.preset,
+            customer_name='Already Corrected', num_entries=1,
+        )
+        self.barrel.revenue_collected = Decimal('50')
+        self.barrel.volume_dispensed_ml = Decimal('100')
+        self.barrel.save(update_fields=['revenue_collected', 'volume_dispensed_ml'])
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{tab.id}/void/', {'reason': 'Mistake'})
+        self.assertTrue(resp.json().get('ok'), resp.json())
+
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.revenue_collected, Decimal('0'))
+        self.assertEqual(self.barrel.volume_dispensed_ml, Decimal('0'))
+
+
 class ConvertTabToDebtWithDuplicateCustomersTest(TestCase):
     """F1.3: convert_tab_to_debt must not raise MultipleObjectsReturned even when
     two Customer rows share the same (business, phone)."""
@@ -12234,6 +12303,101 @@ class DiagnoseCustomerDebtCommandTest(TestCase):
         self.assertIn('0 customer(s) still mismatched', out.getvalue())
 
 
+class DiagnoseStockShortfallsCommandTest(TestCase):
+    """2026-08-19 live report (Roy, Monsoon Inn) — staff insist they recorded
+    every Dallas/KC Ginger (spirits sold whole or by tot: 0.25/0.5/0.75)
+    sale correctly, yet the app shows stock that physically doesn't exist.
+    Traced to Item.capped_deduction() (2026-08-07, Roy's own "negative
+    balances should never be there" request) — used by 5 settlement paths
+    (Quick Sell/Kitchen STK, Order Fulfillment, Table Order Served, Payment
+    Confirmation) that all run AFTER the sale is already committed
+    (payment confirmed / item already served), so refusing outright isn't
+    an option. It floors the deduction at whatever's available, silently
+    discarding the shortfall rather than deducting the true amount — the
+    ONLY trace is a BusinessException(kind='shrinkage') the owner has to
+    proactively notice; the Transaction itself carries no marker. This
+    read-only diagnostic surfaces exactly that gap. Must never mutate."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Shortfall Diagnose Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Dallas',
+            material_no='SFD-01', unit='250ml', selling_price=Decimal('200'), cost_price=Decimal('80'),
+        )
+
+    def test_shows_ledger_and_shrinkage_exceptions_without_mutating_anything(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-0.9'), payment_method='cash',
+        )
+        BusinessException.raise_exception(
+            self.biz, kind='shrinkage', severity='warn',
+            title=f'{self.item.description} — malipo yalithibitishwa lakini stock haitoshi',
+            detail='Quick Sell STK: mteja alilipa kwa 0.15 250ml zaidi ya stock iliyokuwepo.',
+        )
+        before_txn = Transaction.objects.count()
+        before_exc = BusinessException.objects.count()
+
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas', stdout=out)
+        output = out.getvalue()
+        self.assertIn('Dallas', output)
+        self.assertIn('malipo yalithibitishwa', output)
+        self.assertIn('UNACKNOWLEDGED', output)
+        self.assertEqual(Transaction.objects.count(), before_txn)
+        self.assertEqual(BusinessException.objects.count(), before_exc)
+
+    def test_no_shrinkage_exceptions_suggests_other_causes(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas', stdout=out)
+        output = out.getvalue()
+        self.assertIn('None.', output)
+        self.assertIn('duplicate Item', output)
+
+    def test_duplicate_item_name_flagged(self):
+        from io import StringIO
+        from django.core.management import call_command
+        Item.objects.create(
+            business=self.biz, store=self.store, description='Dallas',
+            material_no='SFD-02', unit='250ml', selling_price=Decimal('200'),
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas', stdout=out)
+        output = out.getvalue()
+        self.assertIn('OTHER item(s) also named', output)
+        self.assertIn('SFD-02', output)
+
+    def test_all_items_scan_reports_acknowledgement_state(self):
+        from io import StringIO
+        from django.core.management import call_command
+        exc = BusinessException.raise_exception(
+            self.biz, kind='shrinkage', severity='warn',
+            title=f'{self.item.description} — malipo yalithibitishwa lakini stock haitoshi',
+            detail='Quick Sell STK: mteja alilipa kwa 0.15 250ml zaidi ya stock iliyokuwepo.',
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', all_items=True, stdout=out)
+        output = out.getvalue()
+        self.assertIn('1 total, 1 never acknowledged', output)
+
+        exc.acknowledge(None)
+        out2 = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', all_items=True, stdout=out2)
+        self.assertIn('1 total, 0 never acknowledged', out2.getvalue())
+
+    def test_neither_item_nor_all_items_errors_cleanly(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', stdout=out)
+        self.assertIn('--item', out.getvalue())
+
+
 class DiagnoseReceiptCommandTest(TestCase):
     """2026-08-16 live report (Roy, Monsoon Inn) — a customer's live receipt
     showed an item ('Chrome Gin') they never ordered, already struck through
@@ -13149,6 +13313,73 @@ class DebtEraseMistakeTest(TestCase):
         self.assertEqual(txn.payment_method, 'void')
         self.assertEqual(txn.qty, Decimal('0'))
         self.assertEqual(self.item.current_balance(), before + 2)
+
+    def test_erase_mistake_reverses_keg_barrel_envelope(self):
+        """2026-08-19 fix (bar-ops transactional audit, narrowed per Roy's
+        own correction — verify removal+reversal knots, not capped_
+        deduction itself): erasing a mistaken debt entry that came from a
+        converted keg tab must also reverse the barrel's own revenue_
+        collected/volume_dispensed_ml envelope, not just zero the
+        Transaction's qty — otherwise the Item's own balance self-corrects
+        but the barrel's separate running counters stay permanently
+        overstated, corrupting keg reconciliation and Bar Performance."""
+        barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+            status='TAPPED', revenue_collected=Decimal('200'),
+            volume_dispensed_ml=Decimal('500'),
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-500'), recipient='Erase Patron',
+            payment_method='credit', sale_amount=Decimal('200'),
+            keg_barrel=barrel,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Wrong tab entirely', 'is_mistake': '1',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('0'))
+        barrel.refresh_from_db()
+        self.assertEqual(barrel.revenue_collected, Decimal('0'))
+        self.assertEqual(barrel.volume_dispensed_ml, Decimal('0'))
+
+    def test_regular_writeoff_never_touches_keg_barrel_envelope(self):
+        """A REAL write-off (goods really left the shelf, only the
+        receivable is forgiven) must NOT reverse the barrel's envelope —
+        only the erase_mistake path represents a sale that never happened."""
+        barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+            status='TAPPED', revenue_collected=Decimal('200'),
+            volume_dispensed_ml=Decimal('500'),
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-500'), recipient='Erase Patron',
+            payment_method='credit', sale_amount=Decimal('200'),
+            keg_barrel=barrel,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Uncollectable', 'is_mistake': '0',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        # A real write-off only ever creates a pending request — never
+        # self-executes regardless of who requested it — so approve it
+        # explicitly to actually exercise _execute_write_off_approval()
+        # with is_mistake=False.
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.get(transaction=txn)
+        approve_resp = self.client.post(f'/debt/write-off/{wo.id}/approve/')
+        self.assertTrue(approve_resp.json().get('ok'), approve_resp.json())
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('-500'), "A real write-off must never touch qty")
+        barrel.refresh_from_db()
+        self.assertEqual(barrel.revenue_collected, Decimal('200'))
+        self.assertEqual(barrel.volume_dispensed_ml, Decimal('500'))
 
     def test_self_service_erase_never_flags_customer_as_defaulter(self):
         customer = Customer.objects.create(business=self.biz, name='Erase Patron', credit_approved=True)

@@ -3534,7 +3534,21 @@ def settle_tab(request, tab_id):
 @login_required
 @require_POST
 def void_tab(request, tab_id):
-    """Void a tab — owner/manager only. Marks all unpaid entries as written off."""
+    """Void a tab — owner/manager only. Marks all unpaid entries as written off.
+
+    2026-08-19 fix (bar-ops transactional audit, narrowed per Roy's own
+    correction — "just ensure that once stock is removed... and revertions
+    of the same transactions work well"): this whole-tab void never
+    restored stock or reversed the source keg barrel's/produce bunch's/
+    kitchen batch's own envelope, unlike its sibling remove_tab_entry()
+    (single-entry void), which already does both correctly. One of this
+    button's own offered reasons is explicitly "Tab ya makosa / nakala"
+    (tab was a mistake/duplicate) — implying the goods were never really
+    served and the stock should come back, same as removing one entry
+    already does. Fixed to match remove_tab_entry() exactly, entry by
+    entry, using the same shared _reverse_stock_movement_envelope() helper
+    and the same select_for_update() locking pattern.
+    """
     up = _get_up(request)
     if not up or not getattr(up, 'is_owner_or_manager', False):
         return JsonResponse({'ok': False, 'error': 'Owner or manager only'}, status=403)
@@ -3553,17 +3567,29 @@ def void_tab(request, tab_id):
         is_paid=False, transaction__payment_method='credit'
     ).exists()
 
+    from django.db import transaction as db_txn
+
     now = timezone.now()
-    for entry in tab.entries.filter(is_paid=False).select_related('transaction'):
-        entry.is_paid = True
-        entry.paid_at = now
-        entry.payment_method = 'void'
-        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
-        # Remove from debt tracker: written off, not owed
-        if entry.transaction_id:
-            entry.transaction.payment_method = 'void'
-            entry.transaction.recipient = ''
-            entry.transaction.save(update_fields=['payment_method', 'recipient'])
+    entry_ids = list(tab.entries.filter(is_paid=False).values_list('id', flat=True))
+    for entry_id in entry_ids:
+        with db_txn.atomic():
+            entry = BarTabEntry.objects.select_for_update().select_related('transaction').get(id=entry_id)
+            if entry.is_paid:
+                continue  # already handled (defensive — shouldn't happen within one request)
+            entry.is_paid = True
+            entry.paid_at = now
+            entry.payment_method = 'void'
+            entry.save(update_fields=['is_paid', 'paid_at', 'payment_method'])
+            # Remove from debt tracker (written off, not owed) and restore the stock
+            # that was deducted when this entry was first sold — it was never really
+            # served if this tab is being voided.
+            if entry.transaction_id:
+                txn = entry.transaction
+                _reverse_stock_movement_envelope(txn)
+                txn.payment_method = 'void'
+                txn.recipient = ''
+                txn.qty = Decimal('0')
+                txn.save(update_fields=['payment_method', 'recipient', 'qty'])
 
     tab.status = 'VOID'
     tab.settled_at = now

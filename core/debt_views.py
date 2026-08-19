@@ -2332,6 +2332,22 @@ def _execute_write_off_approval(wo, approver, self_service=False):
         # a mistaken entry never should have deducted stock in the first
         # place — zeroing qty restores the balance exactly the way removing
         # a live tab entry already does (remove_tab_entry, same mechanism).
+        #
+        # 2026-08-19 fix (bar-ops transactional audit): this used to zero
+        # qty ALONE — correct for a plain Item (current_balance() sums qty
+        # directly, so it self-corrected), but a debt/credit transaction can
+        # just as easily be a converted keg pour, produce-bunch, or kitchen-
+        # batch sale, and those track "revenue collected" via their own
+        # separate running counters (KegBarrel.revenue_collected/
+        # volume_dispensed_ml, etc.) that never recompute from a Transaction
+        # sum — erasing the sale without reversing that counter left the
+        # barrel's/bunch's/batch's own envelope permanently overstated,
+        # corrupting keg reconciliation, Bar Performance analytics, and the
+        # sell-modal's remaining-envelope gate. Now uses the same shared
+        # helper remove_tab_entry()/void_direct_transaction() already rely
+        # on for this exact "the item was never really served" correction.
+        from core.keg_views import _reverse_stock_movement_envelope
+        _reverse_stock_movement_envelope(txn)
         txn.qty = Decimal('0')
         update_fields.append('qty')
     txn.save(update_fields=update_fields)
