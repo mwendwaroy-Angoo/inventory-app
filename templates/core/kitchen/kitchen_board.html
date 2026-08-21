@@ -1114,6 +1114,54 @@
   </div>
 </div>
 
+<!-- ── Gawa Kuku modal — portion one whole raw unit into its named cuts ──
+     2026-08-21: Monsoon Inn switching to whole birds. One raw unit (e.g. one
+     Whole Chicken) is drawn and split across the finished item's own
+     cut-presets (Bawa/Paja/Kifua) in one motion — each preset's own
+     cost_price is written directly, so a cut sells exactly like any other
+     preset-costed piece, through the existing Kitchen Performance analytics.
+     No open/close lifecycle here (unlike Stock Receipt/KitchenBatch) — one
+     submit is one bird, done. -->
+<div class="modal fade" id="kbGawaKukuModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;">
+      <div class="modal-header" style="border-bottom:1px solid #333;">
+        <h6 class="modal-title" style="color:#4caf50;">🍗 Gawa <span id="gk-finished-name"></span></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="padding:.85rem;">
+        <div style="background:rgba(76,175,80,0.08);border:1px solid rgba(76,175,80,0.25);border-radius:6px;padding:.5rem .6rem;margin-bottom:.65rem;font-size:.77rem;color:#a5d6a7;line-height:1.4;">
+          Weka idadi ya kila kipande kilichopatikana kutoka <span id="gk-raw-name" style="font-weight:600;"></span> moja. Gharama imependekezwa kwa mgawanyo sawa — badilisha ukitaka.
+        </div>
+        <div style="font-size:.78rem;color:#b0b0b0;margin-bottom:.5rem;">
+          <span id="gk-raw-balance"></span> zimebaki
+        </div>
+        <div id="gk-lines" style="display:flex;flex-direction:column;gap:.4rem;margin-bottom:.6rem;"></div>
+        <div style="margin-bottom:.55rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Maelezo <span style="color:#888;font-style:italic;">(hiari)</span></label>
+          <input type="text" id="gk-note" placeholder="e.g. Ndege ya kwanza leo"
+                 style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+        </div>
+        <!-- Same "⏰ Haya ni Mauzo ya Nyuma" backdate convention already used
+             at checkout/Kitchen Stock Receipt/kitchen_batch receive. -->
+        <div style="margin-bottom:.3rem;">
+          <button type="button" id="gk-backdate-toggle" class="btn btn-sm" style="font-size:.72rem;padding:.2rem .5rem;background:rgba(93,168,240,.08);border:1px solid rgba(93,168,240,.3);color:#5da8f0;"
+                  onclick="window.gkToggleBackdate()">⏰ Haya ni ya Nyuma</button>
+        </div>
+        <div id="gk-backdate-row" style="display:none;margin-bottom:.55rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Tarehe na Wakati Halisi</label>
+          <input type="datetime-local" id="gk-backdated-at"
+                 style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.88rem;">
+        </div>
+        <div id="gk-error" style="display:none;color:#c0395a;font-size:.8rem;margin-top:.4rem;"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid #333;padding:.75rem;">
+        <button id="gk-submit-btn" class="btn btn-gold w-100" onclick="window.gkSubmit()">Hifadhi Mgawanyo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Kitchen Stock Receipt close modal ── -->
 <div class="modal fade" id="kbStockReceiptCloseModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
@@ -1716,6 +1764,7 @@
   var IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
   var IS_WAITRESS = {% if is_waitress %}true{% else %}false{% endif %};
   var CAN_CONVERT_DEBT = {% if can_convert_tabs_to_debt %}true{% else %}false{% endif %};
+  var CAN_RECEIVE_STOCK = {% if can_receive_stock %}true{% else %}false{% endif %};
 
   // ── Order Queue Drawer (2026-08-06 — mirrors bar_board.html's identical
   //    drawer, station-scoped via ?station=kitchen) ──────────────────────
@@ -2131,6 +2180,17 @@
           'background:rgba(192,57,90,.08);border:1px solid rgba(192,57,90,.3);border-radius:5px;color:#c0395a;text-decoration:none;">' +
           '🔄 Anza Upya</a>'
         : '';
+      // 2026-08-21 (Gawa Kuku): a raw whole-unit item (Whole Chicken) with a
+      // linked finished portion item gets a direct "portion one bird" action
+      // right on its own tile — same permission tier as receiving stock
+      // (CAN_RECEIVE_STOCK), since cutting a bird is the same class of
+      // action. Hidden once the raw balance is fully consumed — nothing
+      // left to portion.
+      var gawaKukuBtn = (item.gawa_kuku_targets && item.gawa_kuku_targets.length && !oos && (IS_OWNER || CAN_RECEIVE_STOCK))
+        ? '<button class="btn btn-sm" style="width:100%;margin-top:.3rem;font-size:.68rem;padding:.15rem .3rem;' +
+          'background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.35);border-radius:5px;color:#4caf50;cursor:pointer;" ' +
+          'onclick="event.stopPropagation(); window.gkOpenModal(' + item.id + ')">🍗 Gawa</button>'
+        : '';
       html += '<div class="kb-tile' + (oos?' out-of-stock':'') + '" onclick="tileClick(' + item.id + ')"' +
               ' data-item-id="' + item.id + '" style="position:relative;">' +
               customPriceBtn +
@@ -2139,6 +2199,7 @@
               '<div class="kb-tile-stock ' + stockCls + '">' + stockLbl + '</div>' +
               restockBtn +
               depleteBtn +
+              gawaKukuBtn +
               hiddenDiagBtn +
               anchorBtn +
               resetBtn +
@@ -4704,6 +4765,103 @@
         }
       })
       .catch(function(err){ btn.disabled=false; btn.textContent='Hifadhi Receipt'; errEl.textContent=_kbNetworkErrorMessage(err); errEl.style.display='block'; });
+  };
+
+  /* ── Gawa Kuku (2026-08-21): portion one whole raw unit into its cuts ── */
+  var _gkRawItemId = null;
+  var _gkFinishedItemId = null;
+  var _gkTarget = null;
+
+  window.gkAddLine = function(preset, suggestedCost) {
+    var wrap = document.createElement('div');
+    wrap.className = 'gk-line';
+    wrap.dataset.presetId = preset.id;
+    wrap.style.cssText = 'display:grid;grid-template-columns:1fr 70px 90px;gap:.35rem;align-items:center;';
+    wrap.innerHTML =
+      '<div style="color:#f0ece4;font-size:.85rem;">' + preset.label + '</div>' +
+      '<input type="number" class="gk-line-qty" min="0" step="0.01" placeholder="Idadi" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.35rem .4rem;font-size:.82rem;">' +
+      '<input type="number" class="gk-line-cost" min="0" step="1" placeholder="' + (suggestedCost || 'Gharama') + '" style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.35rem .4rem;font-size:.82rem;">';
+    document.getElementById('gk-lines').appendChild(wrap);
+  };
+
+  window.gkOpenModal = function(rawItemId) {
+    var rawItem = _portionItems.find(function(i){ return i.id === rawItemId; });
+    if (!rawItem || !rawItem.gawa_kuku_targets || !rawItem.gawa_kuku_targets.length) return;
+    var target = rawItem.gawa_kuku_targets[0];
+    _gkRawItemId = rawItemId;
+    _gkFinishedItemId = target.id;
+    _gkTarget = target;
+    document.getElementById('gk-finished-name').textContent = target.name;
+    document.getElementById('gk-raw-name').textContent = rawItem.name;
+    document.getElementById('gk-raw-balance').textContent = rawItem.name + ': ' + fmt(rawItem.balance) + ' ' + rawItem.unit;
+    document.getElementById('gk-note').value = '';
+    document.getElementById('gk-error').style.display = 'none';
+    document.getElementById('gk-backdate-row').style.display = 'none';
+    document.getElementById('gk-backdated-at').value = '';
+    var lines = document.getElementById('gk-lines');
+    lines.innerHTML = '';
+    if (!target.presets || !target.presets.length) {
+      lines.innerHTML = '<div style="color:#c0395a;font-size:.82rem;">' + target.name + ' haina vipande (presets) vilivyowekwa bado.</div>';
+    } else {
+      target.presets.forEach(function(p){ window.gkAddLine(p); });
+    }
+    showModal('kbGawaKukuModal');
+  };
+
+  window.gkToggleBackdate = function() {
+    var row = document.getElementById('gk-backdate-row');
+    var showing = row.style.display !== 'none';
+    row.style.display = showing ? 'none' : 'block';
+  };
+
+  window.gkSubmit = function() {
+    var errEl = document.getElementById('gk-error');
+    var lines = [];
+    document.querySelectorAll('#gk-lines .gk-line').forEach(function(row){
+      var presetId = row.dataset.presetId;
+      var qty = row.querySelector('.gk-line-qty').value;
+      var cost = row.querySelector('.gk-line-cost').value;
+      if (!(parseFloat(qty) > 0)) return;
+      var line = {preset_id: presetId, qty_produced: qty};
+      if (parseFloat(cost) > 0) line.cost_price = cost;
+      lines.push(line);
+    });
+    if (!lines.length) {
+      errEl.textContent = 'Weka angalau kipande kimoja kilichopatikana.';
+      errEl.style.display = 'block';
+      return;
+    }
+    var backdatedAt = '';
+    if (document.getElementById('gk-backdate-row').style.display !== 'none') {
+      backdatedAt = document.getElementById('gk-backdated-at').value || '';
+    }
+    var btn = document.getElementById('gk-submit-btn');
+    btn.disabled = true; btn.textContent = 'Inahifadhi...';
+    errEl.style.display = 'none';
+
+    var body = new URLSearchParams();
+    body.append('csrfmiddlewaretoken', CSRF);
+    body.append('raw_item_id', _gkRawItemId);
+    body.append('finished_item_id', _gkFinishedItemId);
+    body.append('lines', JSON.stringify(lines));
+    body.append('note', document.getElementById('gk-note').value || '');
+    if (backdatedAt) body.append('backdated_at', backdatedAt);
+    body.append('idempotency_token',
+      (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
+
+    fetch('/kitchen/portion-event/create/', {method:'POST', body:body, headers:{'X-CSRFToken':CSRF}})
+      .then(_kbParseJson)
+      .then(function(d){
+        btn.disabled = false; btn.textContent = 'Hifadhi Mgawanyo';
+        if (d.ok) {
+          hideModal('kbGawaKukuModal');
+          showToast('✓ Kimegawanywa!');
+          setTimeout(function(){ location.reload(); }, 1000);
+        } else {
+          errEl.textContent = d.error || 'Hitilafu ya seva.'; errEl.style.display = 'block';
+        }
+      })
+      .catch(function(err){ btn.disabled=false; btn.textContent='Hifadhi Mgawanyo'; errEl.textContent=_kbNetworkErrorMessage(err); errEl.style.display='block'; });
   };
 
   /* ── Gawanya Batch kwa Tarehe (2026-08-16) ── */

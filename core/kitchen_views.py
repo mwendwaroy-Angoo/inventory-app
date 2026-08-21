@@ -24,7 +24,7 @@ from django.views.decorators.http import require_POST
 from .models import (
     BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KitchenBatch,
     KitchenConsumableLog, KitchenStockReceipt, KitchenStockReceiptLine,
-    ProduceBunch, Receipt, Store, Transaction,
+    PortioningEvent, ProduceBunch, Receipt, Store, Transaction,
 )
 from . import keg_metrics
 
@@ -523,6 +523,25 @@ def kitchen_board(request):
                     # must never show "✏️ Bei Maalum" (custom SELL price) —
                     # only a cost-correction affordance makes sense for it.
                     'is_raw_material_source': item.derived_batch_items.exists(),
+                    # 2026-08-21 (Gawa Kuku): a raw whole-unit item (Whole
+                    # Chicken) may fund one or more plain portion items whose
+                    # own presets ARE the cuts (Kuku's Bawa/Paja/Kifua). Only
+                    # non-batch derived items belong here — a KitchenBatch
+                    # target (e.g. Chipo, via Raw Potatoes) already has its
+                    # own raw-material-draw flow (open_batch()) and must not
+                    # also offer this button.
+                    'gawa_kuku_targets': [
+                        {
+                            'id': d.id,
+                            'name': d.description,
+                            'presets': [
+                                {'id': p.id, 'label': p.label}
+                                for p in d.portion_presets.all().order_by('display_order', 'price')
+                                if p.tracks_stock_of_id is None
+                            ],
+                        }
+                        for d in item.derived_batch_items.filter(is_kitchen_batch=False)
+                    ],
                 })
 
     # Flat list for the food wastage modal — PORTION items only. 2026-08-21
@@ -1778,6 +1797,131 @@ def kitchen_stock_receipt_create(request):
         return JsonResponse({'ok': False, 'error': str(e)}, status=400)
 
     return JsonResponse({'ok': True, 'receipt': _kitchen_stock_receipt_to_dict(receipt)})
+
+
+def _portioning_event_to_dict(event):
+    return {
+        'id': event.id,
+        'raw_item_name': event.raw_item.description,
+        'finished_item_name': event.finished_item.description,
+        'qty_drawn': float(event.qty_drawn),
+        'total_cost': float(event.total_cost),
+        'created_at': timezone.localtime(event.created_at).strftime('%d %b, %I:%M %p').lstrip('0'),
+        'lines': [
+            {
+                'preset_label': l.preset.label,
+                'qty_produced': float(l.qty_produced),
+                'cost_price': float(l.cost_price),
+            }
+            for l in event.lines.select_related('preset').all()
+        ],
+    }
+
+
+@login_required
+@require_POST
+def portion_event_create(request):
+    """Gawa Kuku (2026-08-21): staff cuts one whole raw unit (Whole Chicken)
+    into whatever mix of named cuts it actually yields, funding one or more
+    of the finished item's own presets in a single motion. Mirrors
+    kitchen_stock_receipt_create()'s permission/idempotency shape exactly —
+    same "any staff who may receive kitchen stock" tier, since portioning a
+    bird is the same class of action as receiving a delivery. See
+    PortioningEvent.create_locked() for the actual model-layer mechanics.
+    """
+    up, business, err = _kb_gate(request)
+    if err:
+        return err
+    can_receive = getattr(up, 'is_owner_or_manager', False) or getattr(up, 'can_receive_kitchen_stock', False)
+    if not can_receive:
+        return JsonResponse({'ok': False, 'error': 'Ruhusa ya kupokea stok inahitajika'}, status=403)
+
+    kitchen_store = _ensure_kitchen_store(business)
+
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(business.id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Hii tayari imehifadhiwa.', 'duplicate': True}, status=409)
+
+    try:
+        raw_item_id = int(request.POST.get('raw_item_id', 0))
+        finished_item_id = int(request.POST.get('finished_item_id', 0))
+    except (TypeError, ValueError):
+        return JsonResponse({'ok': False, 'error': 'Bidhaa batili'}, status=400)
+
+    raw_item = Item.objects.filter(id=raw_item_id, store=kitchen_store).first()
+    finished_item = Item.objects.filter(id=finished_item_id, store=kitchen_store).first()
+    if raw_item is None or finished_item is None:
+        return JsonResponse({'ok': False, 'error': 'Bidhaa haikupatikana'}, status=404)
+    # Only a genuinely-linked raw→finished pair may be portioned this way —
+    # never trust a client-supplied pairing (mirrors the every-other-endpoint
+    # convention of never trusting a client-supplied item id blindly).
+    if finished_item.raw_material_source_id != raw_item.id:
+        return JsonResponse({'ok': False, 'error': 'Bidhaa hizi hazijaunganishwa.'}, status=400)
+
+    try:
+        raw_lines = json.loads(request.POST.get('lines', '[]'))
+    except (ValueError, TypeError):
+        raw_lines = []
+    if not raw_lines:
+        return JsonResponse({'ok': False, 'error': 'Weka angalau kipande kimoja kilichopatikana.'}, status=400)
+
+    lines_data = []
+    for row in raw_lines:
+        try:
+            preset_id = int(row.get('preset_id', 0))
+        except (TypeError, ValueError):
+            continue
+        if not preset_id:
+            continue
+        qty_raw = row.get('qty_produced')
+        try:
+            qty_produced = Decimal(str(qty_raw)) if qty_raw not in (None, '') else Decimal('0')
+        except InvalidOperation:
+            continue
+        cost_raw = row.get('cost_price')
+        cost_price = None
+        if cost_raw not in (None, ''):
+            try:
+                cost_price = Decimal(str(cost_raw))
+            except InvalidOperation:
+                cost_price = None
+        lines_data.append({
+            'preset_id': preset_id, 'qty_produced': qty_produced, 'cost_price': cost_price,
+        })
+
+    try:
+        qty_drawn = Decimal(str(request.POST.get('qty_drawn', '1') or '1'))
+    except InvalidOperation:
+        qty_drawn = Decimal('1')
+
+    note = (request.POST.get('note') or '').strip()[:200]
+
+    # Backdate support — mirrors the same "⏰ Haya ni Mauzo ya Nyuma"
+    # mechanism the checkout/batch-receive flows already have, so a bird
+    # portioned to catch up a past day's paper record lands on that real
+    # date, not today.
+    created_at = None
+    _backdated_raw = (request.POST.get('backdated_at') or '').strip()
+    if _backdated_raw:
+        try:
+            from datetime import datetime as _dt
+            naive = _dt.strptime(_backdated_raw, '%Y-%m-%dT%H:%M')
+            created_at = timezone.make_aware(naive) if timezone.is_naive(naive) else naive
+        except ValueError:
+            created_at = None
+
+    try:
+        event = PortioningEvent.create_locked(
+            business=business, store=kitchen_store, raw_item=raw_item,
+            finished_item=finished_item, lines_data=lines_data,
+            recorded_by=request.user, qty_drawn=qty_drawn, note=note,
+            created_at=created_at,
+        )
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    return JsonResponse({'ok': True, 'event': _portioning_event_to_dict(event)})
 
 
 @login_required

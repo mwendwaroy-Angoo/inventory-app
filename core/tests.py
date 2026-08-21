@@ -15,7 +15,7 @@ from core.models import (
     KitchenBatch, KitchenConsumableLog, KitchenStockReceipt,
     KitchenStockReceiptLine, MaintenanceTicket, MarketPriceIndex,
     MeterReading, Notification, Payment, PaymentPlan, PaymentPlanEntry,
-    PettyCash, ProduceBunch, Receipt, RentalAgreement, RentalInvoice,
+    PettyCash, PortioningEvent, PortioningEventLine, ProduceBunch, Receipt, RentalAgreement, RentalInvoice,
     RentalUnit, Return, RevenueTarget, Service, ServiceSupplyLine, Shift,
     StockCountLine, StockCountSession, Store, StockTransfer,
     StockTransferLine, SupplierInvoice, SupplierPayment, TabTransferRequest,
@@ -21167,6 +21167,224 @@ class KitchenStockReceiptAutoCloseTest(TestCase):
             created_at=timezone.make_aware(datetime.combine(backdated_date, _time(10, 0))),
         )
         self.assertEqual(receipt.total_revenue(), Decimal('150'))
+
+
+class PortioningEventTest(TestCase):
+    """Gawa Kuku (2026-08-21 live request): Monsoon Inn switching from
+    buying pre-cut chicken pieces to whole birds, portioned in-house.
+    PortioningEvent.create_locked() draws one raw unit (Whole Chicken) and
+    splits its cost across whichever mix of the finished item's own
+    cut-presets (Bawa/Paja/Kifua) it actually yields, in one motion."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='gawa')
+        self.raw_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Whole Chicken',
+            material_no='GAWA-RAW-01', unit='Pcs', selling_price=Decimal('0'),
+            cost_price=Decimal('600'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.raw_item, type='Receipt', qty=Decimal('5'),
+        )
+        self.finished_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kuku',
+            material_no='GAWA-KUKU-01', unit='Pcs', selling_price=Decimal('0'),
+            raw_material_source=self.raw_item,
+        )
+        self.bawa = ItemPortionPreset.objects.create(
+            item=self.finished_item, label='Bawa', price=Decimal('80'),
+            quantity_consumed=Decimal('1'),
+        )
+        self.paja = ItemPortionPreset.objects.create(
+            item=self.finished_item, label='Paja', price=Decimal('150'),
+            quantity_consumed=Decimal('1'),
+        )
+        self.client.force_login(self.owner_user)
+
+    def test_happy_path_splits_cost_evenly_and_deducts_raw_balance(self):
+        event = PortioningEvent.create_locked(
+            business=self.biz, store=self.store, raw_item=self.raw_item,
+            finished_item=self.finished_item,
+            lines_data=[
+                {'preset_id': self.bawa.id, 'qty_produced': Decimal('2')},
+                {'preset_id': self.paja.id, 'qty_produced': Decimal('2')},
+            ],
+            recorded_by=self.owner_user,
+        )
+        self.raw_item.refresh_from_db()
+        self.finished_item.refresh_from_db()
+        self.bawa.refresh_from_db()
+        self.paja.refresh_from_db()
+        self.assertEqual(self.raw_item.current_balance(), Decimal('4'))       # 5 - 1
+        self.assertEqual(self.finished_item.current_balance(), Decimal('4'))  # 2 + 2 produced
+        # 600 (1 bird's cost) / 4 total pieces = 150.00 each
+        self.assertEqual(self.bawa.cost_price, Decimal('150.00'))
+        self.assertEqual(self.paja.cost_price, Decimal('150.00'))
+        self.assertEqual(event.total_cost, Decimal('600.00'))
+        self.assertEqual(event.qty_drawn, Decimal('1'))
+        self.assertIsNotNone(event.draw_transaction)
+        self.assertEqual(event.draw_transaction.type, 'Draw')
+        self.assertEqual(event.draw_transaction.qty, Decimal('-1'))
+
+    def test_explicit_cost_price_overrides_even_split(self):
+        event = PortioningEvent.create_locked(
+            business=self.biz, store=self.store, raw_item=self.raw_item,
+            finished_item=self.finished_item,
+            lines_data=[
+                {'preset_id': self.bawa.id, 'qty_produced': Decimal('2'), 'cost_price': Decimal('45')},
+                {'preset_id': self.paja.id, 'qty_produced': Decimal('2')},
+            ],
+            recorded_by=self.owner_user,
+        )
+        self.bawa.refresh_from_db()
+        self.paja.refresh_from_db()
+        self.assertEqual(self.bawa.cost_price, Decimal('45'))
+        # Paja's own line still falls back to the even-split suggestion —
+        # never re-derived from what the caller already typed for Bawa.
+        self.assertEqual(self.paja.cost_price, Decimal('150.00'))
+        self.assertEqual(event.lines.get(preset=self.bawa).cost_price, Decimal('45'))
+
+    def test_insufficient_raw_balance_raises(self):
+        with self.assertRaises(ValueError):
+            PortioningEvent.create_locked(
+                business=self.biz, store=self.store, raw_item=self.raw_item,
+                finished_item=self.finished_item, qty_drawn=Decimal('10'),
+                lines_data=[{'preset_id': self.bawa.id, 'qty_produced': Decimal('1')}],
+                recorded_by=self.owner_user,
+            )
+        self.raw_item.refresh_from_db()
+        self.assertEqual(self.raw_item.current_balance(), Decimal('5'))  # untouched
+
+    def test_no_real_lines_raises(self):
+        with self.assertRaises(ValueError):
+            PortioningEvent.create_locked(
+                business=self.biz, store=self.store, raw_item=self.raw_item,
+                finished_item=self.finished_item,
+                lines_data=[{'preset_id': self.bawa.id, 'qty_produced': Decimal('0')}],
+                recorded_by=self.owner_user,
+            )
+
+    def test_backdated_event_stamps_draw_and_receipt_transactions(self):
+        from datetime import datetime as _dt, time as _time
+        backdated = timezone.make_aware(_dt.combine(timezone.localdate() - timedelta(days=2), _time(9, 0)))
+        event = PortioningEvent.create_locked(
+            business=self.biz, store=self.store, raw_item=self.raw_item,
+            finished_item=self.finished_item,
+            lines_data=[{'preset_id': self.bawa.id, 'qty_produced': Decimal('1')}],
+            recorded_by=self.owner_user, created_at=backdated,
+        )
+        self.assertEqual(event.created_at, backdated)
+        self.assertEqual(event.draw_transaction.created_at, backdated)
+        line = event.lines.get(preset=self.bawa)
+        self.assertEqual(line.receipt_transaction.created_at, backdated)
+        self.assertEqual(line.receipt_transaction.date, timezone.localtime(backdated).date())
+
+    # ── endpoint ────────────────────────────────────────────────────────
+
+    def _submit(self, lines=None, **overrides):
+        import json
+        import uuid
+        body = {
+            'raw_item_id': self.raw_item.id,
+            'finished_item_id': self.finished_item.id,
+            'lines': json.dumps(lines if lines is not None else [
+                {'preset_id': self.bawa.id, 'qty_produced': '2'},
+                {'preset_id': self.paja.id, 'qty_produced': '2'},
+            ]),
+            'idempotency_token': str(uuid.uuid4()),
+        }
+        body.update(overrides)
+        return self.client.post('/kitchen/portion-event/create/', body)
+
+    def test_endpoint_happy_path(self):
+        resp = self._submit()
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertEqual(data['event']['finished_item_name'], 'Kuku')
+        self.finished_item.refresh_from_db()
+        self.assertEqual(self.finished_item.current_balance(), Decimal('4'))
+
+    def test_endpoint_rejects_unlinked_pair(self):
+        other_finished = Item.objects.create(
+            business=self.biz, store=self.store, description='Unrelated Item',
+            material_no='GAWA-UNREL-01', unit='Pcs', selling_price=Decimal('10'),
+        )
+        resp = self._submit(finished_item_id=other_finished.id)
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_endpoint_duplicate_token_blocked(self):
+        token = 'gawa-dup-token'
+        first = self._submit(idempotency_token=token)
+        self.assertTrue(first.json().get('ok'), first.json())
+        second = self._submit(idempotency_token=token)
+        data = second.json()
+        self.assertFalse(data.get('ok'))
+        self.assertEqual(second.status_code, 409)
+
+    def test_endpoint_cross_business_item_rejected(self):
+        other_biz = Business.objects.create(name='Other Gawa Biz', has_kitchen=True)
+        other_store = Store.objects.create(business=other_biz, name='Kitchen', is_kitchen=True)
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Foreign Bird',
+            material_no='GAWA-FOREIGN-01', unit='Pcs', selling_price=Decimal('0'),
+        )
+        resp = self._submit(raw_item_id=other_item.id)
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_staff_without_kitchen_stock_permission_blocked(self):
+        staff_user = User.objects.create_user(username='gawa_staff_noperm', password='x')
+        UserProfile.objects.create(
+            user=staff_user, business=self.biz, role='kitchen', can_access_kitchen=True,
+        )
+        Shift.objects.create(business=self.biz, store=self.store, staff=staff_user, status='OPEN')
+        self.client.logout()
+        self.client.force_login(staff_user)
+        resp = self._submit()
+        data = resp.json()
+        self.assertFalse(data.get('ok'), data)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_staff_with_permission_and_open_shift_allowed(self):
+        staff_user = User.objects.create_user(username='gawa_staff_perm', password='x')
+        UserProfile.objects.create(
+            user=staff_user, business=self.biz, role='kitchen',
+            can_access_kitchen=True, can_receive_kitchen_stock=True,
+        )
+        Shift.objects.create(business=self.biz, store=self.store, staff=staff_user, status='OPEN')
+        self.client.logout()
+        self.client.force_login(staff_user)
+        resp = self._submit()
+        self.assertTrue(resp.json().get('ok'), resp.json())
+
+    def test_shift_required_for_non_owner_staff(self):
+        staff_user = User.objects.create_user(username='gawa_staff_noshift', password='x')
+        UserProfile.objects.create(
+            user=staff_user, business=self.biz, role='kitchen',
+            can_access_kitchen=True, can_receive_kitchen_stock=True,
+        )
+        self.client.logout()
+        self.client.force_login(staff_user)
+        resp = self._submit()
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.assertTrue(data.get('shift_required'))
+
+    def test_bar_only_staff_blocked_by_station_scope(self):
+        bar_staff = User.objects.create_user(username='gawa_bar_staff', password='x')
+        UserProfile.objects.create(
+            user=bar_staff, business=self.biz, role='staff',
+            can_access_kitchen=False, can_receive_kitchen_stock=True,
+        )
+        Shift.objects.create(business=self.biz, store=self.store, staff=bar_staff, status='OPEN')
+        self.client.logout()
+        self.client.force_login(bar_staff)
+        resp = self._submit()
+        self.assertFalse(resp.json().get('ok'))
+        self.assertEqual(resp.status_code, 403)
 
 
 class KitchenStockReceiptPresetCostingTest(TestCase):

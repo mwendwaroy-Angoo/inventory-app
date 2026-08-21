@@ -716,12 +716,15 @@ class Item(models.Model):
     raw_material_source = models.ForeignKey(
         'self', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='derived_batch_items',
-        help_text='Kitchen batch items only: the raw-material Item this batch is drawn '
-                  'from (e.g. Chipo → Potatoes (Raw)). When set, opening a new KitchenBatch '
-                  'draws kg from this item\'s own tracked balance instead of a typed cost '
-                  'guess — cost_total is derived automatically and the sack\'s remaining '
-                  'balance stays visible on Kitchen Board, separate from whether today\'s '
-                  'batch is done. Leave unset to keep the original manual cost-entry flow.'
+        help_text='The raw-material Item this item is drawn from. For a Kitchen batch item '
+                  '(e.g. Chipo → Potatoes (Raw)), opening a new KitchenBatch draws kg from '
+                  'this item\'s own tracked balance instead of a typed cost guess — '
+                  'cost_total is derived automatically. Since 2026-08-21 (Gawa Kuku) also '
+                  'used for a plain portion item whose presets are cuts of a whole raw unit '
+                  '(e.g. Kuku → Whole Chicken) — see PortioningEvent. Either way the raw '
+                  'item\'s remaining balance stays visible on Kitchen Board, separate from '
+                  'whether today\'s batch/cut is done. Leave unset to keep the original '
+                  'manual cost-entry flow.'
     )
 
     # ── Bar / Keg Module fields (migration 0043) ───────────────────────────
@@ -7105,12 +7108,14 @@ class KitchenStockReceiptLine(models.Model):
     `preset` (2026-07-25, live request): for a single catalogued item that's
     really several differently-priced pre-cut pieces sold via presets under
     one shared name (e.g. Kuku → Bawa/Paja/Kifua presets, bought pre-cut from
-    a butcher, NOT whole birds cut on-site — presets carry no stock balance
-    of their own, they all deduct from the same shared item balance) — this
-    optionally records WHICH preset a line represents, so its unit cost can
-    be written to preset.cost_price instead of the shared item.cost_price
-    (which cannot represent several different per-cut costs at once). Null
-    for an ordinary item with no per-cut cost split."""
+    a butcher — presets carry no stock balance of their own, they all deduct
+    from the same shared item balance) — this optionally records WHICH
+    preset a line represents, so its unit cost can be written to preset.
+    cost_price instead of the shared item.cost_price (which cannot represent
+    several different per-cut costs at once). Null for an ordinary item with
+    no per-cut cost split. For whole birds portioned on-site instead of
+    bought pre-cut, see PortioningEvent — a different, later-added flow for
+    a genuinely different receiving pattern (Gawa Kuku, 2026-08-21)."""
     receipt      = models.ForeignKey(
         KitchenStockReceipt, on_delete=models.CASCADE, related_name='lines',
     )
@@ -7139,6 +7144,204 @@ class KitchenStockReceiptLine(models.Model):
     @property
     def unit_cost(self):
         return (self.line_cost / self.qty_received) if self.qty_received else Decimal('0')
+
+
+class PortioningEvent(models.Model):
+    """Gawa Kuku (2026-08-21 live request): Monsoon Inn switching from
+    buying pre-cut chicken pieces to buying whole birds and portioning them
+    in-house — staff cuts one bird at a time into whatever mix of named
+    cuts it actually yields (a bigger bird might give an extra wing, a
+    smaller one fewer pieces overall; never assumed fixed), cooks them,
+    and sells through Kuku's EXISTING cut-presets unchanged.
+
+    Deliberately built as its OWN raw-to-multi-cut portioning flow rather
+    than reusing KitchenBatch.open_batch()'s raw-material draw — that
+    mechanism draws ONE raw unit into exactly ONE derived item's cost_total;
+    this needs ONE raw unit (a bird) to fund SEVERAL independently-priced,
+    independently-sellable cut items (presets) in a single motion. Reuses
+    Item.raw_material_source (generalized the same day — see that field's
+    own docstring) to link the finished item (Kuku) to its raw material
+    (Whole Chicken), and reuses ItemPortionPreset.cost_price (2026-07-28,
+    Kitchen Stock Receipt's own per-cut costing) as the thing each line
+    ultimately writes — so once portioned, a cut sells exactly like any
+    other preset-costed piece, through the existing, already-correct
+    Kitchen Performance analytics. That's also why this deliberately does
+    NOT try to attribute a later SALE back to which specific bird/event it
+    came from (no FK from Transaction back to a line here) — Roy's own
+    explicit worry was that a fragile date-window or per-delivery revenue
+    slice would repeat the exact Kuku/Chipo Mapato precision trap he
+    already told this app to stop chasing (2026-08-09/11). Kitchen
+    Performance's per-preset cost/revenue was NEVER built on a receipt
+    time-window in the first place, so it's already immune to that trap —
+    the only thing this flow needs to get right is that preset.cost_price
+    is correct at portioning time, which create_locked() below does
+    directly, with zero dependency on when a later sale (even backdated)
+    gets entered.
+
+    "Receipt of 10 whole chickens does not mean they all get portioned at
+    the same time" — one PortioningEvent = one bird (qty_drawn, default 1,
+    exists as a field rather than a hardcoded constant purely so a future
+    session can widen it if a real need for multi-bird events shows up;
+    not exposed in the UI yet). Whole Chicken's own pooled balance (from
+    however many were originally received via the ordinary Kitchen Stock
+    Receipt flow) just needs enough left for whichever bird is being done
+    right now — the same "sack still has enough, one bird/scoop at a time"
+    shape already proven for Chipo's raw potatoes.
+    """
+    business     = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='portioning_events',
+    )
+    store        = models.ForeignKey(
+        'Store', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='portioning_events',
+    )
+    raw_item     = models.ForeignKey(
+        'Item', on_delete=models.PROTECT, related_name='portioning_events_as_raw',
+    )
+    finished_item = models.ForeignKey(
+        'Item', on_delete=models.PROTECT, related_name='portioning_events_as_finished',
+    )
+    qty_drawn    = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('1'))
+    draw_transaction = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    recorded_by  = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='portioning_events_recorded',
+    )
+    note         = models.CharField(max_length=200, blank=True)
+    created_at   = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        verbose_name = 'Portioning Event'
+        verbose_name_plural = 'Portioning Events'
+
+    def __str__(self):
+        return f"{self.raw_item.description} → {self.finished_item.description} × {self.qty_drawn:g}"
+
+    @property
+    def total_cost(self):
+        return sum((l.cost_price * l.qty_produced for l in self.lines.all()), Decimal('0'))
+
+    @classmethod
+    def create_locked(cls, business, store, raw_item, finished_item, lines_data,
+                       recorded_by, qty_drawn=None, note='', created_at=None):
+        """Single entry point for a Gawa Kuku submission.
+
+        lines_data: list of {'preset_id': int, 'qty_produced': Decimal,
+        'cost_price': Decimal or None}. A blank/None cost_price is filled
+        in as an even split of (qty_drawn's share of raw_item.cost_price)
+        across the total pieces declared across ALL lines in this same
+        submission — a pre-filled SUGGESTION only; whatever the caller
+        already resolved (typed or left blank) is what lands here, this
+        method never re-derives a value the staffer already typed over.
+
+        Raises ValueError on any validation failure (caller renders as a
+        JSON error) — insufficient raw balance, no lines with qty > 0,
+        non-positive quantities — same contract as KitchenBatch.
+        open_batch(), which this mirrors for the raw-material-draw half.
+        """
+        from django.db import transaction as _txn
+        qty_drawn = Decimal(str(qty_drawn)) if qty_drawn is not None else Decimal('1')
+        if qty_drawn <= 0:
+            raise ValueError('Idadi ya ndege iliyotumika lazima iwe zaidi ya 0.')
+
+        real_lines = [
+            l for l in lines_data
+            if l.get('qty_produced') and Decimal(str(l['qty_produced'])) > 0
+        ]
+        if not real_lines:
+            raise ValueError('Weka angalau kipande kimoja kilichopatikana.')
+
+        total_pieces = sum(Decimal(str(l['qty_produced'])) for l in real_lines)
+
+        with _txn.atomic():
+            raw_item = Item.objects.select_for_update().get(id=raw_item.id)
+            available = raw_item.current_balance()
+            if qty_drawn > available:
+                raise ValueError(
+                    f'{raw_item.description} ina {available:g}{raw_item.unit} pekee '
+                    f'iliyobaki — huwezi kutumia {qty_drawn:g}{raw_item.unit}.'
+                )
+
+            draw_kwargs = {}
+            if created_at is not None:
+                draw_kwargs = {
+                    'created_at': created_at,
+                    'date': timezone.localtime(created_at).date(),
+                }
+            draw_txn = Transaction.objects.create(
+                item=raw_item, business=business, type='Draw',
+                qty=-qty_drawn,
+                recipient=f'Kugawanya: {finished_item.description}'[:200],
+                recorded_by=recorded_by,
+                **draw_kwargs,
+            )
+
+            bird_cost = (qty_drawn * (raw_item.cost_price or Decimal('0')))
+            event = cls.objects.create(
+                business=business, store=store, raw_item=raw_item,
+                finished_item=finished_item, qty_drawn=qty_drawn,
+                draw_transaction=draw_txn, recorded_by=recorded_by,
+                note=note, **({'created_at': created_at} if created_at else {}),
+            )
+
+            for l in real_lines:
+                preset = ItemPortionPreset.objects.select_for_update().get(
+                    id=l['preset_id'], item_id=finished_item.id,
+                )
+                qty_produced = Decimal(str(l['qty_produced']))
+                raw_cost = l.get('cost_price')
+                if raw_cost not in (None, ''):
+                    cost_price = Decimal(str(raw_cost))
+                else:
+                    cost_price = (bird_cost / total_pieces).quantize(Decimal('0.01')) if total_pieces else Decimal('0')
+
+                receipt_txn = Transaction.objects.create(
+                    item=finished_item, business=business, type='Receipt',
+                    qty=qty_produced, preset=preset,
+                    recipient=f'Gawa Kuku: {raw_item.description}'[:200],
+                    recorded_by=recorded_by,
+                    **draw_kwargs,
+                )
+                PortioningEventLine.objects.create(
+                    event=event, preset=preset, qty_produced=qty_produced,
+                    cost_price=cost_price, receipt_transaction=receipt_txn,
+                )
+                preset.cost_price = cost_price
+                preset.save(update_fields=['cost_price'])
+
+        return event
+
+
+class PortioningEventLine(models.Model):
+    """One cut produced from a single PortioningEvent — e.g. '2 Bawa @ KES
+    45 each' out of one bird. cost_price is a historical snapshot of what
+    THIS event assigned (for the event's own audit trail); the preset's
+    OWN current cost_price may since have been overwritten by a later
+    event — same "latest cost wins" convention every other cost-writing
+    flow in this app already uses (receive_barrel, Kitchen Stock Receipt,
+    etc.)."""
+    event            = models.ForeignKey(
+        PortioningEvent, on_delete=models.CASCADE, related_name='lines',
+    )
+    preset           = models.ForeignKey(
+        'ItemPortionPreset', on_delete=models.PROTECT, related_name='portioning_event_lines',
+    )
+    qty_produced     = models.DecimalField(max_digits=10, decimal_places=2)
+    cost_price       = models.DecimalField(max_digits=10, decimal_places=2)
+    receipt_transaction = models.ForeignKey(
+        'Transaction', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+
+    class Meta:
+        ordering = ['id']
+        verbose_name = 'Portioning Event Line'
+        verbose_name_plural = 'Portioning Event Lines'
+
+    def __str__(self):
+        return f"{self.preset.label} × {self.qty_produced:g} @ KES {self.cost_price}"
 
 
 class KitchenConsumableLog(models.Model):

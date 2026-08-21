@@ -144,6 +144,7 @@ from core.kitchen_views import (
     kitchen_stock_receipts_list,
     kitchen_tabs_list,
     kitchen_wastage,
+    portion_event_create,
     tab_check_api,
     toggle_kitchen,
 )
@@ -550,6 +551,7 @@ urlpatterns = [
     path("kitchen/stock-receipt/<int:receipt_id>/close/", kitchen_stock_receipt_close, name="kitchen_stock_receipt_close"),
     path("kitchen/stock-receipt/<int:receipt_id>/reopen/", kitchen_stock_receipt_reopen, name="kitchen_stock_receipt_reopen"),
     path("kitchen/stock-receipt/<int:receipt_id>/delete/", kitchen_stock_receipt_delete, name="kitchen_stock_receipt_delete"),
+    path("kitchen/portion-event/create/",         portion_event_create,          name="portion_event_create"),
     path("kitchen/item-reset/<int:item_id>/",           kitchen_item_reset_intro,    name="kitchen_item_reset_intro"),
     path("kitchen/item-reset/<int:item_id>/backup/",     kitchen_item_reset_backup,   name="kitchen_item_reset_backup"),
     path("kitchen/item-reset/<int:item_id>/confirm/",    kitchen_item_reset_confirm,  name="kitchen_item_reset_confirm"),
