@@ -1783,7 +1783,16 @@ def kitchen_stock_receipt_create(request):
 @login_required
 def kitchen_stock_receipts_list(request):
     """JSON: open (and a handful of recently-closed) kitchen stock receipts
-    for the board's own panel — each with a live profit-so-far preview."""
+    for the board's own panel — each with a live profit-so-far preview.
+
+    2026-08-21 fix (live report, Roy — a Raw Potatoes receipt stayed stuck
+    open with "kilichobaki: 0"): auto-closes any OPEN receipt that's fully
+    depleted (see KitchenStockReceipt.maybe_auto_close()) right here, on
+    read, before building the response — this is the endpoint the Kitchen
+    Board already polls, so a depleted receipt moves out of the active
+    list into "closed" within one normal poll cycle, no new polling
+    mechanism needed.
+    """
     up, business, err = _kb_gate(request)
     if err:
         return err
@@ -1794,11 +1803,26 @@ def kitchen_stock_receipts_list(request):
         .prefetch_related('lines__item')
         .order_by('-received_on', '-id')
     )
+    still_open = []
+    newly_closed = []
+    for r in open_receipts:
+        if r.maybe_auto_close():
+            newly_closed.append(r)
+        else:
+            still_open.append(r)
+    open_receipts = still_open
+
     recent_closed = list(
         KitchenStockReceipt.objects.filter(business=business, store=kitchen_store, status='DONE')
         .prefetch_related('lines__item')
         .order_by('-closed_at')[:10]
     )
+    if newly_closed:
+        recent_closed = sorted(
+            newly_closed + recent_closed,
+            key=lambda r: r.closed_at or timezone.now(), reverse=True,
+        )[:10]
+
     return JsonResponse({
         'ok': True,
         'open':   [_kitchen_stock_receipt_to_dict(r) for r in open_receipts],

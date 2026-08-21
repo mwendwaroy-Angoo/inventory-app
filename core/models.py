@@ -6891,7 +6891,6 @@ class KitchenStockReceipt(models.Model):
     """One supplier delivery covering MULTIPLE portion items pooled under one
     cost basis for profit tracking — e.g. one Meatco order: wings, legs, and
     drumsticks bought together, each a completely ordinary Item with its own
-    stock balance and its own preset-based sales, unchanged. This header only
     exists to answer "was this whole delivery profitable", not to gate or
     block individual sales (2026-07-25 live request).
 
@@ -6899,13 +6898,23 @@ class KitchenStockReceipt(models.Model):
     KegBarrel/ProduceBunch/KitchenBatch, which increment revenue_collected
     per sale) — profit is computed on demand from ordinary Issue transactions
     on the receipt's own items, in the window since the receipt was created.
-    This matches the confirmed real workflow: one delivery is fully sold
-    through (staff keeps selling — a big leg cut in half and sold as two
-    drumsticks means the sellable count can exceed what's nominally on the
-    receipt, so there is no reliable stock-balance cutoff to gate on) before
-    the next one is ordered, so overlapping receipts for the same item are
-    not the normal case. Closing is always a deliberate staff action
-    ("the calculation should go on until she says done"), never automatic.
+
+    2026-08-21 fix (live report, Roy — a Raw Potatoes receipt stayed stuck
+    open in the Kitchen Board's active list with "kilichobaki: 0", nothing
+    left to sell): this model's original 2026-07-25 design said closing must
+    always be a deliberate staff action, "never automatic", reasoning that
+    "a big leg cut in half and sold as two drumsticks means the sellable
+    count can exceed what's nominally on the receipt, so there is no
+    reliable stock-balance cutoff to gate on." That reasoning predates
+    Item.capped_deduction() (2026-08-07, Roy's own "stock cannot be
+    negative" design) — an oversold item used to legitimately need to go
+    negative to represent "sold past what was nominally received"; capped_
+    deduction now floors that at 0 and flags a shortfall exception instead,
+    so balance==0 is a reliable "genuinely nothing left" signal in a way it
+    wasn't in July. See maybe_auto_close() for the reversal — staff can
+    still always close manually before that point ("the calculation should
+    go on until she says done" still holds; auto-close only ever fires once
+    every line is already fully depleted, never earlier).
     """
     STATUS_CHOICES = [
         ('OPEN', 'Open'),
@@ -7047,6 +7056,44 @@ class KitchenStockReceipt(models.Model):
         self.closed_at = None
         self.closed_by = None
         self.save(update_fields=['status', 'closed_at', 'closed_by'])
+
+    def is_fully_depleted(self):
+        """True once every line's own item has zero balance left. Under
+        Item.capped_deduction() (2026-08-07) this is a reliable "genuinely
+        nothing left" signal — a sale can never push a balance negative, it
+        gets floored at 0 and flagged as a shortfall exception instead — so
+        0 here can't be confused with "still selling past what's on paper"
+        the way it could have been before that design existed."""
+        lines = list(self.lines.select_related('item'))
+        if not lines:
+            return False
+        return all(l.item.current_balance() <= 0 for l in lines)
+
+    def maybe_auto_close(self):
+        """2026-08-21 fix (live report, Roy — screenshot showed a Raw
+        Potatoes receipt stuck open in the Kitchen Board's active list with
+        "kilichobaki: 0"). Reverses this model's original 2026-07-25 "never
+        automatic" decision (see the class docstring for the full reasoning
+        on why that no longer holds). Deliberately checked LAZILY here, on
+        read, rather than eagerly threaded into every possible stock-
+        reducing call site across the app (checkout, wastage, Rekebisha,
+        batch draws...) — the same "cheaper to check emptiness at read time
+        than to hunt down every place it could have BECOME empty" principle
+        already used elsewhere in this app. Called from kitchen_stock_
+        receipts_list(), the endpoint the Kitchen Board already polls, so a
+        depleted receipt disappears from the active list within one normal
+        poll cycle with no new polling mechanism needed. closed_by is left
+        None — no specific staffer did this, matching the field's own
+        nullable design. Returns True if it just auto-closed, else False
+        (still open, already DONE, or has no lines yet)."""
+        if self.status != 'OPEN':
+            return False
+        if not self.is_fully_depleted():
+            return False
+        self.status = 'DONE'
+        self.closed_at = timezone.now()
+        self.save(update_fields=['status', 'closed_at'])
+        return True
 
 
 class KitchenStockReceiptLine(models.Model):

@@ -21039,6 +21039,136 @@ class KitchenStockReceiptTest(TestCase):
         self.assertEqual(resp.status_code, 403)
 
 
+class KitchenStockReceiptAutoCloseTest(TestCase):
+    """2026-08-21 live report (Roy, screenshot): a Raw Potatoes receipt
+    stayed stuck open in the Kitchen Board's active list showing
+    "kilichobaki: 0" — nothing left to sell, but no way to close except a
+    manual tap. Reverses this model's original 2026-07-25 "closing is
+    always deliberate, never automatic" decision — see KitchenStockReceipt's
+    class docstring and maybe_auto_close() for the full reasoning on why
+    Item.capped_deduction() (2026-08-07) makes balance==0 a reliable signal
+    now, in a way it wasn't before that design existed."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='ksrac')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Potatoes',
+            material_no='KSRAC-01', unit='Kg', selling_price=Decimal('0'),
+        )
+        self.client.force_login(self.owner_user)
+
+    def _make_receipt(self, qty=Decimal('6'), cost=Decimal('6800')):
+        receipt = KitchenStockReceipt.objects.create(
+            business=self.biz, store=self.store, supplier='Test Supplier',
+            recorded_by=self.owner_user,
+        )
+        line = KitchenStockReceiptLine.objects.create(
+            receipt=receipt, item=self.item, qty_received=qty, line_cost=cost,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=qty,
+        )
+        return receipt, line
+
+    def test_is_fully_depleted_false_while_balance_remains(self):
+        receipt, _ = self._make_receipt()
+        self.assertFalse(receipt.is_fully_depleted())
+
+    def test_is_fully_depleted_true_once_balance_hits_zero(self):
+        receipt, _ = self._make_receipt()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Draw', qty=Decimal('-6'),
+        )
+        self.assertTrue(receipt.is_fully_depleted())
+
+    def test_is_fully_depleted_false_with_no_lines(self):
+        receipt = KitchenStockReceipt.objects.create(
+            business=self.biz, store=self.store, recorded_by=self.owner_user,
+        )
+        self.assertFalse(receipt.is_fully_depleted())
+
+    def test_maybe_auto_close_closes_when_depleted(self):
+        receipt, _ = self._make_receipt()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Draw', qty=Decimal('-6'),
+        )
+        closed = receipt.maybe_auto_close()
+        self.assertTrue(closed)
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, 'DONE')
+        self.assertIsNotNone(receipt.closed_at)
+        self.assertIsNone(receipt.closed_by)  # no specific staffer did this
+
+    def test_maybe_auto_close_noop_while_stock_remains(self):
+        receipt, _ = self._make_receipt()
+        closed = receipt.maybe_auto_close()
+        self.assertFalse(closed)
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, 'OPEN')
+
+    def test_maybe_auto_close_noop_already_done(self):
+        receipt, _ = self._make_receipt()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Draw', qty=Decimal('-6'),
+        )
+        receipt.close(self.owner_user)
+        first_closed_at = receipt.closed_at
+        closed_again = receipt.maybe_auto_close()
+        self.assertFalse(closed_again)
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.closed_at, first_closed_at)
+
+    def test_list_endpoint_moves_depleted_receipt_to_closed(self):
+        """The literal reported bug: a depleted receipt must move out of
+        the Kitchen Board's active list within one poll, no manual tap
+        needed."""
+        receipt, _ = self._make_receipt()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Draw', qty=Decimal('-6'),
+        )
+        resp = self.client.get('/kitchen/stock-receipt/list/')
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        open_ids = [r['id'] for r in data['open']]
+        closed_ids = [r['id'] for r in data['closed']]
+        self.assertNotIn(receipt.id, open_ids)
+        self.assertIn(receipt.id, closed_ids)
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, 'DONE')
+
+    def test_list_endpoint_leaves_active_receipt_open(self):
+        receipt, _ = self._make_receipt()
+        resp = self.client.get('/kitchen/stock-receipt/list/')
+        data = resp.json()
+        open_ids = [r['id'] for r in data['open']]
+        self.assertIn(receipt.id, open_ids)
+
+    def test_backdated_sale_still_counts_after_auto_close(self):
+        """The exact concern Roy raised: a paper-recorded sale entered
+        late (backdated) after the receipt has already auto-closed must
+        still count, since closed_at is stamped at the real moment
+        auto-close fires (a later timestamp only ever widens the window,
+        never narrows it)."""
+        receipt, line = self._make_receipt(qty=Decimal('6'), cost=Decimal('600'))
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Draw', qty=Decimal('-6'),
+        )
+        receipt.maybe_auto_close()
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, 'DONE')
+
+        # A backdated sale, entered AFTER the auto-close, dated to when it
+        # actually happened (before the close).
+        from datetime import datetime, time as _time
+        backdated_date = receipt.received_on
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('150'), payment_method='cash',
+            created_at=timezone.make_aware(datetime.combine(backdated_date, _time(10, 0))),
+        )
+        self.assertEqual(receipt.total_revenue(), Decimal('150'))
+
+
 class KitchenStockReceiptPresetCostingTest(TestCase):
     """2026-07-25 same-day follow-up, Roy's explicit design call: for a
     single catalogued item that's really several differently-priced
