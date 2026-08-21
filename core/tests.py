@@ -19458,6 +19458,59 @@ class LiveDirectReceiptLinesTest(TestCase):
         self.assertEqual(len(resp.context['receipt'].lines), 2)
         self.assertEqual(float(resp.context['receipt'].total), 350.0)
 
+    def test_live_direct_lines_synthesizes_split_off_sibling(self):
+        """2026-08-21, same-day follow-up (Roy: "will backdating, gawanya
+        and all other relevant functions... change and adjust the
+        receipt"). A KES 500 sale split into 200 cash + 300 mpesa via
+        Gawanya must show as TWO lines on the receipt, not vanish/stay
+        stale as one line still claiming 500 cash."""
+        from core.receipt_views import _live_direct_lines
+        t1 = self._txn(amount=Decimal('500'), payment_method='cash')
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[{'name': 'Tusker', 'subtotal': 500.0, 'txn_id': t1.id}],
+        )
+        _orig, new_txn = Transaction.split_payment_method_locked(
+            txn_id=t1.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        result = _live_direct_lines(receipt)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 2)
+        parent_line = next(l for l in result if l['txn_id'] == t1.id)
+        child_line = next(l for l in result if l['txn_id'] == new_txn.id)
+        self.assertEqual(parent_line['subtotal'], 200.0)
+        self.assertEqual(child_line['subtotal'], 300.0)
+        self.assertEqual(child_line['name'], 'Tusker')
+        self.assertEqual(round(parent_line['subtotal'] + child_line['subtotal'], 2), 500.0)
+
+    def test_public_receipt_reflects_split_end_to_end(self):
+        t1 = self._txn(amount=Decimal('500'), payment_method='cash')
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[{'name': 'Tusker', 'subtotal': 500.0, 'txn_id': t1.id}],
+        )
+        self.client.force_login(self.owner)
+        split_resp = self.client.post(f'/bar/transactions/{t1.id}/split-payment/', {
+            'new_method': 'mpesa', 'split_amount': '300',
+        })
+        self.assertTrue(split_resp.json().get('ok'), split_resp.json())
+
+        resp = self.client.get(f'/r/{receipt.token}/')
+        rendered = resp.context['receipt']
+        self.assertEqual(len(rendered.lines), 2)
+        self.assertEqual(float(rendered.total), 500.0, "total across both split lines must still equal the original sale")
+
+    def test_untouched_line_never_synthesizes_a_split_child(self):
+        """Regression lock: a line whose transaction was never split must
+        not spuriously gain a sibling."""
+        from core.receipt_views import _live_direct_lines
+        t1 = self._txn(amount=Decimal('200'))
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[{'name': 'Tusker', 'subtotal': 200.0, 'txn_id': t1.id}],
+        )
+        self.assertIsNone(_live_direct_lines(receipt))
+
 
 class TransactionPresetCorrectionTest(TestCase):
     """2026-08-01 live request (Monsoon Inn, screenshots): kitchen staff
@@ -21896,6 +21949,31 @@ class KitchenViabilityTest(TestCase):
         self.assertEqual(rows[0]['cost_total'], 1960.0)
         self.assertEqual(rows[0]['revenue'], 500.0)
         self.assertEqual(rows[0]['profit'], 500.0 - 1960.0)
+        self.assertFalse(rows[0]['is_raw_material'])
+
+    def test_receipt_history_flags_raw_material_receipt(self):
+        """2026-08-21 live report (Roy): a raw-material receipt always
+        shows revenue=0/profit=-100% for itself — structurally, not a
+        fact about the sack's real performance. Flagged so the Kitchen
+        Viability page can avoid rendering that as if it were a loss."""
+        from core.kitchen_viability import kitchen_receipt_history
+        raw_potatoes = Item.objects.create(
+            business=self.biz, store=self.store, description='Raw Potatoes',
+            material_no='VIAB-RAW-01', unit='Ndoo', selling_price=Decimal('0'),
+        )
+        # self.chipo already has raw_material_source unset; link it here so
+        # raw_potatoes.derived_batch_items resolves.
+        self.chipo.raw_material_source = raw_potatoes
+        self.chipo.save(update_fields=['raw_material_source'])
+        receipt = KitchenStockReceipt.objects.create(
+            business=self.biz, store=self.store, supplier='Market', received_on=self.today,
+        )
+        KitchenStockReceiptLine.objects.create(
+            receipt=receipt, item=raw_potatoes, qty_received=Decimal('6'), line_cost=Decimal('6800'),
+        )
+        rows = kitchen_receipt_history(self.biz, self.today, self.today)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['is_raw_material'])
 
     def test_receipt_history_excludes_out_of_window_receipt(self):
         from core.kitchen_viability import kitchen_receipt_history
@@ -36775,16 +36853,30 @@ class KitchenStockReceiptRawMaterialForTest(TestCase):
         self.assertEqual(linked['revenue'], 100.0)
         self.assertEqual(linked['profit'], 100.0 - float(batch.cost_total))
 
-    def test_closed_batch_excluded_from_raw_material_for(self):
+    def test_closed_batch_now_counted_in_raw_material_for(self):
+        """2026-08-21, same-day follow-up (Roy — "how when 5 buckets have
+        been sold... each bucket shows the chipo profit"): the original
+        "only OPEN batches count" rule silently dropped a sack's own
+        already-sold-and-closed history, making a mostly-successful sack
+        look like a loss because only its one lagging leftover batch was
+        ever shown. Reversed: a DEPLETED batch drawn from this receipt's
+        own delivery is now counted too — a depleted batch has real
+        recorded profit, not nothing."""
         self._create_raw_receipt()
         batch = KitchenBatch.open_batch(
             business=self.biz, store=self.store, item=self.chipo,
             recorded_by=self.owner, draw_qty=Decimal('5'),
         )
+        batch.record_sale(Decimal('300'), payment_method='cash')
         batch.deplete()
         listing = self.client.get('/kitchen/stock-receipt/list/').json()
         r = listing['open'][0]
-        self.assertEqual(r['raw_material_for'], [], 'Only OPEN batches count — a depleted one is not "current"')
+        linked = r['raw_material_for'][0]
+        self.assertEqual(linked['batch_count'], 1)
+        self.assertEqual(linked['open_batch_count'], 0)
+        self.assertEqual(linked['cost'], float(batch.cost_total))
+        self.assertEqual(linked['revenue'], 300.0)
+        self.assertEqual(linked['profit'], 300.0 - float(batch.cost_total))
 
     def test_multiple_open_batches_summed_correctly(self):
         """2026-08-12 live report (Roy): the Chipo tile only ever displays
@@ -36833,13 +36925,21 @@ class KitchenStockReceiptRawMaterialForTest(TestCase):
         accordingly" — once split_by_date_locked() closes the ORIGINAL
         batch (DEPLETED) and opens a NEW one (OPEN, with its own fresh
         raw-material draw + recomputed cost/revenue), the Stock Receipt
-        card's "→ Chipo" cross-reference must show the NEW batch's own
-        numbers, not the old pre-split ones — and the old batch must drop
-        out entirely, matching the already-established "only OPEN batches
-        count" rule (test_closed_batch_excluded_from_raw_material_for)."""
-        self._create_raw_receipt(qty='10', cost='1000')
+        card's "→ Chipo" cross-reference must reflect BOTH: the now-closed
+        original batch's real recorded profit AND the new batch's own
+        ongoing figures — updated 2026-08-21 alongside the reversal of the
+        old "only OPEN batches count" rule (both batches were drawn from
+        the SAME sack/receipt, so both belong in its own total)."""
+        resp = self._create_raw_receipt(qty='10', cost='1000')
         from datetime import datetime as _dt
         day1 = timezone.make_aware(_dt(2026, 8, 10, 9, 0))
+        # Backdate the receipt itself to before the batch's own draw date —
+        # the new receipt-to-receipt windowing (2026-08-21) filters batches
+        # by received_on relative to the receipt's own delivery date, so
+        # the two must agree for this fixture to still exercise the split
+        # mechanic it's actually testing.
+        from core.models import KitchenStockReceipt as _KSR
+        _KSR.objects.filter(id=resp.json()['receipt']['id']).update(received_on=day1.date())
         batch = KitchenBatch.open_batch(
             business=self.biz, store=self.store, item=self.chipo,
             recorded_by=self.owner, draw_qty=Decimal('1'),
@@ -36876,11 +36976,13 @@ class KitchenStockReceiptRawMaterialForTest(TestCase):
 
         post_split = self.client.get('/kitchen/stock-receipt/list/').json()['open'][0]
         linked = post_split['raw_material_for']
-        self.assertEqual(len(linked), 1, 'The now-DEPLETED original batch must not still be counted')
-        self.assertEqual(linked[0]['open_batch_count'], 1)
-        self.assertEqual(linked[0]['cost'], float(new_batch.cost_total))
-        self.assertEqual(linked[0]['revenue'], 250.0, "The new batch's own revenue, not the old batch's 100")
-        self.assertEqual(linked[0]['profit'], 250.0 - float(new_batch.cost_total))
+        self.assertEqual(len(linked), 1, 'Still one row for Chipo — both batches summed into it')
+        self.assertEqual(linked[0]['batch_count'], 2)
+        self.assertEqual(linked[0]['open_batch_count'], 1, 'Only the new batch is still OPEN')
+        expected_cost = float(original.cost_total + new_batch.cost_total)
+        self.assertEqual(linked[0]['cost'], expected_cost)
+        self.assertEqual(linked[0]['revenue'], 350.0, "Both batches' revenue — 100 (original) + 250 (new)")
+        self.assertEqual(linked[0]['profit'], 350.0 - expected_cost)
 
     def test_receipt_line_current_balance_tracks_the_whole_gunia_drawdown(self):
         """2026-08-16 live follow-up (Roy): "what about raw potatoes/whole
@@ -36919,6 +37021,77 @@ class KitchenStockReceiptRawMaterialForTest(TestCase):
         line = listing['open'][0]['lines'][0]
         self.assertEqual(line['current_balance'], 2.0)
         self.assertEqual(line['line_cost'], 6800.0, "the receipt's own KES total stays the fixed original delivery")
+
+    def test_is_all_raw_material_flag_true_for_raw_only_receipt(self):
+        resp = self._create_raw_receipt()
+        receipt_id = resp.json()['receipt']['id']
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        r = next(x for x in listing['open'] if x['id'] == receipt_id)
+        self.assertTrue(r['is_all_raw_material'])
+        self.assertTrue(r['lines'][0]['is_raw_material_source'])
+
+    def test_is_all_raw_material_flag_false_for_ordinary_receipt(self):
+        import json, uuid
+        wing = Item.objects.create(
+            business=self.biz, store=self.store, description='Wing',
+            material_no='KSRRAW-WING', unit='Pcs', selling_price=Decimal('0'),
+        )
+        resp = self.client.post('/kitchen/stock-receipt/create/', {
+            'supplier': 'Meatco', 'invoice_no': '',
+            'lines': json.dumps([{'item_id': wing.id, 'qty': '20', 'cost': '1960'}]),
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        receipt_id = resp.json()['receipt']['id']
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        r = next(x for x in listing['open'] if x['id'] == receipt_id)
+        self.assertFalse(r['is_all_raw_material'])
+        self.assertFalse(r['lines'][0]['is_raw_material_source'])
+
+    def test_batch_from_before_this_receipt_excluded(self):
+        """The receipt-to-receipt windowing: a batch drawn BEFORE this
+        receipt's own delivery date belongs to whichever earlier delivery
+        was active then, not this one."""
+        from datetime import datetime as _dt
+        early_batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            source_item_id=self.raw_potatoes.id, cost_total=Decimal('50'),
+            revenue_collected=Decimal('80'), status='DEPLETED',
+            received_on=_dt(2026, 1, 1).date(),
+        )
+        resp = self._create_raw_receipt()
+        receipt_id = resp.json()['receipt']['id']
+        # Re-date the receipt itself to well after the early batch.
+        from core.models import KitchenStockReceipt as _KSR
+        _KSR.objects.filter(id=receipt_id).update(received_on=_dt(2026, 6, 1).date())
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        r = next(x for x in listing['open'] if x['id'] == receipt_id)
+        self.assertEqual(r['raw_material_for'], [], 'The pre-dated batch belongs to an earlier delivery, not this one')
+
+    def test_batch_from_after_next_receipt_excluded(self):
+        """A batch drawn during a LATER delivery's own window must not
+        bleed backward into this (earlier, already-superseded) receipt."""
+        from datetime import datetime as _dt
+        resp = self._create_raw_receipt()
+        first_id = resp.json()['receipt']['id']
+        from core.models import KitchenStockReceipt as _KSR
+        _KSR.objects.filter(id=first_id).update(received_on=_dt(2026, 1, 1).date())
+
+        second_resp = self._create_raw_receipt()
+        second_id = second_resp.json()['receipt']['id']
+        _KSR.objects.filter(id=second_id).update(received_on=_dt(2026, 2, 1).date())
+
+        KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            source_item_id=self.raw_potatoes.id, cost_total=Decimal('50'),
+            revenue_collected=Decimal('80'), status='OPEN',
+            received_on=_dt(2026, 2, 10).date(),  # after the SECOND receipt
+        )
+        listing = self.client.get('/kitchen/stock-receipt/list/').json()
+        first = next(x for x in listing['closed'] + listing['open'] if x['id'] == first_id)
+        second = next(x for x in listing['closed'] + listing['open'] if x['id'] == second_id)
+        self.assertEqual(first['raw_material_for'], [], 'The batch belongs to the SECOND delivery, not the first')
+        self.assertEqual(len(second['raw_material_for']), 1)
+        self.assertEqual(second['raw_material_for'][0]['batch_count'], 1)
 
 
 class KitchenStockReceiptDeleteTest(TestCase):

@@ -223,22 +223,40 @@ def _live_direct_lines(receipt):
     entries live, every request). A DIRECT (non-tab) sale's receipt had no
     equivalent — receipt.lines is a static JSONField snapshot with no
     reference back to the Transaction that created each line, so a later
-    correction on that sale via the "Recent Payments" panel — void_
-    direct_transaction (🗑 Futa, sets qty=0) — could never be reflected on
-    an already-issued receipt.
+    correction on that sale via the "Recent Payments" panel could never be
+    reflected on an already-issued receipt.
 
     Every checkout call site (Quick Sell, Bar Board's keg-cart checkout,
     Kitchen Board) now stamps 'txn_id' on each line it writes, going
-    forward. This purely FILTERS the static snapshot down to lines whose
-    Transaction still has real qty and isn't void — it does NOT recompute
-    subtotal/name live (those are already kept correct by the dedicated,
-    already-existing correction mechanisms — e.g. correct_transaction_
-    preset's own in-place receipt-line rename), avoiding the exact kind of
-    live-recompute precision trap this app has hit before (Kuku/Chipo
-    Mapato). Returns None (meaning: nothing to change, use receipt.lines
-    exactly as before) whenever recomputing isn't possible — a receipt
-    issued before this fix has no txn_id on any line — or whenever nothing
-    was actually removed.
+    forward. Two corrections are handled here, live, at render time:
+
+    1. void_direct_transaction (🗑 Futa, sets qty=0/payment_method='void')
+       — the line is dropped entirely.
+    2. split_transaction_payment_method (✂️ Gawanya) — same-day follow-up
+       (Roy: "will backdating, gawanya and all other relevant functions...
+       change and adjust the receipt"). The split-off sibling never gets
+       its own receipt line (the receipt may already be issued by the
+       time a Gawanya correction happens) — Transaction.split_from links
+       it back to the line's own transaction, so it's synthesized here as
+       an additional line (same name/qty as the parent — it's genuinely
+       the same item, just a different payment channel for part of it),
+       and the parent's own now-reduced sale_amount is read live instead
+       of the stale static subtotal. Only one level deep — see
+       Transaction.split_from's own docstring for why that's an accepted
+       limitation, not a bug.
+
+    correct_transaction_date (📅 Tarehe) needs no handling here — it never
+    changes what a line shows, only when it counts for revenue purposes.
+    correct_transaction_preset already has its own dedicated, existing
+    in-place receipt-line rename (2026-08-01), so it's not duplicated here.
+
+    Deliberately does NOT recompute an UNTOUCHED line's subtotal/name live
+    — avoiding the exact kind of live-recompute precision trap this app
+    has hit before (Kuku/Chipo Mapato) for the vast majority of lines that
+    were never corrected at all. Returns None (meaning: nothing to
+    change, use receipt.lines exactly as before) whenever recomputing
+    isn't possible — a receipt issued before this fix has no txn_id on
+    any line — or whenever nothing was actually voided or split.
     """
     lines = receipt.lines or []
     if not lines or not all(isinstance(l, dict) and l.get('txn_id') for l in lines):
@@ -247,15 +265,34 @@ def _live_direct_lines(receipt):
     txn_ids = [l['txn_id'] for l in lines]
     txns = {
         t.id: t for t in
-        _Txn.objects.filter(id__in=txn_ids, business_id=receipt.business_id).only('id', 'payment_method', 'qty')
+        _Txn.objects.filter(id__in=txn_ids, business_id=receipt.business_id)
     }
-    live_lines = [
-        l for l in lines
-        if txns.get(l['txn_id']) is not None
-        and txns[l['txn_id']].payment_method != 'void'
-        and txns[l['txn_id']].qty
-    ]
-    if len(live_lines) == len(lines):
+    children_by_parent = {}
+    for c in _Txn.objects.filter(split_from_id__in=txn_ids, business_id=receipt.business_id):
+        children_by_parent.setdefault(c.split_from_id, []).append(c)
+
+    changed = bool(children_by_parent)
+    live_lines = []
+    for l in lines:
+        t = txns.get(l['txn_id'])
+        if t is None or t.payment_method == 'void' or not t.qty:
+            changed = True
+            continue
+        if l['txn_id'] in children_by_parent:
+            new_l = dict(l)
+            new_l['subtotal'] = float(t.revenue())
+            live_lines.append(new_l)
+        else:
+            live_lines.append(l)
+        for child in children_by_parent.get(l['txn_id'], []):
+            live_lines.append({
+                'name': l.get('name', ''),
+                'qty': l.get('qty', 1),
+                'subtotal': float(child.revenue()),
+                'txn_id': child.id,
+            })
+
+    if not changed:
         return None
     return live_lines
 

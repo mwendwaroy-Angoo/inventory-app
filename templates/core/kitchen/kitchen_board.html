@@ -5008,12 +5008,41 @@
   // as belonging to that item — never folded into this receipt's own
   // (always-zero) total, which would misrepresent two different revenue
   // streams as one.
+  // 2026-08-21, same-day follow-up (Roy — asked to fix the -100% display
+  // itself): a receipt made ENTIRELY of raw-material items (e.g. Raw
+  // Potatoes) will ALWAYS show Mapato KES 0 / Faida -100%, structurally,
+  // forever — it's not a fact about how the delivery performed, it's a
+  // guaranteed constant (raw material is never sold directly). Showing
+  // it reads as "this delivery lost everything" when the real picture
+  // (raw_material_for, below) can be strongly profitable. Hidden
+  // entirely for such a receipt — the "→ Chipo" line is the honest
+  // number to look at instead.
+  function _ksrCostLineHtml(r, mutedColor) {
+    if (r.is_all_raw_material) {
+      return '<div style="font-size:.72rem;color:' + mutedColor + ';font-style:italic;">' +
+        'Malighafi haiuzwi moja kwa moja — angalia faida halisi hapa chini ↓</div>';
+    }
+    var pftColor = r.profit >= 0 ? '#4caf50' : '#c0395a';
+    return '<div style="font-size:.78rem;color:' + mutedColor + ';">Gharama: KES ' + Math.round(r.total_cost) +
+      ' · Mapato: KES ' + Math.round(r.total_revenue) + ' · Faida: <strong style="color:' + pftColor + ';">KES ' +
+      Math.round(r.profit) + '</strong>' + (r.profit_pct !== null ? ' (' + r.profit_pct + '%)' : '') + '</div>';
+  }
+
+  // 2026-08-21, same-day follow-up (Roy — "how when 5 buckets have been
+  // sold... each bucket shows the chipo profit"): this used to only sum
+  // the OPEN batch(es) and mislabel the count as if it were a batch
+  // NUMBER ("batch 1 iliyo wazi" was literally the open-batch COUNT, not
+  // an id). Now sums EVERY batch (open + closed) drawn from this raw
+  // item since this receipt's own delivery — the real total for the
+  // sack, not just whatever's still open right now.
   function _ksrRawMaterialForHtml(r) {
     if (!r.raw_material_for || !r.raw_material_for.length) return '';
     return r.raw_material_for.map(function(b){
       var pftColor = b.profit >= 0 ? '#4caf50' : '#c0395a';
+      var openNote = b.open_batch_count > 0
+        ? ' (' + b.open_batch_count + ' bado ' + (b.open_batch_count === 1 ? 'wazi' : 'wazi') + ')' : ' (zote zimefungwa)';
       return '<div style="font-size:.74rem;color:#9fcaa0;margin-top:.3rem;">' +
-        '→ ' + b.item_name + ' (batch ' + b.open_batch_count + ' iliyo wazi): ' +
+        '→ ' + b.item_name + ' — batch ' + b.batch_count + (b.batch_count === 1 ? '' : ' zote') + openNote + ': ' +
         'Gharama KES ' + Math.round(b.cost) + ' · Mapato KES ' + Math.round(b.revenue) + ' · Faida: ' +
         '<strong style="color:' + pftColor + ';">KES ' + Math.round(b.profit) + '</strong>' +
       '</div>';
@@ -5034,8 +5063,6 @@
         }
         panel.style.display = 'block';
         var openHtml = _ksrOpenReceipts.map(function(r){
-          var pft = r.profit;
-          var pftColor = pft >= 0 ? '#4caf50' : '#c0395a';
           return '<div style="background:var(--onyx-card);border:1px solid rgba(76,175,80,.25);border-radius:10px;padding:.6rem .75rem;margin-bottom:.4rem;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;">' +
               '<div style="font-size:.85rem;color:#f0ece4;font-weight:600;">🧾 ' + (r.supplier || 'Stock Receipt') + (r.invoice_no ? ' #' + r.invoice_no : '') + '</div>' +
@@ -5045,7 +5072,7 @@
               '</span>' +
             '</div>' +
             '<div style="font-size:.74rem;margin:.35rem 0;">' + _ksrLineHtml(r) + '</div>' +
-            '<div style="font-size:.78rem;color:#b0b0b0;">Gharama: KES ' + Math.round(r.total_cost) + ' · Mapato: KES ' + Math.round(r.total_revenue) + ' · Faida: <strong style="color:' + pftColor + ';">KES ' + Math.round(pft) + '</strong>' + (r.profit_pct !== null ? ' (' + r.profit_pct + '%)' : '') + '</div>' +
+            _ksrCostLineHtml(r, '#b0b0b0') +
             _ksrRawMaterialForHtml(r) +
           '</div>';
         }).join('');
@@ -5057,8 +5084,6 @@
         // be able to earn more revenue again. Owner/manager only, same
         // tier as closing/cost correction.
         var closedHtml = closedReceipts.map(function(r){
-          var pft = r.profit;
-          var pftColor = pft >= 0 ? '#4caf50' : '#c0395a';
           return '<div style="background:var(--onyx-card);border:1px solid rgba(136,136,136,.2);border-radius:10px;padding:.6rem .75rem;margin-bottom:.4rem;opacity:.85;">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;">' +
               '<div style="font-size:.85rem;color:#b0b0b0;font-weight:600;">🧾 ' + (r.supplier || 'Stock Receipt') + (r.invoice_no ? ' #' + r.invoice_no : '') + ' <span style="color:#888;font-size:.72rem;font-weight:400;">— imefungwa</span></div>' +
@@ -5068,7 +5093,7 @@
               '</span>' : '') +
             '</div>' +
             '<div style="font-size:.74rem;margin:.35rem 0;">' + _ksrLineHtml(r) + '</div>' +
-            '<div style="font-size:.78rem;color:#888;">Gharama: KES ' + Math.round(r.total_cost) + ' · Mapato: KES ' + Math.round(r.total_revenue) + ' · Faida: <strong style="color:' + pftColor + ';">KES ' + Math.round(pft) + '</strong>' + (r.profit_pct !== null ? ' (' + r.profit_pct + '%)' : '') + '</div>' +
+            _ksrCostLineHtml(r, '#888') +
             _ksrRawMaterialForHtml(r) +
           '</div>';
         }).join('');

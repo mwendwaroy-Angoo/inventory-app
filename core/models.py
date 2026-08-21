@@ -1185,6 +1185,23 @@ class Transaction(models.Model):
         help_text='UBA §9.2 (Salon) — the STYLIST who performed the service, distinct from '
                   '`recorded_by` (the cashier/whoever rang it up). Never set for non-salon sales.'
     )
+    split_from = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='split_children',
+        help_text=(
+            '2026-08-21 live report (Roy — "will backdating, gawanya and all other relevant '
+            'functions to sales change and adjust the receipt"): set ONLY on the NEW sibling '
+            'row split_payment_method_locked() creates for a split-off remainder — points back '
+            'at the transaction it was carved out of. A direct-sale receipt line has no way to '
+            'know a sale was later split (the sibling never gets its own receipt line — the '
+            'receipt may already be issued by the time a Gawanya correction happens); '
+            'core.receipt_views._live_direct_lines() uses this to synthesize the missing line '
+            'and refresh the parent line\'s now-stale subtotal, live, at render time. Only one '
+            'level deep by design — splitting an already-split-off sibling a second time is a '
+            'documented, accepted limitation (its own grandchild split_from would point at the '
+            'sibling, not the receipt\'s own original line id).'
+        ),
+    )
     created_at = models.DateTimeField(
         default=timezone.now, null=True, blank=True,
         help_text='Exact timestamp — used for shift-level reconciliation. Can be backdated for offline sales.',
@@ -1498,6 +1515,7 @@ class Transaction(models.Model):
                 keg_barrel_id=txn.keg_barrel_id,
                 produce_bunch_id=txn.produce_bunch_id,
                 kitchen_batch_id=txn.kitchen_batch_id,
+                split_from=txn,
             )
             return txn, new_txn
 

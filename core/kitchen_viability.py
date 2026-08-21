@@ -138,21 +138,34 @@ def kitchen_receipt_history(business, start_date, end_date):
             business=business, received_on__gte=start_date, received_on__lte=end_date,
         ).prefetch_related('lines__item').order_by('-received_on', '-id')
     )
-    return [
-        {
+    result = []
+    for r in receipts:
+        line_items = list(r.lines.all())
+        # 2026-08-21 live report (Roy): a receipt made entirely of raw-
+        # material-source items (e.g. Raw Potatoes) always shows revenue=0/
+        # profit=-100% for itself — structurally guaranteed, not a fact
+        # about how the delivery performed (the item is never sold
+        # directly, only drawn into a batch — see KitchenStockReceipt's
+        # own raw_material_for mechanism in kitchen_views.py). Flagged so
+        # the template can avoid showing a hard -100% that reads as a loss
+        # when the real batches drawn from it may be strongly profitable.
+        is_raw_material = bool(line_items) and all(
+            l.item.derived_batch_items.exists() for l in line_items
+        )
+        result.append({
             'id':            r.id,
             'supplier':      r.supplier,
             'invoice_no':    r.invoice_no,
-            'items':         ', '.join(sorted({l.item.description for l in r.lines.all()})),
+            'items':         ', '.join(sorted({l.item.description for l in line_items})),
             'cost_total':    float(r.total_cost),
             'revenue':       float(r.total_revenue()),
             'profit':        float(r.profit),
             'profit_pct':    r.profit_pct,
             'status':        r.status,
             'received_on':   r.received_on.isoformat(),
-        }
-        for r in receipts
-    ]
+            'is_raw_material': is_raw_material,
+        })
+    return result
 
 
 def kitchen_staff_cost_context(business):

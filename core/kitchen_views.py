@@ -1690,6 +1690,23 @@ def _kitchen_stock_receipt_to_dict(receipt):
     # PRODUCT's own already-correct, already-live tile figures alongside
     # the raw material's line — clearly labelled as belonging to Chipo (or
     # whichever batch item), not folded into this receipt's own total.
+    #
+    # 2026-08-21, same-day follow-up (Roy, live report): the original
+    # version above only ever summed the OPEN batch(es) — so a sack that
+    # was 80% sold across 5 batches over two weeks, 4 of them already
+    # closed with real profit, showed just its one lagging leftover batch
+    # and looked like a loss. Widened to sum EVERY batch (open + closed)
+    # drawn from this raw item DURING THE PERIOD THIS RECEIPT WAS THE
+    # ACTIVE DELIVERY for it — i.e. from this receipt's own received_on
+    # up to whichever comes first: the NEXT receipt for the same raw item,
+    # or "still ongoing" if there isn't one yet. Unlike the Kuku/Chipo
+    # Mapato precision trap (which involved several PRESETS sharing one
+    # pooled item balance with genuinely ambiguous per-sale attribution),
+    # a KitchenBatch's own source_item_id is a direct, unambiguous FK set
+    # once at creation — the only real question here is which DELIVERY of
+    # the raw item a batch came from, and this receipt-to-receipt
+    # windowing answers that the same way total_revenue()'s own window
+    # already does for a portion item's sales.
     raw_material_for = []
     seen_batch_items = set()
     for l in lines:
@@ -1697,16 +1714,26 @@ def _kitchen_stock_receipt_to_dict(receipt):
             if batch_item.id in seen_batch_items:
                 continue
             seen_batch_items.add(batch_item.id)
-            open_batches = KitchenBatch.objects.filter(
-                item=batch_item, source_item_id=l.item_id, status='OPEN',
+            next_receipt = KitchenStockReceipt.objects.filter(
+                business=receipt.business, store=receipt.store,
+                lines__item_id=l.item_id, received_on__gt=receipt.received_on,
+            ).exclude(id=receipt.id).order_by('received_on').first()
+            batches_qs = KitchenBatch.objects.filter(
+                item=batch_item, source_item_id=l.item_id,
+                received_on__gte=receipt.received_on,
             )
-            if not open_batches.exists():
+            if next_receipt:
+                batches_qs = batches_qs.filter(received_on__lt=next_receipt.received_on)
+            all_batches = list(batches_qs)
+            if not all_batches:
                 continue
-            cost = sum((b.cost_total for b in open_batches), Decimal('0'))
-            revenue = sum((b.revenue_collected or Decimal('0') for b in open_batches), Decimal('0'))
+            cost = sum((b.cost_total for b in all_batches), Decimal('0'))
+            revenue = sum((b.revenue_collected or Decimal('0') for b in all_batches), Decimal('0'))
+            open_count = sum(1 for b in all_batches if b.status == 'OPEN')
             raw_material_for.append({
                 'item_name': batch_item.description,
-                'open_batch_count': open_batches.count(),
+                'batch_count': len(all_batches),
+                'open_batch_count': open_count,
                 'cost': float(cost),
                 'revenue': float(revenue),
                 'profit': float(revenue - cost),
@@ -1753,9 +1780,21 @@ def _kitchen_stock_receipt_to_dict(receipt):
                 # "never conflate two different figures as one" discipline
                 # (see raw_material_for's docstring above).
                 'current_balance': float(l.item.current_balance()) if receipt.status == 'OPEN' else None,
+                'is_raw_material_source': l.item.derived_batch_items.exists(),
             }
             for l in lines
         ],
+        # 2026-08-21 live report (Roy): a receipt made ENTIRELY of raw-
+        # material-source items (e.g. a Raw Potatoes-only delivery) can
+        # never show a real Gharama/Mapato/Faida for itself — Mapato is
+        # structurally always 0 and Faida always -100%, since the item is
+        # never sold directly, only drawn into a batch. That figure isn't
+        # a fact about performance, it's a guaranteed constant — showing
+        # it at all reads as "this delivery lost 100%" when the real
+        # picture (raw_material_for, above) may be strongly profitable.
+        # The frontend uses this flag to hide that misleading line
+        # entirely for such a receipt, relying on raw_material_for instead.
+        'is_all_raw_material': bool(lines) and all(l.item.derived_batch_items.exists() for l in lines),
     }
 
 
