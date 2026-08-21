@@ -2616,14 +2616,17 @@
     // 2026-08-09 — backdate toggle only makes sense for a direct, already-
     // completed sale — Cash, M-Pesa, or (2026-08-12 live request) a direct
     // Deni sale, straight at checkout, no separate after-the-fact
-    // correction needed. Never Tab (an open running bill). Reset on every
-    // method change, same as split.
+    // correction needed. 2026-08-21 live report (Roy): "quick sell/bar
+    // orders has no back date when the item is in tabs drawer" — widened
+    // to also include food_tab/bar_tab; see kitchen_views.py::
+    // _kitchen_checkout()'s matching backend fix. Reset on every method
+    // change, same as split (which correctly stays cash/mpesa-only).
     var bdToggleRow = document.getElementById('kb-backdate-toggle-row');
     var bdRow = document.getElementById('kb-backdate-row');
     var bdInput = document.getElementById('kb-backdated-at');
     if (bdInput) bdInput.value = '';
     if (bdRow) bdRow.style.display = 'none';
-    var isCashMpesaOrCredit = isCashOrMpesa || pm === 'credit';
+    var isCashMpesaOrCredit = isCashOrMpesa || pm === 'credit' || pm === 'food_tab' || pm === 'bar_tab';
     if (bdToggleRow) bdToggleRow.style.display = isCashMpesaOrCredit ? 'block' : 'none';
     // Trigger cross-tab check immediately if name already typed when food_tab selected
     if (pm === 'food_tab') {
@@ -2947,9 +2950,12 @@
       }
     }
     // 2026-08-09 — catch-up posting backdated timestamp (Cash/M-Pesa/Deni —
-    // 2026-08-12: widened to cover a direct Deni sale too).
+    // 2026-08-12: widened to cover a direct Deni sale too; 2026-08-21:
+    // widened again to also cover Tab, matching the visibility gate above
+    // — this is a SEPARATE code path from what's shown, so both must agree
+    // or the toggle would visibly work but silently do nothing on submit).
     var backdatedAtVal = '';
-    if (pm === 'cash' || pm === 'mpesa' || pm === 'credit') {
+    if (pm === 'cash' || pm === 'mpesa' || pm === 'credit' || pm === 'food_tab' || pm === 'bar_tab') {
       var bdRow = document.getElementById('kb-backdate-row');
       var bdInput = document.getElementById('kb-backdated-at');
       if (bdRow && bdRow.style.display !== 'none' && bdInput && bdInput.value) {

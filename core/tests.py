@@ -33596,8 +33596,11 @@ class QuickSellCatchUpBackdateTest(TestCase):
     process when the items are too many": one backdated timestamp applied
     to a WHOLE Quick Sell cart at checkout, reusing the fast search-and-tap
     flow instead of one item at a time. Must correctly land in the right
-    day's shift/revenue window, not today's, and must never apply to a
-    Tab/Deni sale."""
+    day's shift/revenue window, not today's. Originally excluded Tab sales
+    (2026-08-07); widened to include them 2026-08-21 (see
+    test_backdated_tab_sale_uses_the_given_timestamp) once Roy's real usage
+    made clear the SALE's own date still needs correcting even for a tab
+    round — only the BarTab record's own creation moment stays "now"."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='QS Backdate Biz', has_kitchen=False)
@@ -33660,11 +33663,16 @@ class QuickSellCatchUpBackdateTest(TestCase):
         self.assertEqual(timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
                           timezone.localtime(self.yesterday).strftime('%Y-%m-%d %H:%M'))
 
-    def test_backdate_ignored_for_tab(self):
-        # A Tab is an open, ongoing bill — never backdatable, unlike a direct
-        # Deni sale (which is a completed, one-shot event).
+    def test_backdated_tab_sale_uses_the_given_timestamp(self):
+        # 2026-08-21 live report (Roy, re-entering a two-day paper sales
+        # log): "quick sell/bar orders has no back date when the item is in
+        # tabs drawer" — Tab was previously excluded (an open running bill
+        # isn't "already happened"), but the SALE's own revenue/stock/debt-
+        # aging impact still needs the real historical date, same as every
+        # other payment method. The BarTab record itself is still created
+        # "now" (the true moment it's entered into the system) — only its
+        # underlying Transaction gets backdated.
         self.client.force_login(self.owner)
-        before = timezone.now()
         resp = self.client.post('/quick-sell/', {
             'cart': json.dumps([{'id': self.item.id, 'qty': 1}]),
             'payment_method': 'tab', 'recipient': 'Tab Customer',
@@ -33673,7 +33681,12 @@ class QuickSellCatchUpBackdateTest(TestCase):
         })
         self.assertEqual(resp.status_code, 200)
         txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
-        self.assertGreaterEqual(txn.created_at, before)
+        self.assertEqual(txn.payment_method, 'credit')
+        self.assertEqual(timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+                          timezone.localtime(self.yesterday).strftime('%Y-%m-%d %H:%M'))
+        from core.models import BarTab
+        tab = BarTab.objects.get(business=self.biz, customer_name='Tab Customer')
+        self.assertTrue(tab.entries.filter(transaction=txn).exists())
 
     def test_backdated_sale_split_payment_remainder_inherits_timestamp(self):
         self.client.force_login(self.owner)
@@ -35601,8 +35614,10 @@ class KitchenBackdatedCheckoutTest(TestCase):
     """2026-08-09 live urgent request (Roy) — Kitchen Board's own checkout
     had no backdate support (unlike Quick Sell's whole-cart catch-up
     toggle, 2026-08-07), blocking same-day correction of missed chicken
-    sales from two prior business days. Mirrors Quick Sell's gate exactly:
-    cash/mpesa direct sales only, never Tab/Deni."""
+    sales from two prior business days. Originally excluded food_tab/
+    bar_tab; widened to include them 2026-08-21 (see
+    test_backdated_food_tab_sale_uses_the_given_timestamp) — see
+    QuickSellCatchUpBackdateTest's matching docstring for why."""
 
     def setUp(self):
         self.biz = Business.objects.create(name='KB Backdate Biz', has_kitchen=True)
@@ -35678,21 +35693,29 @@ class KitchenBackdatedCheckoutTest(TestCase):
             past_local.strftime('%Y-%m-%d %H:%M'),
         )
 
-    def test_backdate_ignored_for_food_tab(self):
-        # A food_tab is an open, ongoing bill — never backdatable, unlike a
-        # direct Deni sale (a completed, one-shot event).
+    def test_backdated_food_tab_sale_uses_the_given_timestamp(self):
+        # 2026-08-21 live report (Roy, re-entering a two-day paper sales
+        # log): "quick sell/bar orders has no back date when the item is in
+        # tabs drawer" — food_tab was previously excluded, but the SALE's
+        # own revenue/stock/debt-aging impact still needs the real
+        # historical date. The BarTab record itself is still created "now."
         import json as _json
-        past = (timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        past_local = timezone.localtime(timezone.now() - timedelta(days=2)).replace(microsecond=0)
         cart = _json.dumps([{'item_id': self.kuku.id, 'qty': 1, 'amount': 150, 'description': 'Kuku'}])
         resp = self.client.post('/kitchen/', {
             'cart': cart, 'payment_method': 'food_tab', 'tab_customer': 'Mary',
-            'backdated_at': past.strftime('%Y-%m-%dT%H:%M'),
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
         })
         self.assertTrue(resp.json().get('ok'), resp.json())
         txn = Transaction.objects.filter(business=self.biz, item=self.kuku, type='Issue').first()
         self.assertIsNotNone(txn)
-        # created_at must be close to now, NOT the backdated timestamp.
-        self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+        self.assertEqual(txn.payment_method, 'credit')
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
+        tab = BarTab.objects.get(business=self.biz, customer_name='Mary', source='kitchen')
+        self.assertTrue(tab.entries.filter(transaction=txn).exists())
 
     def test_no_backdate_param_behaves_exactly_as_before(self):
         import json as _json
@@ -35722,18 +35745,22 @@ class KitchenBackdatedCheckoutTest(TestCase):
             past_local.strftime('%Y-%m-%d %H:%M'),
         )
 
-    def test_batch_sale_backdate_ignored_for_food_tab(self):
+    def test_batch_backdated_food_tab_sale_uses_the_given_timestamp(self):
+        # 2026-08-21 — same widening applied to the KitchenBatch branch.
         import json as _json
-        past = (timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        past_local = timezone.localtime(timezone.now() - timedelta(days=2)).replace(microsecond=0)
         cart = _json.dumps([{'batch_id': self.chipo_batch.id, 'qty': 1, 'amount': 100, 'description': 'Chipo — Ya 100'}])
         resp = self.client.post('/kitchen/', {
             'cart': cart, 'payment_method': 'food_tab', 'tab_customer': 'Mary',
-            'backdated_at': past.strftime('%Y-%m-%dT%H:%M'),
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
         })
         self.assertTrue(resp.json().get('ok'), resp.json())
         txn = Transaction.objects.filter(business=self.biz, kitchen_batch=self.chipo_batch, type='Issue').first()
         self.assertIsNotNone(txn)
-        self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
 
     def test_batch_no_backdate_param_behaves_exactly_as_before(self):
         import json as _json
@@ -35787,7 +35814,10 @@ class BarBoardBackdatedCheckoutTest(TestCase):
     never had one. Mirrors KitchenBackdatedCheckoutTest's gate, adapted to
     this board's own payment options — the keg-cart payment selector only
     ever offers Cash/M-Pesa/Tab, no standalone Deni/credit radio, so there
-    is no direct-credit case to cover here (unlike Kitchen/Quick Sell)."""
+    is no direct-credit case to cover here (unlike Kitchen/Quick Sell).
+    Originally excluded Tab too; widened 2026-08-21 (see
+    test_backdated_tab_pour_uses_the_given_timestamp) — see
+    QuickSellCatchUpBackdateTest's matching docstring for why."""
 
     def setUp(self):
         self.biz, self.store, self.owner_user, self.item, self.barrel, self.preset = _make_keg_fixtures(
@@ -35831,21 +35861,31 @@ class BarBoardBackdatedCheckoutTest(TestCase):
             past_local.strftime('%Y-%m-%d %H:%M'),
         )
 
-    def test_backdate_ignored_for_tab(self):
-        # A Tab is an open, ongoing bill — never backdatable.
+    def test_backdated_tab_pour_uses_the_given_timestamp(self):
+        # 2026-08-21 live report (Roy, re-entering a two-day paper sales
+        # log): "quick sell/bar orders has no back date when the item is in
+        # tabs drawer... not sure about bar board side" — Tab was
+        # previously excluded, but the SALE's own revenue/stock/debt-aging
+        # impact still needs the real historical date. The BarTab record
+        # itself is still created "now."
         import json as _json
-        past = (timezone.now() - timedelta(days=2)).replace(microsecond=0)
+        past_local = timezone.localtime(timezone.now() - timedelta(days=2)).replace(microsecond=0)
         cart = _json.dumps([{'barrel_id': self.barrel.id, 'preset_id': self.preset.id, 'qty': 1}])
         resp = self.client.post('/bar/', {
             'keg_cart': cart, 'payment_method': 'tab', 'tab_customer': 'Mary',
-            'backdated_at': past.strftime('%Y-%m-%dT%H:%M'),
+            'backdated_at': past_local.strftime('%Y-%m-%dT%H:%M'),
             'idempotency_token': 'bb-bd-3',
         })
         self.assertEqual(resp.status_code, 200)
         txn = Transaction.objects.filter(business=self.biz, keg_barrel=self.barrel, type='Issue').first()
         self.assertIsNotNone(txn)
-        # created_at must be close to now, NOT the backdated timestamp.
-        self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
+        self.assertEqual(txn.payment_method, 'credit')
+        self.assertEqual(
+            timezone.localtime(txn.created_at).strftime('%Y-%m-%d %H:%M'),
+            past_local.strftime('%Y-%m-%d %H:%M'),
+        )
+        tab = BarTab.objects.get(business=self.biz, customer_name='Mary', source='bar')
+        self.assertTrue(tab.entries.filter(transaction=txn).exists())
 
     def test_no_backdate_param_behaves_exactly_as_before(self):
         import json as _json

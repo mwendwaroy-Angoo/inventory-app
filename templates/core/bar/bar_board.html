@@ -2723,9 +2723,12 @@
     document.getElementById('keg-partial-cash-input').value = partialCashVal;
     document.getElementById('keg-partial-mpesa-input').value = partialMpesaVal;
 
-    // 2026-08-12 — backdate: only meaningful for a direct Cash/M-Pesa sale.
+    // 2026-08-12 — backdate. 2026-08-21: widened to also cover Tab,
+    // matching the visibility gate above — this is a SEPARATE code path
+    // from what's shown, so both must agree or the toggle would visibly
+    // work but silently do nothing on submit.
     var backdatedAtVal = '';
-    if (method === 'cash' || method === 'mpesa') {
+    if (method === 'cash' || method === 'mpesa' || method === 'tab') {
       var bdRow = document.getElementById('keg-backdate-row');
       var bdInput = document.getElementById('keg-backdated-at');
       if (bdRow && bdRow.style.display !== 'none' && bdInput && bdInput.value) {
@@ -5956,15 +5959,22 @@
       if (isCashOrMpesa && splitOtherLabel) {
         splitOtherLabel.textContent = this.value === 'cash' ? 'M-Pesa' : 'Cash';
       }
-      // 2026-08-12 — backdate toggle, same isCashOrMpesa gate as split
-      // payment (this cart has no standalone Deni/credit radio). Reset on
-      // every method change so a stale backdate never carries through.
+      // 2026-08-12 — backdate toggle (this cart has no standalone Deni/
+      // credit radio). 2026-08-21 live report (Roy): "quick sell/bar
+      // orders has no back date when the item is in tabs drawer... not
+      // sure about bar board side" — confirmed Tab was excluded here too
+      // (unlike split-payment above, which correctly stays cash/mpesa-only
+      // — a Tab sale has no cash+mpesa split to make). Widened backdate's
+      // own gate to also include Tab; see keg_views.py::bar_board()'s
+      // matching backend fix. Reset on every method change so a stale
+      // backdate never carries through.
+      var isCashMpesaOrTab = isCashOrMpesa || this.value === 'tab';
       var bdToggleRow = document.getElementById('keg-backdate-toggle-row');
       var bdRow = document.getElementById('keg-backdate-row');
       var bdInput = document.getElementById('keg-backdated-at');
       if (bdInput) bdInput.value = '';
       if (bdRow) bdRow.style.display = 'none';
-      if (bdToggleRow) bdToggleRow.style.display = isCashOrMpesa ? 'block' : 'none';
+      if (bdToggleRow) bdToggleRow.style.display = isCashMpesaOrTab ? 'block' : 'none';
     });
   });
 

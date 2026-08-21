@@ -1886,10 +1886,13 @@
             if (pcRow) {
                 pcRow.style.display = (this.value === 'cash' || this.value === 'mpesa') ? 'block' : 'none';
             }
-            // 2026-08-07 — backdate row: direct cash/mpesa/Deni sale only
-            // (2026-08-12: widened to include direct Deni — never a Tab, an
-            // open running bill), reset whenever the method changes so a
-            // stale backdate from a previous selection never carries through.
+            // 2026-08-07 — backdate row: direct cash/mpesa/Deni sale
+            // (2026-08-12: widened to include direct Deni; 2026-08-21:
+            // widened again to also include Tab — "quick sell/bar orders
+            // has no back date when the item is in tabs drawer" — see
+            // views.py::quick_sell()'s matching backend fix), reset
+            // whenever the method changes so a stale backdate from a
+            // previous selection never carries through.
             var bdRow = document.getElementById('qsBackdateRow');
             var bdInputs = document.getElementById('qsBackdateInputs');
             var bdInput = document.getElementById('qsBackdatedAtInput');
@@ -1898,7 +1901,7 @@
             if (bdInputs) bdInputs.style.display = 'none';
             if (bdWarn) bdWarn.style.display = 'none';
             if (bdRow) {
-                bdRow.style.display = (this.value === 'cash' || this.value === 'mpesa' || this.value === 'credit') ? 'block' : 'none';
+                bdRow.style.display = (this.value === 'cash' || this.value === 'mpesa' || this.value === 'credit' || this.value === 'tab') ? 'block' : 'none';
             }
         });
     });
@@ -2033,10 +2036,11 @@
         document.getElementById('qsSplitAmountData').value = splitAmountVal;
         document.getElementById('qsSplitMethodData').value = splitMethodVal;
         // 2026-08-07 — catch-up posting: one backdated timestamp applied to
-        // the whole cart, for a direct cash/mpesa sale or (2026-08-12 live
-        // request) a direct Deni sale — never a Tab (an open running bill).
+        // the whole cart, for a direct cash/mpesa sale, a direct Deni sale
+        // (2026-08-12), or (2026-08-21 live report — "quick sell/bar
+        // orders has no back date when the item is in tabs drawer") a Tab.
         var backdatedAtVal = '';
-        if (pm === 'cash' || pm === 'mpesa' || pm === 'credit') {
+        if (pm === 'cash' || pm === 'mpesa' || pm === 'credit' || pm === 'tab') {
             var bdInputs = document.getElementById('qsBackdateInputs');
             var bdInput = document.getElementById('qsBackdatedAtInput');
             if (bdInputs && bdInputs.style.display !== 'none' && bdInput && bdInput.value) {

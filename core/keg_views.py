@@ -481,12 +481,20 @@ def bar_board(request):
         # this board's own payment options — the keg-cart payment selector
         # only ever offers Cash/M-Pesa/Tab (no standalone Deni/credit radio
         # the way Kitchen/Quick Sell have), so there is no 'credit' case to
-        # cover here. Never for Tab (an ongoing bill isn't a fixed past
-        # event) — the "not active_tab" gate is applied at each sale-
-        # creation call site below, once active_tab has actually been
-        # resolved.
+        # cover here.
+        #
+        # 2026-08-21 live report (Roy, same day, still re-entering a
+        # backdated paper sales log): "quick sell/bar orders has no back
+        # date when the item is in tabs drawer... not sure about bar board
+        # side" — confirmed Tab was excluded here too. Widened to include
+        # Tab so a backdated round added to a tab lands its Transaction on
+        # the real historical date — same reasoning as views.py::quick_sell()'s
+        # identical 2026-08-21 fix. BarTab.created_at (the true moment the
+        # tab record itself is entered into the system) is left untouched;
+        # only the sale's own Transaction (revenue/stock/debt-aging impact)
+        # gets backdated.
         bb_backdated_at = None
-        if payment_method in ('cash', 'mpesa'):
+        if payment_method in ('cash', 'mpesa', 'tab'):
             _bd_raw = (request.POST.get('backdated_at') or '').strip()
             if _bd_raw:
                 try:
@@ -654,7 +662,9 @@ def bar_board(request):
                 _sale_txn = KegBarrel.record_sale_locked(
                     barrel.id, business, preset, qty, payment_method,
                     request.user, tab=active_tab,
-                    created_at=(bb_backdated_at if bb_backdated_at and not active_tab else None),
+                    # 2026-08-21: no longer excludes a Tab sale — see the
+                    # bb_backdated_at comment above.
+                    created_at=(bb_backdated_at if bb_backdated_at else None),
                 )
             except KegBarrel.DoesNotExist:
                 continue  # depleted between fetch and lock

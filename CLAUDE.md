@@ -7623,3 +7623,52 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   access widened — plus `test_plain_staff_blocked` updated from asserting a 302 redirect to
   a JSON 403, matching the decorator removal). One migration (accounts 0064, additive). Full
   core+accounts suite re-run and confirmed passing before push.
+- Tab checkouts (Quick Sell/Bar Board/Kitchen Board) now honor the backdate toggle
+  (2026-08-21), live follow-up: Roy, re-entering a two-day paper sales log, "quick sell/bar
+  orders has no back date when the item is in tabs drawer i am not sure about the bar board
+  side." Confirmed both — all three counters' backdate mechanism (built 2026-08-07 through
+  2026-08-12) deliberately excluded Tab/food_tab/bar_tab from day one, reasoning "an open
+  running bill isn't something that already happened." That reasoning is right for the
+  TAB'S OWN lifecycle (`BarTab.created_at` — the true moment it's entered into the system —
+  is correctly left untouched) but wrong for what actually needed the correct date: the
+  SALE's own revenue/stock/debt-aging impact, which is exactly what `created_at`/`date`
+  drive everywhere else in this app. Widened the eligibility check in `views.py::
+  quick_sell()`, `keg_views.py::bar_board()`, and `kitchen_views.py::_kitchen_checkout()`
+  to include the tab payment-method values, and removed the `and not active_tab` guard at
+  every sale-creation call site so the timestamp actually reaches the underlying
+  Transaction (`KegBarrel.record_sale_locked`/`KitchenBatch.record_sale`/`ProduceBunch.
+  record_sale_locked`/plain `Transaction.objects.create` — all already handled `created_at`+
+  `date` together correctly from the 2026-08-12 date/created_at-drift fix, so no model-layer
+  change was needed, only the call sites feeding them). Frontend fix needed TWO changes per
+  template, not one — same recurring gap this app has hit before (2026-07-23 tabs-drawer,
+  2026-08-12 direct-Deni-at-checkout): the backdate row's VISIBILITY toggle and the SEPARATE
+  submit-time gate that actually puts the value in the POST body are two different code
+  paths that can silently disagree — both updated in `quick_sell.html`, `bar_board.html`
+  (kept split-payment's own `isCashOrMpesa` gate untouched, added a distinct
+  `isCashMpesaOrTab` for backdate only, since a Tab sale still has no cash+mpesa split to
+  make), and `kitchen_board.html`. Confirmed unrelated, no change needed: ad-hoc expense
+  (Matumizi ya Leo) backdating already works for ANY past date, for both owner/manager and
+  a `can_record_expenses`-delegated staffer — the `date` field has never had a lower bound,
+  only ever falls back to today when blank/invalid/future. 6 tests rewritten from
+  "backdate ignored for tab" to "backdate honored for tab" across
+  `QuickSellCatchUpBackdateTest`, `KitchenBackdatedCheckoutTest` (plain portion item +
+  KitchenBatch branch), and `BarBoardBackdatedCheckoutTest` — each now also asserts the
+  resulting `BarTabEntry` is correctly linked to the backdated `Transaction`. No migrations.
+- PWA install diagnosis (2026-08-21), live report: Roy uninstalled the app from a staff
+  Android phone and reinstalled via Chrome — "it says installing but it does not show up...
+  insistent on the add to home screen shortcut, could it be the internet was an issue."
+  Re-verified the app's own PWA config is unaffected by anything shipped since the
+  2026-08-21 real-browser audit earlier this session (manifest.json/sw.js/base.html
+  untouched) — `beforeinstallprompt` firing and zero `Page.getInstallabilityErrors` under a
+  real (non-incognito) Chromium profile still stand as the last confirmed state. Told Roy
+  his own instinct is the most likely explanation: Android's real WebAPK install (what
+  makes a true standalone app icon, as opposed to a browser bookmark) requires the phone to
+  briefly reach Google's own WebAPK-minting service at the moment "Install" is tapped —
+  distinct from just loading this app's own site — and Chrome silently falls back to
+  offering "Add to Home Screen" instead of ever explaining why when that round-trip fails,
+  which matches his exact description. No code to fix on this app's side for that failure
+  mode. Gave a concrete on-device checklist: retry on strong/stable WiFi rather than mobile
+  data; check `chrome://apps` in case it silently DID install without a launcher refresh;
+  clear Chrome's stored site data for the domain first, in case a broken install record
+  survived the earlier uninstall; confirm Chrome itself is reasonably up to date. No code
+  changes.

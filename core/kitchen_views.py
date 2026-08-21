@@ -950,12 +950,19 @@ def _kitchen_checkout(request, up, business, is_owner):
         # put customer in debt for that day... right there on the selling
         # part": widened to also cover a direct 'credit' (Deni) checkout —
         # previously required selling as cash first, then correcting to
-        # credit afterward via the Recent Payments "🤝 Deni" split. Still
-        # excludes 'food_tab'/'bar_tab' — a running bill is an open,
-        # ongoing thing, not something that already "happened" on a fixed
-        # past date; those never set active_tab=None below either way.
+        # credit afterward via the Recent Payments "🤝 Deni" split.
+        #
+        # 2026-08-21 live report (Roy, same day, re-entering a backdated
+        # paper sales log across two days): "quick sell/bar orders has no
+        # back date when the item is in tabs drawer" — confirmed
+        # 'food_tab'/'bar_tab' were excluded here too. Widened to include
+        # both — the tab's OWN creation moment (BarTab.created_at) is left
+        # untouched (that genuinely is "now," when it's entered into the
+        # system), only the sale's own Transaction (revenue/stock/debt-
+        # aging impact) gets backdated, same reasoning as views.py::
+        # quick_sell()'s and keg_views.py::bar_board()'s identical fixes.
         kb_backdated_at = None
-        if payment_method in ('cash', 'mpesa', 'credit'):
+        if payment_method in ('cash', 'mpesa', 'credit', 'food_tab', 'bar_tab'):
             _bd_raw = (request.POST.get('backdated_at') or '').strip()
             if _bd_raw:
                 try:
@@ -1149,7 +1156,9 @@ def _kitchen_checkout(request, up, business, is_owner):
                         recipient=txn_recipient,
                         preset=preset,
                         recorded_by=request.user,
-                        created_at=(kb_backdated_at if kb_backdated_at and not active_tab else None),
+                        # 2026-08-21: no longer excludes a Tab sale — see
+                        # kb_backdated_at's comment above.
+                        created_at=(kb_backdated_at if kb_backdated_at else None),
                     )
             except KitchenBatch.DoesNotExist:
                 continue
@@ -1173,7 +1182,9 @@ def _kitchen_checkout(request, up, business, is_owner):
             # settlement callbacks, so the race can't reopen at any one of them).
             txn = ProduceBunch.record_sale_locked(
                 bunch_id, business, amount, txn_pm, txn_recipient, recorded_by=request.user,
-                created_at=(kb_backdated_at if kb_backdated_at and not active_tab else None),
+                # 2026-08-21: no longer excludes a Tab sale — see
+                # kb_backdated_at's comment above.
+                created_at=(kb_backdated_at if kb_backdated_at else None),
             )
             if not txn:
                 continue
@@ -1252,8 +1263,10 @@ def _kitchen_checkout(request, up, business, is_owner):
                 preset=sale_preset,
                 # See ProduceBunch.record_sale()'s 2026-08-12 comment —
                 # Transaction.date defaults independently of created_at.
+                # 2026-08-21: no longer excludes a Tab sale — see
+                # kb_backdated_at's comment above.
                 **({'created_at': kb_backdated_at, 'date': timezone.localtime(kb_backdated_at).date()}
-                   if kb_backdated_at and not active_tab else {}),
+                   if kb_backdated_at else {}),
             )
             if active_tab:
                 BarTabEntry.objects.create(

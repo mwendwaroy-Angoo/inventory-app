@@ -3434,12 +3434,25 @@ def quick_sell(request):
         # backdating i can put customer in debt for that day... right there
         # on the selling part" — previously this required selling as cash
         # first, then correcting to credit afterward via the Recent Payments
-        # "🤝 Deni" split). Deliberately still excludes 'tab' — checked via
-        # payment_method_raw, NOT payment_method_qs, since a Tab is stored
-        # with the same payment_method='credit' value once settled/converted
-        # but is an open running bill, not something "already happened".
+        # "🤝 Deni" split).
+        #
+        # 2026-08-21 live report (Roy, still at Monsoon Inn, re-entering a
+        # paper sales log for two backdated days): "quick sell/bar orders has
+        # no back date when the item is in tabs drawer" — confirmed 'tab' was
+        # deliberately excluded here (checked via payment_method_raw, NOT
+        # payment_method_qs, since a Tab's underlying Transaction is stored
+        # with the same payment_method='credit' value once settled/
+        # converted). The original reasoning ("an open running bill isn't
+        # something that already happened") is right for the TAB'S OWN
+        # lifecycle (BarTab.created_at genuinely is "now" — the true moment
+        # it's entered into the system, left untouched below) but wrong for
+        # what actually needs the correct date: the SALE's own revenue/
+        # stock/debt-aging impact, which is exactly what created_at/date
+        # drive everywhere else in this app. Widened to include 'tab' so a
+        # backdated round added to a tab lands its Transaction on the real
+        # historical date, same as every other payment method.
         qs_backdated_at = None
-        if payment_method_raw in ("cash", "mpesa", "credit"):
+        if payment_method_raw in ("cash", "mpesa", "credit", "tab"):
             _bd_raw = request.POST.get("backdated_at", "").strip()
             if _bd_raw:
                 try:
