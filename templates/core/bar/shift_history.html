@@ -286,6 +286,16 @@
           </div>
         </div>
         {% endif %}
+        {% if r.backdated_petty_cash %}
+        <div style="margin-top:.5rem; padding:.5rem .65rem; background:rgba(192,57,90,0.06);
+                    border:1px solid rgba(192,57,90,0.2); border-radius:6px; font-size:.78rem;">
+          <div style="color:#e08aa0; font-weight:600; margin-bottom:.2rem;">🪙 Counter Cash iliyowekwa nyuma</div>
+          <div style="color:var(--pearl);">
+            Kaunta cash iliyorekodiwa baadaye kwa tarehe hii: <strong>KES {{ r.backdated_petty_cash|floatformat:0 }}</strong> —
+            tayari imepunguzwa kwenye "Inayotarajiwa" na "Tofauti" hapo juu.
+          </div>
+        </div>
+        {% endif %}
       {% endif %}
       {% if s.closing_cash_counted is not None and r.variance_after_expenses and r.variance_after_expenses|floatformat:0 != "0" %}
       <div style="margin-top:.6rem; padding:.5rem .65rem; background:rgba(201,168,76,0.06);

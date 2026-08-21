@@ -54,6 +54,32 @@ def record_petty_cash(request):
     if station not in ('bar', 'kitchen'):
         station = 'kitchen' if getattr(up, 'role', '') == 'kitchen' else 'bar'
 
+    # 2026-08-21 live report (Roy, re-entering a two-day paper log — "the
+    # counter cash backdate plus matumizi is not there on the staff's
+    # side"): PettyCash.created_at is `auto_now_add=True`, which Django
+    # enforces at the DB layer and can NEVER be overridden by application
+    # code, whatever timestamp is passed — so backdating THAT field is not
+    # possible, and every till-affecting figure (_reconcile()/
+    # till_expected_cash()) correctly, deliberately keeps reading it
+    # unchanged: a backdated counter-cash entry must never move TODAY's
+    # live till figure, only the day it's actually dated for. PettyCash.date
+    # already existed as a field but was never settable from the request —
+    # same "never blocks, never future, falls back to today" contract as
+    # record_ad_hoc_expense()'s own date field. See shift_views.py::
+    # _backdated_petty_cash_total_for_shift() for where this now reconciles
+    # (Shift History + Z-report only, mirroring Matumizi's own established,
+    # already-tested pattern — never the live till).
+    entry_date = timezone.localdate()
+    _date_raw = (request.POST.get('date') or '').strip()
+    if _date_raw:
+        try:
+            from datetime import date as _date_type
+            _parsed_date = _date_type.fromisoformat(_date_raw)
+            if _parsed_date <= timezone.localdate():
+                entry_date = _parsed_date
+        except ValueError:
+            pass
+
     # 2026-07-26 (item 1) — mismatch flag: if this staffer has an open shift, warn
     # (never block — this app never hard-blocks on a figure that could be a real,
     # legitimate withdrawal) when this entry would take total petty cash beyond
@@ -85,7 +111,7 @@ def record_petty_cash(request):
         reason=reason,
         description=description,
         recorded_by=request.user,
-        date=timezone.localdate(),
+        date=entry_date,
         station=station,
     )
     return JsonResponse({
@@ -95,6 +121,7 @@ def record_petty_cash(request):
         'reason_display': entry.get_reason_display(),
         'description': entry.description,
         'status': entry.status,
+        'date': entry.date.isoformat(),
         'warning': warning,
     })
 

@@ -5,8 +5,30 @@ window.openPettyCashModal = function() {
   document.getElementById('pc-error').style.display = 'none';
   document.getElementById('pc-reason').value = 'electricity';
   window._pcUpdateDisbursementHint();
+  var bdRow = document.getElementById('pc-backdate-row');
+  var bdInput = document.getElementById('pc-backdate-date');
+  if (bdRow) bdRow.style.display = 'none';
+  if (bdInput) bdInput.value = '';
   new bootstrap.Modal(document.getElementById('pettyCashModal')).show();
   setTimeout(function(){ document.getElementById('pc-amount').focus(); }, 300);
+};
+
+// 2026-08-21 live report (Roy — "the counter cash backdate... is not
+// there on the staff's side"): mirrors every other board's own
+// "⏰ Haya ni Mauzo ya Nyuma" toggle pattern.
+window._pcToggleBackdate = function() {
+  var row = document.getElementById('pc-backdate-row');
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? 'block' : 'none';
+  if (row.style.display === 'block') {
+    var input = document.getElementById('pc-backdate-date');
+    if (input && !input.value) {
+      var d = new Date();
+      var iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      input.value = iso;
+    }
+    if (input) input.focus();
+  }
 };
 
 // 2026-08-11 — "Fedha kwa Mtu" is the one reason that deliberately does
@@ -45,7 +67,13 @@ window._submitPettyCash = function() {
   // is ever opened. Left unset on Quick Sell — the server falls back to the
   // recording staffer's own role there. See PettyCash.station's docstring.
   var station = window.PETTY_CASH_STATION || '';
-  var body = new URLSearchParams({amount: amount, reason: reason, description: desc, station: station, csrfmiddlewaretoken: csrf});
+  var bdRow = document.getElementById('pc-backdate-row');
+  var bdDate = '';
+  if (bdRow && bdRow.style.display !== 'none') {
+    var bdInput = document.getElementById('pc-backdate-date');
+    if (bdInput && bdInput.value) bdDate = bdInput.value;
+  }
+  var body = new URLSearchParams({amount: amount, reason: reason, description: desc, station: station, date: bdDate, csrfmiddlewaretoken: csrf});
   fetch('/petty-cash/record/', {method: 'POST', body: body, headers: {'X-CSRFToken': csrf}})
     .then(function(r){ return r.json(); })
     .then(function(d){

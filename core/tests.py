@@ -21848,13 +21848,19 @@ class KitchenStockReceiptAutoCloseTest(TestCase):
         self.assertEqual(receipt.status, 'DONE')
 
         # A backdated sale, entered AFTER the auto-close, dated to when it
-        # actually happened (before the close).
-        from datetime import datetime, time as _time
-        backdated_date = receipt.received_on
+        # actually happened (before the close). Anchored a moment before
+        # "now" (not a hardcoded wall-clock hour like 10:00, which slips
+        # into the FUTURE relative to whenever the suite actually runs —
+        # the same day-boundary/time-of-day flakiness class already
+        # documented elsewhere in this file: PettyCashReviewUndoTest,
+        # BarZReportOverlappingShiftsTest, AdHocExpenseDayReconciliationTest)
+        # — still guaranteed to land on received_on's own calendar day
+        # (today) and strictly before closed_at (stamped at "now" a moment
+        # later by maybe_auto_close() above).
         Transaction.objects.create(
             business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
             sale_amount=Decimal('150'), payment_method='cash',
-            created_at=timezone.make_aware(datetime.combine(backdated_date, _time(10, 0))),
+            created_at=timezone.now() - timedelta(minutes=1),
         )
         self.assertEqual(receipt.total_revenue(), Decimal('150'))
 
@@ -37027,6 +37033,225 @@ class AdHocExpenseDayReconciliationTest(TestCase):
         resp = self.client.get('/bar/z-report/')
         # Must be exactly 300 (deduped), not 600 (double-counted across two shifts)
         self.assertEqual(resp.context['day_ad_hoc_expenses'], 300.0)
+
+
+class PettyCashBackdateTest(TestCase):
+    """2026-08-21 live report (Roy, re-entering a two-day paper log — "the
+    counter cash backdate plus matumizi is not there on the staff's
+    side"): PettyCash.created_at is auto_now_add=True — Django enforces
+    this at the DB layer, so it can NEVER be backdated, and the live till
+    figures (_reconcile()/till_expected_cash()) correctly keep reading it
+    unchanged. PettyCash.date is now settable from the request and
+    reconciles ADDITIVELY against Shift History/Z-report for the day it's
+    actually dated for — mirroring AdHocExpenseDayReconciliationTest's own
+    already-proven pattern exactly, with the one real difference PettyCash
+    forces: a same-day (non-backdated) entry is ALREADY counted by
+    _reconcile()'s own created_at-based query, so the new fold-in must
+    exclude it or double-count."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='PC Backdate Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='pcbd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='pcbd_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='PCBD-01', unit='Bottle', selling_price=Decimal('200'),
+        )
+
+    def _record_petty_cash(self, user=None, **overrides):
+        self.client.force_login(user or self.owner)
+        payload = {'amount': '200', 'reason': 'electricity', 'description': '', 'station': 'bar', 'date': ''}
+        payload.update(overrides)
+        return self.client.post('/petty-cash/record/', payload)
+
+    def _make_closed_shift(self, cash=1000, counted=1000, station='bar', staff=None):
+        staff = staff or self.staff
+        today_10am = timezone.localtime().replace(hour=10, minute=0, second=0, microsecond=0)
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=staff,
+            opening_float=Decimal('0'), status='CLOSED', station=station,
+            started_at=today_10am,
+            ended_at=today_10am + timedelta(hours=1),
+            closing_cash_counted=Decimal(str(counted)),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal(str(cash)),
+            payment_method='cash', created_at=shift.started_at,
+        )
+        return shift
+
+    def _make_petty_cash(self, created_at, **kwargs):
+        """PettyCash.created_at is auto_now_add=True — Django silently
+        ignores any explicit value passed to .create()/.__init__(), always
+        stamping the real "now" instead (the same enforced behaviour this
+        whole feature relies on for the live till figures). A test that
+        needs to simulate an entry recorded at a SPECIFIC past/different
+        real moment must create it normally, then force the timestamp via
+        a raw .update() — which bypasses auto_now_add's special-casing
+        entirely, unlike .save()/.create()."""
+        entry = PettyCash.objects.create(**kwargs)
+        PettyCash.objects.filter(id=entry.id).update(created_at=created_at)
+        entry.refresh_from_db()
+        return entry
+
+    def test_staff_can_record_a_backdated_entry(self):
+        old_date = (timezone.localdate() - timedelta(days=2)).isoformat()
+        resp = self._record_petty_cash(user=self.staff, amount='150', date=old_date)
+        self.assertTrue(resp.json()['ok'], resp.json())
+        entry = PettyCash.objects.get(business=self.biz)
+        self.assertEqual(entry.date.isoformat(), old_date)
+        self.assertEqual(entry.recorded_by, self.staff)
+        # created_at genuinely cannot be backdated (auto_now_add) — it's
+        # the real moment this was entered, always "now".
+        self.assertGreater(entry.created_at, timezone.now() - timedelta(minutes=5))
+
+    def test_no_date_param_defaults_to_today(self):
+        resp = self._record_petty_cash(amount='100')
+        self.assertTrue(resp.json()['ok'])
+        entry = PettyCash.objects.get(business=self.biz)
+        self.assertEqual(entry.date, timezone.localdate())
+
+    def test_future_date_falls_back_to_today_not_blocked(self):
+        future = (timezone.localdate() + timedelta(days=3)).isoformat()
+        resp = self._record_petty_cash(amount='100', date=future)
+        self.assertTrue(resp.json()['ok'])
+        entry = PettyCash.objects.get(business=self.biz)
+        self.assertEqual(entry.date, timezone.localdate())
+
+    def test_backdated_total_for_shift_excludes_already_counted_same_day_entry(self):
+        from core.shift_views import _backdated_petty_cash_total_for_shift
+        shift = self._make_closed_shift()
+        # Recorded live, during the shift's own window — already counted by
+        # _reconcile()'s own created_at-based query; must NOT double-count.
+        self._make_petty_cash(
+            shift.started_at + timedelta(minutes=5),
+            business=self.biz, amount=Decimal('120'), reason='fuel', station='bar',
+            recorded_by=self.staff, status='approved', date=timezone.localdate(),
+        )
+        self.assertAlmostEqual(_backdated_petty_cash_total_for_shift(shift), 0.0, places=1)
+
+    def test_backdated_total_for_shift_counts_a_genuinely_backdated_entry(self):
+        from core.shift_views import _backdated_petty_cash_total_for_shift
+        shift = self._make_closed_shift()
+        # Dated for the shift's own day, but recorded at a real, LATER
+        # moment (well after the shift's own window) — the genuine
+        # backdated-catch-up case.
+        self._make_petty_cash(
+            shift.ended_at + timedelta(hours=3),
+            business=self.biz, amount=Decimal('180'), reason='fuel', station='bar',
+            recorded_by=self.staff, status='approved',
+            date=timezone.localtime(shift.started_at).date(),
+        )
+        self.assertAlmostEqual(_backdated_petty_cash_total_for_shift(shift), 180.0, places=1)
+
+    def test_pending_or_rejected_backdated_entry_not_counted(self):
+        from core.shift_views import _backdated_petty_cash_total_for_shift
+        shift = self._make_closed_shift()
+        for status in ('pending', 'rejected'):
+            self._make_petty_cash(
+                shift.ended_at + timedelta(hours=3),
+                business=self.biz, amount=Decimal('999'), reason='fuel', station='bar',
+                recorded_by=self.staff, status=status,
+                date=timezone.localtime(shift.started_at).date(),
+            )
+        self.assertAlmostEqual(_backdated_petty_cash_total_for_shift(shift), 0.0, places=1)
+
+    def test_backdated_entry_for_a_different_day_excluded(self):
+        from core.shift_views import _backdated_petty_cash_total_for_shift
+        shift = self._make_closed_shift()
+        old_day = timezone.localtime(shift.started_at).date() - timedelta(days=10)
+        self._make_petty_cash(
+            shift.ended_at + timedelta(hours=3),
+            business=self.biz, amount=Decimal('999'), reason='fuel', station='bar',
+            recorded_by=self.staff, status='approved', date=old_day,
+        )
+        self.assertAlmostEqual(_backdated_petty_cash_total_for_shift(shift), 0.0, places=1)
+
+    def test_shift_history_shows_adjusted_expected_cash_for_backdated_entry(self):
+        shift = self._make_closed_shift(cash=1000, counted=1000)
+        self._make_petty_cash(
+            shift.ended_at + timedelta(hours=3),
+            business=self.biz, amount=Decimal('300'), reason='fuel', station='bar',
+            recorded_by=self.staff, status='approved',
+            date=timezone.localtime(shift.started_at).date(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/history/')
+        rec = resp.context['rows'][0]['rec']
+        self.assertEqual(rec['backdated_petty_cash'], 300.0)
+        # Expected cash 1000 - 300 backdated petty cash = 700; counted 1000 → variance +300
+        self.assertEqual(rec['expected_cash_after_expenses'], 700.0)
+        self.assertEqual(rec['variance_after_expenses'], 300.0)
+        self.assertEqual(rec['variance'], 0.0)  # original, un-adjusted variance untouched
+
+    def test_bar_z_report_shows_day_backdated_petty_cash(self):
+        # A real backdated-catch-up scenario needs a shift from a PAST day
+        # (staff catching up TODAY on a shift that closed yesterday) — an
+        # entry dated for TODAY but genuinely created a few hours later
+        # SAME day (as in the per-shift tests above) is correctly treated
+        # as an ordinary same-day entry at the DAY level (already counted
+        # by day_petty_cash's own created_at__range=today query), not a
+        # backdated one — the day-level window is the WHOLE day, wider
+        # than any one shift's own narrow segment.
+        past_day = timezone.localdate() - timedelta(days=1)
+        past_10am = timezone.make_aware(
+            timezone.datetime.combine(past_day, timezone.datetime.min.time().replace(hour=10))
+        )
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            opening_float=Decimal('0'), status='CLOSED', station='bar',
+            started_at=past_10am, ended_at=past_10am + timedelta(hours=1),
+            closing_cash_counted=Decimal('1000'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('1000'),
+            payment_method='cash', created_at=shift.started_at,
+        )
+        # Recorded normally TODAY (created_at naturally defaults to now —
+        # no forcing needed) but dated for YESTERDAY, the real catch-up shape.
+        PettyCash.objects.create(
+            business=self.biz, amount=Decimal('250'), reason='fuel', station='bar',
+            recorded_by=self.staff, status='approved', date=past_day,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/z-report/', {'date': past_day.isoformat()})
+        self.assertEqual(resp.context['day_backdated_petty_cash'], 250.0)
+        self.assertEqual(resp.context['day_expected_cash'], 750.0)
+        # Today's OWN report must show none of it.
+        resp_today = self.client.get('/bar/z-report/')
+        self.assertEqual(resp_today.context['day_backdated_petty_cash'], 0.0)
+
+    def test_live_shift_panel_and_close_shift_unaffected_by_backdated_entry(self):
+        """Regression lock, same contract as ad-hoc expenses: _reconcile()
+        itself (the live in-progress panel + moment-of-close comparison)
+        must stay completely untouched by a genuinely backdated entry."""
+        from core.shift_views import _reconcile
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            opening_float=Decimal('0'), status='OPEN', station='bar',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('1000'),
+            payment_method='cash', created_at=shift.started_at,
+        )
+        self._make_petty_cash(
+            timezone.now() - timedelta(days=1),
+            business=self.biz, amount=Decimal('400'), reason='fuel', station='bar',
+            recorded_by=self.staff, status='approved',
+            date=timezone.localtime(shift.started_at).date(),
+        )
+        rec = _reconcile(shift)
+        self.assertEqual(rec['expected_cash'], 1000.0)
+        self.client.force_login(self.staff)
+        resp = self.client.get('/bar/shift/active/')
+        data = resp.json()
+        self.assertEqual(data['shift']['expected_cash'], 1000.0)
 
 
 class AdHocExpenseEditRecoverTest(TestCase):

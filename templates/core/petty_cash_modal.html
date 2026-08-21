@@ -41,6 +41,21 @@
           <input type="text" id="pc-description" placeholder="e.g. Tokens za KPLC 100 units"
                  style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.82rem;">
         </div>
+        <!-- 2026-08-21 live report (Roy — "the counter cash backdate...
+             is not there on the staff's side"): the date this entry
+             REALLY happened, for catching up a paper log. Only Shift
+             History / Z-report re-reconcile against the chosen day — this
+             never touches today's live till figure (Counter Cash's own
+             own "already left the drawer" number never depends on it). -->
+        <button type="button" id="pc-backdate-toggle" class="btn btn-sm" style="font-size:.72rem;padding:.2rem .5rem;background:rgba(93,168,240,.08);border:1px solid rgba(93,168,240,.3);color:#5da8f0;margin-bottom:.5rem;"
+                onclick="window._pcToggleBackdate()">
+          🕐 Hii ilitokea siku nyingine (jana n.k.)
+        </button>
+        <div id="pc-backdate-row" style="display:none;margin-bottom:.5rem;">
+          <label style="color:#b0b0b0;font-size:.78rem;display:block;margin-bottom:.2rem;">Tarehe Halisi</label>
+          <input type="date" id="pc-backdate-date"
+                 style="width:100%;background:#111;border:1px solid #333;border-radius:6px;color:#f0ece4;padding:.4rem .6rem;font-size:.85rem;">
+        </div>
         <div id="pc-error" style="display:none;color:#c0395a;font-size:.8rem;margin-top:.35rem;"></div>
       </div>
       <div class="modal-footer" style="border-top:1px solid #333;padding:.75rem;">

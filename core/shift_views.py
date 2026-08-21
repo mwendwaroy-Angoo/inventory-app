@@ -685,6 +685,55 @@ def _ad_hoc_expense_total_for_shift(shift):
     return float(qs.aggregate(t=Sum('amount'))['t'] or 0)
 
 
+def _backdated_petty_cash_total_for_shift(shift):
+    """Sum of GENUINELY backdated, approved PettyCash (Counter Cash) entries
+    dated on any calendar day this shift's own active segments touch,
+    station-scoped the same way petty cash is in _reconcile().
+
+    2026-08-21 live report (Roy, re-entering a two-day paper log): mirrors
+    _ad_hoc_expense_total_for_shift()'s own pattern exactly, with one real
+    difference PettyCash forces: unlike BusinessExpense (which _reconcile()
+    never reads at all, so folding in its WHOLE total here is always safe),
+    _reconcile()'s own `_petty_qs` ALREADY sums PettyCash by `created_at`
+    within this same shift's segments — so a plain, non-backdated entry
+    recorded live during this shift is already counted once, in rec[
+    'petty_cash']. Naively summing every PettyCash `date`-matching this
+    shift's day range here would double-count that entry. Excludes any
+    entry whose `created_at` already falls inside this shift's own live
+    segments (`_petty_qs`'s exact query) — what's left is, by construction,
+    only entries recorded at some OTHER real moment (almost always: later
+    the same or a following day, catching up a backdated paper log) but
+    dated for a day this shift covers.
+
+    Never folded into _reconcile() itself, which also backs the LIVE
+    in-progress shift panel and the moment-of-close comparison — those keep
+    showing exactly the live, un-adjusted figure staff actually compared
+    their physical count against; only Shift History and the Z-report
+    recompute with this on top, additively, at display time — see
+    _ad_hoc_expense_total_for_shift()'s docstring for the same reasoning.
+    """
+    end = shift.ended_at or timezone.now()
+    segments = _shift_active_segments(shift, end)
+    if not segments:
+        return 0.0
+    date_min = min(timezone.localtime(s).date() for s, _e in segments)
+    date_max = max(timezone.localtime(e).date() for _s, e in segments)
+    try:
+        staff_role = shift.staff.userprofile.role
+    except Exception:
+        staff_role = 'staff'
+    already_counted_ids = set(
+        PettyCash.objects.filter(_segments_q('created_at', segments), business=shift.business)
+        .values_list('id', flat=True)
+    )
+    qs = PettyCash.objects.filter(
+        business=shift.business, status='approved', date__range=(date_min, date_max),
+    ).exclude(id__in=already_counted_ids)
+    if staff_role != 'owner':
+        qs = qs.filter(station=_shift_station(shift))
+    return float(qs.aggregate(t=Sum('amount'))['t'] or 0)
+
+
 def till_expected_cash(business, station, as_of=None):
     """Live, continuous "how much cash SHOULD be sitting in this till right
     now" for one station ('bar' or 'kitchen') — independent of shift
@@ -2779,8 +2828,14 @@ def shift_history(request):
         # _reconcile() itself (which the live in-progress panel also reads).
         expense_total = _ad_hoc_expense_total_for_shift(shift)
         rec['ad_hoc_expenses'] = round(expense_total, 2)
-        if expense_total:
-            rec['expected_cash_after_expenses'] = round(rec['expected_cash'] - expense_total, 2)
+        # 2026-08-21 — same additive display-time fold-in for genuinely
+        # backdated Counter Cash entries, see
+        # _backdated_petty_cash_total_for_shift()'s own docstring.
+        backdated_petty_total = _backdated_petty_cash_total_for_shift(shift)
+        rec['backdated_petty_cash'] = round(backdated_petty_total, 2)
+        total_corrections = expense_total + backdated_petty_total
+        if total_corrections:
+            rec['expected_cash_after_expenses'] = round(rec['expected_cash'] - total_corrections, 2)
             rec['variance_after_expenses'] = (
                 round(float(shift.closing_cash_counted) - rec['expected_cash_after_expenses'], 2)
                 if shift.closing_cash_counted is not None else None

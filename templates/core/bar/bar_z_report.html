@@ -215,6 +215,12 @@
         <span class="info-val" style="color:#e08aa0;">&#8722; KES {{ day_ad_hoc_expenses|floatformat:0 }}</span>
       </div>
       {% endif %}
+      {% if day_backdated_petty_cash > 0 %}
+      <div class="info-row">
+        <span class="info-label">🪙 Counter Cash iliyowekwa nyuma</span>
+        <span class="info-val" style="color:#e08aa0;">&#8722; KES {{ day_backdated_petty_cash|floatformat:0 }}</span>
+      </div>
+      {% endif %}
       <div class="info-row" style="border-top:1px solid rgba(201,168,76,.15);margin-top:.3rem;padding-top:.45rem;">
         <span class="info-label">Expected drawer</span>
         <span class="info-val">KES {{ day_expected_cash|floatformat:0 }}</span>
@@ -256,7 +262,12 @@
           <td style="color:#b0b0b0;">{{ row.credit_sales|floatformat:0 }}</td>
           <td style="color:var(--gold);font-weight:600;">{{ row.total_sales|floatformat:0 }}</td>
           <td style="color:#ffb74d;">{% if row.petty_cash > 0 %}{{ row.petty_cash|floatformat:0 }}{% else %}—{% endif %}</td>
-          <td style="color:#e08aa0;">{% if row.ad_hoc_expenses > 0 %}{{ row.ad_hoc_expenses|floatformat:0 }}{% else %}—{% endif %}</td>
+          <td style="color:#e08aa0;">
+            {% if row.ad_hoc_expenses > 0 or row.backdated_petty_cash > 0 %}
+              {{ row.ad_hoc_expenses|add:row.backdated_petty_cash|floatformat:0 }}
+              {% if row.backdated_petty_cash > 0 %}<span style="font-size:.7rem;color:#b0b0b0;" title="Inajumuisha Counter Cash iliyowekwa nyuma">🕐</span>{% endif %}
+            {% else %}—{% endif %}
+          </td>
           <td>{{ row.expected_cash_after_expenses|floatformat:0 }}</td>
           <td>
             {% if row.closing_counted is not None %}

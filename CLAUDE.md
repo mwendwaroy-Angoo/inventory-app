@@ -7672,3 +7672,62 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   clear Chrome's stored site data for the domain first, in case a broken install record
   survived the earlier uninstall; confirm Chrome itself is reasonably up to date. No code
   changes.
+- Counter Cash (Petty Cash) backdate + Kuku preset-correction guidance (2026-08-21, live
+  follow-up mid-catch-up-entry). Roy: "the counter cash backdate plus matumizi is not there
+  on the staff's side" — while separately mistakenly selecting "Drumstick" instead of "Half
+  Chicken Leg" on Kuku (both KES 150, easy to confuse) and asking for a revert-and-redo.
+  **Kuku correction — no code needed, existing tool**: `correct_transaction_preset()`
+  ("🔄 Kipande" button, already visible on every direct-sale row in the "🕐 Malipo ya Hivi
+  Karibuni" panel) reassigns BOTH `Transaction.preset` AND `Transaction.qty` together in
+  place — fixes the wrong attribution AND auto-corrects the balance in one tap, without
+  touching the already-correct backdated timestamp at all. Recommended over a revert-and-
+  redo (safer, faster, no risk of a second mistake on re-entry). Separately, "Drumstick" is
+  a leftover preset from the old Meatco per-cut era, no longer part of this business's
+  current stocking pattern — `Transaction.preset` is `on_delete=SET_NULL` (migration 0133),
+  so Roy can safely delete it from Kuku's Edit Item preset table without touching any
+  historical revenue/cost data. **Counter Cash backdate — genuinely missing, built now**:
+  `PettyCash.created_at` is `auto_now_add=True`, which Django enforces at the DB layer and
+  can NEVER be overridden by application code — every till-affecting figure (`_reconcile()`/
+  `till_expected_cash()`) correctly, deliberately keeps reading it unchanged, so a backdated
+  Counter Cash entry must never move TODAY's live till. `PettyCash.date` already existed as
+  a field but was never settable from the request — `record_petty_cash()` now accepts an
+  optional `date` (same "never blocks, never future, falls back to today" contract as
+  `record_ad_hoc_expense()`'s own). New `shift_views._backdated_petty_cash_total_for_shift()`
+  mirrors `_ad_hoc_expense_total_for_shift()`'s exact pattern (additive fold-in at Shift
+  History/Z-report display time only, never the live in-progress panel or till), with one
+  real difference PettyCash forces: unlike `BusinessExpense` (never read by `_reconcile()`
+  at all), `_reconcile()`'s own `_petty_qs` ALREADY sums approved `PettyCash` by
+  `created_at` within the shift's segments — so the new fold-in explicitly excludes any
+  entry whose `created_at` already falls inside the shift's own live window (already
+  counted once), leaving only genuinely backdated entries (recorded at some OTHER real
+  moment, dated for a day this shift covers). Wired into `shift_history()` (per-row
+  `backdated_petty_cash`, folded into the existing `expected_cash_after_expenses`/
+  `variance_after_expenses` alongside ad-hoc expenses) and `bar_z_report()` (per-shift +
+  a deduped DAY-level query, same overlap-safe pattern as `day_cash`/`day_ad_hoc_expenses`).
+  New "🕐 Hii ilitokea siku nyingine" toggle on the shared `petty_cash_modal.html`/
+  `petty_cash_js.html` (included by all three boards — Bar/Kitchen/Quick Sell — so this
+  fixes staff access everywhere at once, no per-board change needed; petty cash recording
+  has never had any permission gate, confirmed already staff-usable, only backdating was
+  the real gap). Separately confirmed unrelated: `record_ad_hoc_expense`'s own permission
+  gate (`can_record_expenses`, shipped earlier the same day) — its button/modal include is
+  gated per-staffer in Staff Permissions; Shavel Atis's board correctly hid it because the
+  toggle hadn't been switched on for her yet, not a bug — told Roy to enable it there if he
+  wants a specific staffer to have Matumizi. **Bonus test-suite fix, unrelated, found by
+  the full-suite run**: `KitchenStockReceiptAutoCloseTest.test_backdated_sale_still_counts_
+  after_auto_close` hardcoded a fixed "10:00" wall-clock anchor for its backdated
+  transaction — the same day-boundary/time-of-day flakiness class already documented
+  repeatedly in this file (`PettyCashReviewUndoTest`, `BarZReportOverlappingShiftsTest`,
+  `AdHocExpenseDayReconciliationTest`) — genuinely fails when the suite happens to run
+  before 10am Nairobi time, since the transaction's timestamp then lands AFTER
+  `maybe_auto_close()`'s own `closed_at` (stamped at real "now"), pushing it outside the
+  receipt's revenue window; fixed by anchoring to `timezone.now() - timedelta(minutes=1)`
+  instead, same fix pattern as the other three. 10 new tests (`PettyCashBackdateTest`) —
+  staff can record a backdated entry, no-date/future-date fallback, the already-counted-
+  same-day-entry exclusion (the core double-count-prevention logic), a genuinely backdated
+  entry counted correctly, pending/rejected entries never counted, a different-day entry
+  excluded, Shift History's adjusted expected-cash/variance, the Z-report's day-level
+  figure (built around a realistic past-day shift + today's catch-up entry, not a same-day
+  fixture — the day-level window is the WHOLE day, wider than any one shift's own narrow
+  segment, a real design nuance the first draft of this test got wrong), and the live-
+  panel/close-shift regression lock mirroring `AdHocExpenseDayReconciliationTest`'s own.
+  No migrations (`PettyCash.date` already existed).
