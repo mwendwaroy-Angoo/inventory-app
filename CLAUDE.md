@@ -7570,3 +7570,56 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   scenario end-to-end (portion via Gawa Kuku, sell one cut, assert both presets stay visible
   and `hidden_presets` is empty) — before the fix, this test failed exactly as Roy described.
   No migrations.
+- Kitchen preset visibility — decisive fix + delegated ad-hoc expense recording, same-day
+  urgent live follow-up (2026-08-21, Roy on-site at Monsoon Inn, mid-service, blocked). Live
+  screenshot showed Kuku's tile at "KES 0" with "4 zimefichwa" AGAIN — every preset hidden,
+  cart falling back to a bare preset-less "Kuku KES 0" line, minutes after the Gawa Kuku
+  receiving-gap fix above shipped. Roy: "this going in circles everytime we change something
+  really sucks." Root cause was structural, not a missed receiving source this time: `_is_
+  visible(p)`'s gate — "show this preset only while its own received-minus-SOLD net anchor
+  tally is positive" — has too many independent ways to legitimately drift negative (a
+  deleted receipt, a tether added after old sales, a receiving mechanism the gate didn't
+  know about yet, backdated catch-up sales) while the item's own real, authoritative
+  `current_balance()` stays positive; every fix so far (2026-08-09, 2026-08-11 ×2,
+  2026-08-12, 2026-08-21 earlier today) only taught the gate about one MORE receiving
+  source, which just delays the next drift-triggered outage instead of closing the class of
+  bug. Decisive fix: `_is_visible()` no longer nets received-minus-sold at all — a preset
+  that has EVER been genuinely received under this item's per-cut regime (`ever_received`,
+  `anchor in _received_by_preset` — still respects the original 2026-08-09 "never fabricate
+  a preset that was never actually stocked" concern, locked in by the pre-existing
+  `test_ledger_drift_hides_rather_than_fabricates`) now stays SELLABLE for as long as
+  `item.stock_balance > 0` — real physical stock is the only gate a busy kitchen genuinely
+  needs; the net tally is demoted to purely an owner-only diagnostic (`hidden_presets`,
+  unchanged) rather than a hard block on the sell button. A preset truly never received
+  under this item's own regime, or an item that's genuinely fully depleted
+  (`current_balance() <= 0`), both still correctly hide — regression-locked by the two
+  pre-existing tests of that exact shape, both re-run and confirmed still passing unmodified.
+  New `test_ever_received_preset_stays_sellable_when_net_anchor_drifts_negative` reproduces
+  the drift directly (extra stock via a plain no-preset Receipt, then enough sold via the
+  tethered preset to push the net tally negative while real balance stays positive) and
+  asserts both presets stay visible. Second live ask, same message: "the staff have no way
+  of back dating expenses... I have been left with lots of recordings of both yesterday and
+  today." `record_ad_hoc_expense()`/`ad_hoc_expenses_list()` (Matumizi ya Leo, 2026-08-09)
+  have always supported a `date` field — the gap was pure ACCESS, both were `@owner_or_
+  manager_required` with zero delegation option. New `UserProfile.can_record_expenses`
+  (accounts migration 0064, default False, opt-in — matching `can_adjust_stock`/
+  `can_manage_kegs`/every other delegated-oversight toggle in this app) lets the owner grant
+  a trusted staffer this specific action. Removed `@owner_or_manager_required` from `record_
+  ad_hoc_expense` (a decorator built for full-page views — HTML-redirects on failure, wrong
+  for this AJAX/JSON-only endpoint, the same latent bug class already fixed once for
+  `adjust_stock_balance`, 2026-08-11) in favor of an inline, JSON-friendly check requiring an
+  open shift for the delegated staffer, same pattern as `can_adjust_stock`. `ad_hoc_expenses_
+  list()` (read) widened the same way so a delegated staffer can see what they've already
+  logged for the day without needing the owner. `edit_ad_hoc_expense` (correcting an
+  already-recorded entry) deliberately stays owner/manager-only, matching the established
+  "delegation covers the everyday action, correction stays a higher tier" pattern
+  (`can_manage_kegs` not extending to Hariri/Tupa). Both `bar_board.html`/`kitchen_board.html`
+  widened their Matumizi button/readout/modal-include gate from `is_owner` to the new
+  `can_record_expenses` context var (`is_owner_or_manager or up.can_record_expenses`), passed
+  from `bar_board()`/`kitchen_board()`'s own render context. 9 new tests
+  (`test_ever_received_preset_stays_sellable_when_net_anchor_drifts_negative` on
+  `PresetStockTrackingTetherTest`; `AdHocExpenseTest` gained 4 new tests — delegated-staff
+  record, delegated-without-shift blocked, backdate still works for delegated staff, list
+  access widened — plus `test_plain_staff_blocked` updated from asserting a 302 redirect to
+  a JSON 403, matching the decorator removal). One migration (accounts 0064, additive). Full
+  core+accounts suite re-run and confirmed passing before push.

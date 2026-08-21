@@ -554,6 +554,20 @@ class UserProfile(models.Model):
         ),
     )
 
+    can_record_expenses = models.BooleanField(
+        default=False,
+        help_text=(
+            '2026-08-21 live request (Roy, on-site at Monsoon Inn — "the staff have no way '
+            'of back dating expenses... I have been left with lots of recordings"): staff may '
+            'record an ad-hoc/backdated expense (Matumizi ya Leo) on the Bar/Kitchen board. '
+            'Owner/manager-only by default. record_ad_hoc_expense() already supports backdating '
+            'via its date field — the gap was pure ACCESS, not the backdating capability itself. '
+            'Correcting an already-recorded entry (edit_ad_hoc_expense) stays owner/manager-only, '
+            'matching the same higher-tier-for-corrections pattern as can_manage_kegs not '
+            'extending to Hariri/Tupa. Still requires the staffer to have an open shift.'
+        ),
+    )
+
     # ── Session Control ────────────────────────────────────────────────
     current_session_key = models.CharField(
         max_length=40, blank=True,

@@ -382,11 +382,35 @@ def recurring_expense_confirm(request):
 # Batch cost correction).
 
 @login_required
-@owner_or_manager_required
 @require_POST
 def record_ad_hoc_expense(request):
+    """
+    2026-08-21 live request (Roy, on-site at Monsoon Inn — "the staff have no
+    way of back dating expenses... I have been left with lots of recordings
+    of both yesterday and today"): previously gated by @owner_or_manager_
+    required — a decorator built for full-page views, HTML-redirects on
+    failure, wrong for this AJAX/JSON-only endpoint (same latent bug class
+    already fixed once for adjust_stock_balance, 2026-08-11). Removed the
+    decorator; the permission check now lives inline (JSON-friendly) and
+    additionally accepts UserProfile.can_record_expenses for a delegated
+    staffer, same pattern as can_adjust_stock/can_manage_kegs. Backdating
+    itself was never the gap — this view has supported an explicit `date`
+    field since 2026-08-09 — the gap was pure access.
+    """
     up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Not authenticated.'}, status=403)
     business = up.business
+
+    is_owner = getattr(up, 'is_owner_or_manager', False)
+    if not is_owner:
+        if not getattr(up, 'can_record_expenses', False):
+            return JsonResponse({'ok': False, 'error': 'Ruhusa ya kurekodi matumizi inahitajika.'}, status=403)
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'}, status=403,
+            )
 
     from core.idempotency import claim_checkout_token
     idem_token = (request.POST.get('idempotency_token') or '').strip()
@@ -454,13 +478,21 @@ def record_ad_hoc_expense(request):
 
 
 @login_required
-@owner_or_manager_required
 def ad_hoc_expenses_list(request):
     """Read-only — the ad-hoc expenses recorded for one station+date, so a
     wrong entry (most often a wrong DATE, per Roy's 2026-08-09 live report)
     can actually be found in order to correct it via edit_ad_hoc_expense()
-    below. Owner/manager only, matching the recording permission tier."""
+    below. 2026-08-21: widened from owner/manager-only to also allow a
+    delegated staffer (can_record_expenses) — matching the recording
+    permission tier, so someone entering a backlog of their own expenses
+    can see what they've already logged for the day without needing the
+    owner. Editing an existing entry stays owner/manager-only (see
+    edit_ad_hoc_expense's own docstring)."""
     up = get_user_profile(request)
+    if not up:
+        return JsonResponse({'expenses': []})
+    if not (getattr(up, 'is_owner_or_manager', False) or getattr(up, 'can_record_expenses', False)):
+        return JsonResponse({'expenses': []})
     business = up.business
     station = (request.GET.get('station') or '').strip()
     if station not in ('bar', 'kitchen'):

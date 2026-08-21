@@ -35432,6 +35432,53 @@ class PresetStockTrackingTetherTest(TestCase):
         self.assertNotIn('Wing', labels, "must never fabricate a preset that was never received")
         self.assertNotIn('Drumstick', labels)
 
+    def test_ever_received_preset_stays_sellable_when_net_anchor_drifts_negative(self):
+        """2026-08-21 live report #2, same day as the Gawa Kuku fix (Roy,
+        Monsoon Inn, live and mid-service, blocked from selling chicken at
+        all): "this going in circles everytime we change something really
+        sucks." The received-vs-sold NET anchor tally
+        (test_selling_enough_half_legs_hides_both_presets above) has too
+        many independent ways to legitimately drift negative while the
+        item's own real, authoritative balance stays positive — every fix
+        so far has only taught the gate about one more receiving source
+        (KitchenStockReceiptLine, then PortioningEventLine), which just
+        delays the next drift-triggered outage instead of closing the
+        class of bug. Decisive fix: a preset that has EVER been genuinely
+        received (`ever_received`) now stays sellable for as long as
+        item.current_balance() is still positive — the net tally no longer
+        gates the sell button at all, only the owner-only diagnostic.
+        Reproduces the drift directly: extra stock arrives via a route the
+        per-preset ledger doesn't track (a plain Receipt with no preset —
+        the exact same drift source as test_ledger_drift_hides_rather_than_
+        fabricates above), then enough is sold via the tethered preset to
+        push the net tally negative while real balance stays positive."""
+        self._receive_full_legs(qty=1, cost=200)
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('5'),
+            recorded_by=self.owner, invoice_no='PLAIN-TOPUP-2',
+        )
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), Decimal('6'))
+        import json as _json
+        cart = _json.dumps([{
+            'item_id': self.kuku.id, 'preset_id': self.half_leg.id,
+            'qty': 0.5, 'amount': 150, 'description': 'Kuku — Half Chicken Leg',
+        }])
+        for _i in range(3):
+            resp = self.client.post('/kitchen/', {'cart': cart, 'payment_method': 'cash'})
+            self.assertTrue(resp.json().get('ok'), resp.json())
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), Decimal('4.5'), "real stock still sits unsold")
+
+        resp2 = self.client.get('/kitchen/')
+        items = self._portion_items_blob(resp2.content.decode())
+        kuku = next(i for i in items if i['id'] == self.kuku.id)
+        labels = [p['label'] for p in kuku['presets']]
+        self.assertIn('Full Chicken Leg', labels, "must not vanish while real stock (4.5) sits unsold")
+        self.assertIn('Half Chicken Leg', labels)
+        # Wing was never received at all — still correctly hidden, unchanged.
+        self.assertNotIn('Wing', labels)
+
     def test_genuinely_depleted_item_still_hides_all_presets(self):
         """The fully-sold case correctly hides every preset."""
         self._receive_full_legs(qty=1, cost=200)
@@ -36619,9 +36666,67 @@ class AdHocExpenseTest(TestCase):
         self.assertTrue(resp.json()['ok'])
 
     def test_plain_staff_blocked(self):
+        # 2026-08-21: was a decorator-driven HTML redirect (302) — now an
+        # inline, JSON-friendly 403 (see record_ad_hoc_expense's own
+        # docstring for why the redirect was wrong for this AJAX endpoint).
         resp = self._record(self.staff)
-        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(resp.json()['ok'])
         self.assertFalse(BusinessExpense.objects.filter(business=self.biz).exists())
+
+    def test_delegated_staff_can_record_expense(self):
+        # 2026-08-21 live request (Roy, on-site at Monsoon Inn — "the staff
+        # have no way of back dating expenses... I have been left with lots
+        # of recordings of both yesterday and today"): UserProfile.
+        # can_record_expenses lets an owner delegate this to a trusted
+        # staffer, matching can_adjust_stock/can_manage_kegs.
+        self.staff.userprofile.can_record_expenses = True
+        self.staff.userprofile.save()
+        from core.shift_views import Shift
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN', station='kitchen')
+        resp = self._record(self.staff)
+        self.assertTrue(resp.json()['ok'], resp.json())
+        expense = BusinessExpense.objects.get(business=self.biz)
+        self.assertEqual(expense.recorded_by, self.staff)
+
+    def test_delegated_staff_without_open_shift_blocked(self):
+        self.staff.userprofile.can_record_expenses = True
+        self.staff.userprofile.save()
+        resp = self._record(self.staff)
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.json().get('shift_required'))
+        self.assertFalse(BusinessExpense.objects.filter(business=self.biz).exists())
+
+    def test_backdate_still_works_for_delegated_staff(self):
+        self.staff.userprofile.can_record_expenses = True
+        self.staff.userprofile.save()
+        from core.shift_views import Shift
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN', station='kitchen')
+        real_date = (timezone.localdate() - timedelta(days=2)).isoformat()
+        resp = self._record(self.staff, date=real_date)
+        self.assertTrue(resp.json()['ok'], resp.json())
+        expense = BusinessExpense.objects.get(business=self.biz)
+        self.assertEqual(expense.date.isoformat(), real_date)
+
+    def test_ad_hoc_expenses_list_open_to_delegated_staff_not_plain_staff(self):
+        self.client.force_login(self.owner)
+        BusinessExpense.objects.create(
+            business=self.biz, description='Test', amount=Decimal('300'),
+            category='other', date=timezone.localdate(), station='kitchen',
+            recorded_by=self.owner,
+        )
+        self.client.logout()
+        # Plain staff: gets an empty list, not an error/crash.
+        self.client.force_login(self.staff)
+        resp = self.client.get('/expenses/list/', {'station': 'kitchen'})
+        self.assertEqual(resp.json()['expenses'], [])
+        self.client.logout()
+        # Delegated staff: sees the real list.
+        self.staff.userprofile.can_record_expenses = True
+        self.staff.userprofile.save()
+        self.client.force_login(self.staff)
+        resp = self.client.get('/expenses/list/', {'station': 'kitchen'})
+        self.assertEqual(len(resp.json()['expenses']), 1)
 
     def test_backdated_expense_records_the_given_date(self):
         real_date = (timezone.localdate() - timedelta(days=10)).isoformat()
@@ -37004,9 +37109,14 @@ class AdHocExpenseEditRecoverTest(TestCase):
         self.assertEqual(resp.json()['expenses'], [])
 
     def test_list_blocked_for_plain_staff(self):
+        # 2026-08-21: ad_hoc_expenses_list() was decorator-driven (302
+        # redirect) — now an inline, JSON-friendly check (empty list, 200)
+        # matching the widened can_record_expenses delegation, same as
+        # record_ad_hoc_expense's own docstring explains.
         self.client.force_login(self.staff)
         resp = self.client.get('/expenses/list/', {'station': 'bar', 'date': self.wrong_date})
-        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['expenses'], [])
 
 
 class KitchenBoardRevenueConfirmedCreditSplitTest(TestCase):
@@ -38130,6 +38240,13 @@ class KitchenItemResetTest(TestCase):
             'The deliberately-preserved older sale must still exist',
         )
         # Fresh receipt of 23 legs, dated today — nothing sold against it yet.
+        # 2026-08-21: mirror kitchen_stock_receipt_create()'s own real
+        # behaviour exactly — a receiving line is always paired with a real
+        # stock-adding Transaction; a bare KitchenStockReceiptLine with no
+        # Transaction (the original version of this fixture) never actually
+        # grows item.current_balance(), which the 2026-08-21 "decisive fix"
+        # for the recurring hidden-presets bug now correctly requires (real
+        # physical stock, not just a receiving-bookkeeping row).
         new_receipt = KitchenStockReceipt.objects.create(
             business=self.biz, store=self.store, supplier='Kamau (fresh)',
             received_on=timezone.localdate(),
@@ -38137,6 +38254,11 @@ class KitchenItemResetTest(TestCase):
         KitchenStockReceiptLine.objects.create(
             receipt=new_receipt, item=self.kuku, preset=self.full_leg,
             qty_received=Decimal('23'), line_cost=Decimal('3700'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('23'),
+            preset=self.full_leg, payment_method='cash',
+            invoice_no='Kamau (fresh)', recorded_by=self.owner,
         )
         resp = self.client.get('/kitchen/')
         import json as _json
@@ -38218,27 +38340,50 @@ class ResetPresetRestockAnchorTest(TestCase):
         exists for this anchor with no matching RECEIVED-side record at all
         (e.g. sales recorded before the tether/receipt-line tracking ever
         existed for this cut — the real mechanism traced from Roy's live
-        report) — deliberately preserved, never deleted. A fresh restock
-        alone can't outrun it (30 old-sold > 23 new-received), so the tile
-        stays hidden until the anchor is explicitly stamped."""
+        report) — deliberately preserved, never deleted.
+
+        2026-08-21 update (Roy, same day, still blocked live — "this going
+        in circles everytime we change something really sucks"): the
+        received-vs-sold NET tally no longer gates sell-tile VISIBILITY at
+        all (see kitchen_views.py's `_is_visible()`, decisively rewritten
+        same day) — only real `item.current_balance()` does, once a preset
+        has EVER been genuinely received under this item's regime. So the
+        preset here is now correctly visible as soon as real physical stock
+        is positive, with no dependency on stamping this anchor at all —
+        stamping only ever affects the owner-only DIAGNOSTIC `_sold`/
+        `_received` numbers (locked in below), never whether staff can
+        actually sell it. This is a deliberate, more robust simplification,
+        not a regression of the 2026-08-12 feature's own delete-nothing
+        guarantee (also re-verified below)."""
         Transaction.objects.create(
             business=self.biz, item=self.kuku, preset=self.half_leg, type='Issue',
             qty=Decimal('-30'), sale_amount=Decimal('9000'), payment_method='cash',
             created_at=timezone.now() - timedelta(days=29),
         )
 
-        # Fresh restock: 23 new legs, nothing sold against them yet.
+        # Fresh restock: 40 new legs (more than the old-sold 30, so real
+        # balance goes positive — mirrors kitchen_stock_receipt_create()'s
+        # own real behaviour, which always pairs a KitchenStockReceiptLine
+        # with a real stock-adding Transaction; nothing sold against it yet.
         new_receipt = KitchenStockReceipt.objects.create(
             business=self.biz, store=self.store, supplier='Kamau', received_on=timezone.localdate(),
         )
         KitchenStockReceiptLine.objects.create(
             receipt=new_receipt, item=self.kuku, preset=self.full_leg,
-            qty_received=Decimal('23'), line_cost=Decimal('3700'),
+            qty_received=Decimal('40'), line_cost=Decimal('6400'),
         )
+        Transaction.objects.create(
+            business=self.biz, item=self.kuku, type='Receipt', qty=Decimal('40'),
+            preset=self.full_leg, payment_method='cash', invoice_no='Kamau', recorded_by=self.owner,
+        )
+        self.kuku.refresh_from_db()
+        self.assertEqual(self.kuku.current_balance(), Decimal('10'), "real stock is genuinely positive")
         txn_count_before = Transaction.objects.filter(item=self.kuku).count()
         receipt_count_before = KitchenStockReceiptLine.objects.filter(item=self.kuku).count()
 
-        # Before stamping: still hidden — 23 received vs 30 old-sold nets negative.
+        # Before stamping: already visible — real balance (10) is positive
+        # and this anchor has genuinely been received before. The lifetime
+        # `_sold` diagnostic still reflects the old drift (30), unaffected.
         resp = self.client.get('/kitchen/')
         import json as _json
         def _blob(body):
@@ -38248,7 +38393,9 @@ class ResetPresetRestockAnchorTest(TestCase):
             return _json.loads(body[eq + 1:end].strip())
         items = _blob(resp.content.decode())
         kuku = next(i for i in items if i['id'] == self.kuku.id)
-        self.assertNotIn('Full Chicken Leg', [p['label'] for p in kuku['presets']])
+        self.assertIn('Full Chicken Leg', [p['label'] for p in kuku['presets']])
+        full_leg_before = next(p for p in kuku['presets'] if p['label'] == 'Full Chicken Leg')
+        self.assertEqual(full_leg_before['_sold'], 30.0)
 
         # Stamp the anchor — no deletion.
         resp2 = self._post(self.kuku.id)
@@ -38262,10 +38409,10 @@ class ResetPresetRestockAnchorTest(TestCase):
         items3 = _blob(resp3.content.decode())
         kuku3 = next(i for i in items3 if i['id'] == self.kuku.id)
         self.assertIn('Full Chicken Leg', [p['label'] for p in kuku3['presets']],
-                       'Fresh restock must be sellable once the stale drift is excluded via the anchor')
+                       'Fresh restock must stay sellable once the anchor is stamped')
         full_leg = next(p for p in kuku3['presets'] if p['label'] == 'Full Chicken Leg')
-        self.assertEqual(full_leg['_received'], 23.0)
-        self.assertEqual(full_leg['_sold'], 0.0)
+        self.assertEqual(full_leg['_received'], 40.0)
+        self.assertEqual(full_leg['_sold'], 0.0, "the windowed diagnostic now excludes the pre-anchor old sale")
 
     def test_manager_may_stamp_anchor(self):
         self.client.force_login(self.manager)

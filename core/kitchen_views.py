@@ -450,10 +450,36 @@ def kitchen_board(request):
             # Deliberately does not change what staff can sell — `presets`
             # (below) keeps the exact same gate as before.
             def _is_visible(p):
-                return item.id not in items_with_preset_receipts or (
-                    float(_received_by_preset.get(p.stock_tracking_anchor_id()) or 0)
-                    - float(_sold_by_preset.get(p.stock_tracking_anchor_id()) or 0) > 0
-                )
+                if item.id not in items_with_preset_receipts:
+                    return True
+                # 2026-08-21 live incident #2 (Roy, Monsoon Inn, mid-shift,
+                # same day as the Gawa Kuku fix above): this exact tile went
+                # dark AGAIN — every preset hidden, cart falling back to a
+                # bare "Kuku KES 0" line with no preset/price at all. This
+                # has now recurred at least 4 distinct times (2026-08-09,
+                # 2026-08-11 x2, 2026-08-12) purely because the received-vs-
+                # sold anchor tally has too many independent ways to
+                # legitimately drift negative (a deleted receipt, a tether
+                # added after old sales, a receiving mechanism the gate
+                # didn't know about yet, backdated catch-up sales) while
+                # real physical stock sits unsold — and every time the fix
+                # has been "teach the gate about one more receiving source,"
+                # which only delays the next drift-triggered outage instead
+                # of closing the class of bug. Roy, live and blocked
+                # mid-service: "this going in circles everytime we change
+                # something really sucks." Decisive fix: a preset that has
+                # EVER been genuinely received under this regime
+                # (`ever_received` — still respects the original 2026-08-09
+                # "never show a preset that was never actually stocked"
+                # concern) stays SELLABLE for as long as the item's own
+                # real, authoritative current_balance() is still positive —
+                # the net anchor tally (received-minus-sold) no longer gates
+                # the sell button at all, only the owner-only diagnostic
+                # below. A preset truly never received under this item's own
+                # per-cut regime is still hidden.
+                anchor = p.stock_tracking_anchor_id()
+                ever_received = anchor in _received_by_preset
+                return ever_received and item.stock_balance > 0
 
             presets = [_preset_dict(p) for p in _all_item_presets if _is_visible(p)]
             hidden_presets = []
@@ -769,6 +795,7 @@ def kitchen_board(request):
         'is_owner': is_owner,
         'is_waitress': up.role == 'waitress',
         'can_convert_tabs_to_debt': getattr(up, 'can_convert_tabs_to_debt', False),
+        'can_record_expenses': is_owner or getattr(up, 'can_record_expenses', False),
         'business': business,
         'kitchen_store': kitchen_store,
         'portion_items': json.dumps(portion_items),

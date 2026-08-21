@@ -896,6 +896,7 @@ def bar_board(request):
         'is_waitress': up.role == 'waitress',
         'can_manage_kegs': is_owner or getattr(up, 'can_manage_kegs', False),
         'can_convert_tabs_to_debt': getattr(up, 'can_convert_tabs_to_debt', False),
+        'can_record_expenses': is_owner or getattr(up, 'can_record_expenses', False),
         'business': business,
         'success_data': success_data,
         'current_user_id': request.user.id,

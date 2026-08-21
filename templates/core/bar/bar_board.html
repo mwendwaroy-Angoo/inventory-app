@@ -685,7 +685,7 @@
                      cursor:pointer;">
         🪙 Counter Cash
       </button>
-      {% if is_owner %}
+      {% if can_record_expenses %}
       <button onclick="window.openExpenseModal()"
               style="background:rgba(232,144,144,0.08); border:1px solid rgba(232,144,144,0.3);
                      color:#e89090; border-radius:8px; padding:4px 12px; font-size:0.82rem;
@@ -693,7 +693,10 @@
         💸 Matumizi
       </button>
       <!-- 2026-08-09 — informational only, never subtracted from Counter
-           Cash's till-expected-cash math; see kitchen_board.html's twin. -->
+           Cash's till-expected-cash math; see kitchen_board.html's twin.
+           2026-08-21: gate widened from is_owner to can_record_expenses so
+           a delegated staffer (UserProfile.can_record_expenses) can record
+           and backdate their own catch-up expenses without the owner. -->
       <span style="background:rgba(232,144,144,0.08); border:1px solid rgba(232,144,144,0.3);
                    color:#e89090; border-radius:8px; padding:4px 12px; font-size:0.82rem;">
         Matumizi ya Leo: <strong id="bb-expense-amount">KES 0</strong>
@@ -1979,7 +1982,7 @@
 {% include "core/petty_cash_modal.html" %}
 
 <!-- Ad-hoc expense modal (2026-08-09) -->
-{% if is_owner %}{% include "core/expense_modal.html" %}{% endif %}
+{% if can_record_expenses %}{% include "core/expense_modal.html" %}{% endif %}
 
 <!-- ── DJ / MC Session Modal ─────────────────────────────────────── -->
 <div id="djmcBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:1200; align-items:flex-start; justify-content:center; padding-top:4rem; overflow-y:auto;">
