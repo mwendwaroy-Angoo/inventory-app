@@ -1084,7 +1084,11 @@ def _kitchen_checkout(request, up, business, is_owner):
                 )
             elif txn:
                 created_txn_ids.append(txn.id)
-            receipt_lines.append({'name': desc, 'subtotal': float(amount)})
+            # 2026-08-21 live report (Roy): a direct-sale receipt line had
+            # no way back to its own Transaction, so a later correction
+            # (void, date fix) could never update an already-issued
+            # receipt. See core.receipt_views._live_direct_lines().
+            receipt_lines.append({'name': desc, 'subtotal': float(amount), 'txn_id': txn.id if txn else None})
             total += amount
         elif bunch_id:
             # Grill batch item (nyama choma, mutura) — ProduceBunch revenue envelope.
@@ -1107,7 +1111,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 )
             else:
                 created_txn_ids.append(txn.id)
-            receipt_lines.append({'name': desc, 'subtotal': float(amount)})
+            receipt_lines.append({'name': desc, 'subtotal': float(amount), 'txn_id': txn.id})
             total += amount
         else:
             # Portion item — standard Issue transaction
@@ -1185,7 +1189,7 @@ def _kitchen_checkout(request, up, business, is_owner):
                 )
             else:
                 created_txn_ids.append(txn.id)
-            receipt_lines.append({'name': desc, 'subtotal': float(amount), 'qty': float(qty)})
+            receipt_lines.append({'name': desc, 'subtotal': float(amount), 'qty': float(qty), 'txn_id': txn.id})
             total += amount
 
     if not receipt_lines:

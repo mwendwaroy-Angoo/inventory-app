@@ -3696,6 +3696,12 @@ def quick_sell(request):
                     "name": item.description,
                     "qty": float(display_qty),
                     "subtotal": float(line_amount),
+                    # 2026-08-21 live report (Roy): a direct-sale receipt
+                    # line had no way back to its own Transaction, so a
+                    # later correction (void, date fix) could never update
+                    # an already-issued receipt — see
+                    # core.receipt_views._live_direct_lines().
+                    "txn_id": last_transaction.id,
                 }
             )
             if is_tab_sale:

@@ -19336,6 +19336,129 @@ class VoidDirectTransactionTest(TestCase):
         self.assertEqual(txn.payment_method, 'cash')
 
 
+class LiveDirectReceiptLinesTest(TestCase):
+    """2026-08-21 live report (Roy): "even if an item is deleted from
+    recent sales in the food tab side or tabs side, the receipt still
+    shows the item when it should not." Tab-linked receipts already
+    self-heal live (_get_live_tab_state excludes void entries on every
+    request). A direct (non-tab) sale's receipt had no equivalent — its
+    lines JSONField is a static snapshot with no reference back to the
+    Transaction that created each line, so void_direct_transaction (🗑
+    Futa) could never be reflected on an already-issued receipt."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Live Direct Lines Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ldl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='LDL-01', unit='Pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('150'), opening_bin_balance=Decimal('20'),
+        )
+
+    def _txn(self, amount=Decimal('200'), payment_method='cash', qty=Decimal('-1')):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=qty, sale_amount=amount, payment_method=payment_method,
+        )
+
+    def test_live_direct_lines_none_when_nothing_voided(self):
+        from core.receipt_views import _live_direct_lines
+        t1, t2 = self._txn(), self._txn()
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[
+                {'name': 'Tusker', 'subtotal': 200.0, 'txn_id': t1.id},
+                {'name': 'Tusker', 'subtotal': 200.0, 'txn_id': t2.id},
+            ],
+        )
+        self.assertIsNone(_live_direct_lines(receipt))
+
+    def test_live_direct_lines_none_for_legacy_receipt_without_txn_id(self):
+        from core.receipt_views import _live_direct_lines
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[{'name': 'Tusker', 'subtotal': 200.0}],  # no txn_id at all — pre-fix shape
+        )
+        self.assertIsNone(_live_direct_lines(receipt))
+
+    def test_live_direct_lines_excludes_voided_transaction(self):
+        from core.receipt_views import _live_direct_lines
+        t1, t2 = self._txn(), self._txn()
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[
+                {'name': 'Tusker', 'subtotal': 200.0, 'txn_id': t1.id},
+                {'name': 'Tusker', 'subtotal': 200.0, 'txn_id': t2.id},
+            ],
+        )
+        t1.payment_method = 'void'
+        t1.qty = Decimal('0')
+        t1.save(update_fields=['payment_method', 'qty'])
+        result = _live_direct_lines(receipt)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['txn_id'], t2.id)
+
+    def test_public_receipt_page_reflects_voided_item(self):
+        """End-to-end: void via the real endpoint, then load the public
+        receipt page and confirm the removed item is gone and the total
+        is correct."""
+        t1 = self._txn(amount=Decimal('200'))
+        t2 = self._txn(amount=Decimal('150'))
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[
+                {'name': 'Tusker', 'subtotal': 200.0, 'txn_id': t1.id},
+                {'name': 'Tusker', 'subtotal': 150.0, 'txn_id': t2.id},
+            ],
+        )
+        self.client.force_login(self.owner)
+        void_resp = self.client.post(f'/bar/transactions/{t1.id}/void/', {})
+        self.assertTrue(void_resp.json().get('ok'), void_resp.json())
+
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertEqual(resp.status_code, 200)
+        rendered_receipt = resp.context['receipt']
+        self.assertEqual(len(rendered_receipt.lines), 1)
+        self.assertEqual(rendered_receipt.lines[0]['txn_id'], t2.id)
+        self.assertEqual(float(rendered_receipt.total), 150.0)
+
+    def test_receipt_live_status_reflects_voided_item(self):
+        t1 = self._txn(amount=Decimal('200'))
+        t2 = self._txn(amount=Decimal('150'))
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[
+                {'name': 'Tusker', 'subtotal': 200.0, 'txn_id': t1.id},
+                {'name': 'Tusker', 'subtotal': 150.0, 'txn_id': t2.id},
+            ],
+        )
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{t1.id}/void/', {})
+        resp = self.client.get(f'/r/{receipt.token}/live/')
+        data = resp.json()
+        self.assertEqual(len(data['lines']), 1)
+        self.assertEqual(data['total'], 150.0)
+
+    def test_untouched_receipt_still_shows_all_lines(self):
+        """Regression lock: the fix must not accidentally hide anything
+        that was never voided."""
+        t1 = self._txn(amount=Decimal('200'))
+        t2 = self._txn(amount=Decimal('150'))
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[
+                {'name': 'Tusker', 'subtotal': 200.0, 'txn_id': t1.id},
+                {'name': 'Tusker', 'subtotal': 150.0, 'txn_id': t2.id},
+            ],
+        )
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertEqual(len(resp.context['receipt'].lines), 2)
+        self.assertEqual(float(resp.context['receipt'].total), 350.0)
+
+
 class TransactionPresetCorrectionTest(TestCase):
     """2026-08-01 live request (Monsoon Inn, screenshots): kitchen staff
     mistakenly rang up "Wing" instead of "Leg" on a shared "Kuku" item —

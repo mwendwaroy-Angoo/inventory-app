@@ -656,6 +656,13 @@ def bar_board(request):
                 'name': f"{barrel.item.description} — {preset.label} ×{qty}",
                 'subtotal': float(amount),
                 'barrel_id': barrel.id,
+                # 2026-08-21 live report (Roy): a direct-sale receipt line
+                # had no way back to its own Transaction, so a later
+                # correction (void, split, date fix) could never update an
+                # already-issued receipt — the customer's copy kept
+                # showing an item that was actually removed. See
+                # core.receipt_views._live_direct_lines().
+                'txn_id': _sale_txn.id if _sale_txn is not None else None,
             })
 
         # Partial-payment-now / remainder-as-debt (see is_partial_debt_checkout

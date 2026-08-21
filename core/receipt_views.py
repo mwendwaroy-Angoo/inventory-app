@@ -215,6 +215,51 @@ def _receipt_tab_pin(receipt):
     )
 
 
+def _live_direct_lines(receipt):
+    """2026-08-21 live report (Roy): "even if an item is deleted from
+    recent sales in the food tab side or tabs side, the receipt still
+    shows the item when it should not." Tab-linked receipts already
+    self-heal via _get_live_tab_state (it excludes payment_method='void'
+    entries live, every request). A DIRECT (non-tab) sale's receipt had no
+    equivalent — receipt.lines is a static JSONField snapshot with no
+    reference back to the Transaction that created each line, so a later
+    correction on that sale via the "Recent Payments" panel — void_
+    direct_transaction (🗑 Futa, sets qty=0) — could never be reflected on
+    an already-issued receipt.
+
+    Every checkout call site (Quick Sell, Bar Board's keg-cart checkout,
+    Kitchen Board) now stamps 'txn_id' on each line it writes, going
+    forward. This purely FILTERS the static snapshot down to lines whose
+    Transaction still has real qty and isn't void — it does NOT recompute
+    subtotal/name live (those are already kept correct by the dedicated,
+    already-existing correction mechanisms — e.g. correct_transaction_
+    preset's own in-place receipt-line rename), avoiding the exact kind of
+    live-recompute precision trap this app has hit before (Kuku/Chipo
+    Mapato). Returns None (meaning: nothing to change, use receipt.lines
+    exactly as before) whenever recomputing isn't possible — a receipt
+    issued before this fix has no txn_id on any line — or whenever nothing
+    was actually removed.
+    """
+    lines = receipt.lines or []
+    if not lines or not all(isinstance(l, dict) and l.get('txn_id') for l in lines):
+        return None
+    from .models import Transaction as _Txn
+    txn_ids = [l['txn_id'] for l in lines]
+    txns = {
+        t.id: t for t in
+        _Txn.objects.filter(id__in=txn_ids, business_id=receipt.business_id).only('id', 'payment_method', 'qty')
+    }
+    live_lines = [
+        l for l in lines
+        if txns.get(l['txn_id']) is not None
+        and txns[l['txn_id']].payment_method != 'void'
+        and txns[l['txn_id']].qty
+    ]
+    if len(live_lines) == len(lines):
+        return None
+    return live_lines
+
+
 def _get_live_tab_state(receipt):
     """Return (is_live, tab_status, lines, outstanding) for a tab-linked receipt.
 
@@ -459,6 +504,14 @@ def public_receipt(request, token):
     if live_lines is not None:
         receipt.lines = live_lines
         receipt.total = live_total
+    elif not is_live_tab:
+        # Not a tab-linked receipt at all — check whether any of its
+        # direct-sale lines have since been voided/removed via the Recent
+        # Payments panel (see _live_direct_lines' own docstring).
+        _direct_lines = _live_direct_lines(receipt)
+        if _direct_lines is not None:
+            receipt.lines = _direct_lines
+            receipt.total = round(sum(float(l.get('subtotal') or 0) for l in _direct_lines), 2)
 
     station_debt = None
     if tab_status == 'DEBT':
@@ -505,6 +558,17 @@ def receipt_live_status(request, token):
     receipt = get_object_or_404(Receipt, token=token)
     is_live, tab_status, lines, total = _get_live_tab_state(receipt)
     if lines is None:
+        # Not a tab-linked receipt — still check whether a direct-sale
+        # line has since been voided (see _live_direct_lines' docstring),
+        # so the 20s live poll self-heals a removal without needing a
+        # full page reload.
+        _direct_lines = _live_direct_lines(receipt)
+        if _direct_lines is not None:
+            _direct_total = round(sum(float(l.get('subtotal') or 0) for l in _direct_lines), 2)
+            return JsonResponse({
+                'is_live': False, 'tab_status': tab_status,
+                'lines': _direct_lines, 'total': _direct_total,
+            })
         return JsonResponse({'is_live': False, 'tab_status': tab_status})
 
     response = {
