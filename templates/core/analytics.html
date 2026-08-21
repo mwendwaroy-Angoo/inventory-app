@@ -1507,6 +1507,19 @@
 <hr class="gold-divider" />
 <!-- ── Kitchen / Grill Performance ─────────────────────────────────────── -->
 <div class="section-title" id="section-kitchen">🍗 {% trans "Kitchen Performance" %}</div>
+<!-- 2026-08-21 live request (Roy, in a business owner's voice): "is the
+     kitchen collectively worth it, can it survive on its own revenue" —
+     this section only ever shows per-item revenue/cost/margin for the
+     period, never a per-batch/per-receipt history or a true net P&L
+     (COGS + consumables + kitchen-tagged expenses). Link to the dedicated
+     report that answers that, rather than crowding it into this page.
+     analytics_dashboard() is already @owner_or_manager_required, so no
+     extra permission guard is needed here. -->
+<div class="mb-3">
+  <a href="{% url 'kitchen_viability_report' %}?period={{ period }}" class="btn btn-sm" style="background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.35);color:#4caf50;">
+    📊 {% trans "Uwezekano wa Kitchen — Net P&L + Historia ya Batch" %}
+  </a>
+</div>
 <div class="row g-3 mb-4">
   <div class="col-6 col-md-3">
     <div style="background:var(--onyx-card);border:1px solid rgba(255,165,0,0.3);border-radius:10px;padding:1rem;text-align:center;">

@@ -12,6 +12,7 @@ Blocked for:
 """
 import json
 import logging
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
@@ -738,6 +739,62 @@ def kitchen_board(request):
         'can_access_bar': can_access_bar,
         'can_receive_stock': can_receive_stock,
         'wastage_items_json': json.dumps(wastage_items),
+    })
+
+
+@login_required
+def kitchen_viability_report(request):
+    """Kitchen Viability report (2026-08-21 live request) — answers a real
+    business owner's question directly: after buying raw materials
+    (potato sacks, smokie packets, chicken pieces) at different times over
+    a month, "what's the revenue and profit, can I compare one sack to the
+    previous ones, is the kitchen collectively worth it, can it survive on
+    its own revenue?" See core/kitchen_viability.py's module docstring for
+    the full investigation of what was already answerable vs. genuinely
+    missing before this report existed. Owner/manager only, same tier as
+    every other financial-viability report in this app (keg_reconciliation,
+    bar_shrinkage_report) — inline redirect gate, not a full 403, matching
+    keg_reconciliation's own established pattern for this exact tier.
+    """
+    up = _get_up(request)
+    if not up or not up.is_owner_or_manager:
+        return redirect('kitchen_board')
+
+    business = up.business
+    today = timezone.localdate()
+
+    period = request.GET.get('period', '30')
+    try:
+        days = int(period)
+    except ValueError:
+        days = 30
+    days = min(max(days, 1), 365)
+
+    start_date = today - timedelta(days=days - 1)
+    prev_start = start_date - timedelta(days=days)
+    prev_end = start_date - timedelta(days=1)
+
+    from .kitchen_viability import (
+        kitchen_batch_history, kitchen_net_pnl, kitchen_receipt_history,
+        kitchen_staff_cost_context,
+    )
+
+    pnl = kitchen_net_pnl(business, start_date, today)
+    prev_pnl = kitchen_net_pnl(business, prev_start, prev_end)
+    batch_history = kitchen_batch_history(business, start_date, today)
+    receipt_history = kitchen_receipt_history(business, start_date, today)
+    staff_cost = kitchen_staff_cost_context(business)
+
+    return render(request, 'core/kitchen/kitchen_viability.html', {
+        'business': business,
+        'period': days,
+        'start_date': start_date,
+        'end_date': today,
+        'pnl': pnl,
+        'prev_pnl': prev_pnl,
+        'batch_history': batch_history,
+        'receipt_history': receipt_history,
+        'staff_cost': staff_cost,
     })
 
 

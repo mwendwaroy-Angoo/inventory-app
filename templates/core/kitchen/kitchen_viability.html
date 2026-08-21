@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Uwezekano wa Kitchen — Duka Mwecheche{% endblock %}
+
+{% block extra_css %}
+<style>
+  .period-btn {
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-decoration: none;
+    border: 1px solid #333;
+    color: var(--muted);
+    transition: all 0.2s;
+    background: transparent;
+  }
+  .period-btn:hover {
+    border-color: var(--raspberry);
+    color: var(--raspberry);
+  }
+  .period-btn.active {
+    background: var(--raspberry);
+    border-color: var(--raspberry);
+    color: white;
+  }
+  .kv-card {
+    background: var(--onyx-card);
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 1rem;
+  }
+  .kv-stat-label { color: #b0b0b0; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; }
+  .kv-stat-val { font-size: 1.4rem; font-weight: 700; color: var(--pearl); }
+  .kv-verdict {
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    font-size: .95rem;
+    line-height: 1.5;
+  }
+  .kv-verdict.good { background: rgba(76,175,80,.1); border: 1px solid rgba(76,175,80,.35); color: #a5d6a7; }
+  .kv-verdict.bad  { background: rgba(192,57,90,.1); border: 1px solid rgba(192,57,90,.35); color: #e6a3b3; }
+  th { color: #b0b0b0; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  td { color: var(--pearl); vertical-align: middle; font-size: .85rem; }
+  .status-open { color: #5da8f0; }
+  .status-depleted { color: #7de08a; }
+  .status-discarded, .status-void { color: #c0395a; }
+  .pos { color: #7de08a; }
+  .neg { color: #c0395a; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+      <h4 style="color:var(--gold);font-family:'Playfair Display',serif;" class="mb-0">🍗 Uwezekano wa Kitchen</h4>
+      <small style="color:#b0b0b0">{{ start_date }} → {{ end_date }}</small>
+    </div>
+    <a href="{% url 'kitchen_board' %}" class="btn btn-sm btn-outline-secondary">← Kitchen Board</a>
+  </div>
+
+  <div class="d-flex gap-2 mb-4 flex-wrap">
+    <a href="?period=7"   class="period-btn {% if period == 7 %}active{% endif %}">Wiki 1</a>
+    <a href="?period=30"  class="period-btn {% if period == 30 %}active{% endif %}">Mwezi 1</a>
+    <a href="?period=90"  class="period-btn {% if period == 90 %}active{% endif %}">Miezi 3</a>
+    <a href="?period=365" class="period-btn {% if period == 365 %}active{% endif %}">Mwaka 1</a>
+  </div>
+
+  {# ── Verdict ── #}
+  <div class="kv-verdict {% if pnl.is_self_sufficient %}good{% else %}bad{% endif %} mb-4">
+    {% if pnl.is_self_sufficient %}
+      ✅ <strong>Kitchen inajilipa.</strong> Katika kipindi hiki, kitchen ilipata KES {{ pnl.net_profit|floatformat:0 }}
+      zaidi ya gharama zake zote (bidhaa + khaki/mafuta/sosi + matumizi mengine ya kitchen) — haihitaji
+      mfuko wako binafsi kuiendesha.
+    {% else %}
+      ⚠️ <strong>Kitchen bado inahitaji mfuko wako.</strong> Katika kipindi hiki, gharama za kitchen zilizidi
+      mapato yake kwa KES {{ pnl.net_profit|floatformat:0|slice:"1:" }} — hii ndiyo kiasi ambacho, kwa sasa,
+      kinatoka mfukoni mwako badala ya mapato ya kitchen yenyewe.
+    {% endif %}
+    <div style="margin-top:.4rem;font-size:.8rem;color:#b0b0b0;">
+      Kipindi kilichopita ({{ prev_pnl.net_profit|floatformat:0 }} vs {{ pnl.net_profit|floatformat:0 }} sasa) —
+      {% if pnl.net_profit > prev_pnl.net_profit %}inaboreka.{% elif pnl.net_profit < prev_pnl.net_profit %}inashuka.{% else %}haijabadilika.{% endif %}
+    </div>
+  </div>
+
+  {# ── Net P&L tiles ── #}
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+      <div class="kv-card">
+        <div class="kv-stat-label">Mapato (Revenue)</div>
+        <div class="kv-stat-val">KES {{ pnl.revenue|floatformat:0 }}</div>
+        <div style="font-size:.72rem;color:#888;">{{ pnl.kitchen_share_pct }}% ya mauzo yote</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="kv-card">
+        <div class="kv-stat-label">Gharama ya Bidhaa (COGS)</div>
+        <div class="kv-stat-val">KES {{ pnl.cogs|floatformat:0 }}</div>
+        <div style="font-size:.72rem;color:#888;">Faida Jumla: KES {{ pnl.gross_profit|floatformat:0 }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="kv-card">
+        <div class="kv-stat-label">Khaki / Mafuta / Sosi</div>
+        <div class="kv-stat-val">KES {{ pnl.consumables_cost|floatformat:0 }}</div>
+        <div style="font-size:.72rem;color:#888;">+ Matumizi: KES {{ pnl.kitchen_expenses|floatformat:0 }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="kv-card">
+        <div class="kv-stat-label">Faida Halisi (Net)</div>
+        <div class="kv-stat-val {% if pnl.net_profit >= 0 %}pos{% else %}neg{% endif %}">
+          KES {{ pnl.net_profit|floatformat:0 }}
+        </div>
+        <div style="font-size:.72rem;color:#888;">{{ pnl.net_margin_pct }}% ya mapato</div>
+      </div>
+    </div>
+  </div>
+
+  {% if staff_cost.staff_count > 0 %}
+  <div class="kv-card mb-4" style="border-color:rgba(93,168,240,.3);">
+    <div style="font-size:.82rem;color:#5da8f0;">
+      ℹ️ Mishahara ya wafanyakazi {{ staff_cost.staff_count }} wa kitchen (takriban KES
+      {{ staff_cost.approx_monthly_wages|floatformat:0 }}/mwezi) <strong>haijajumuishwa</strong> kwenye Faida
+      Halisi hapo juu — mshahara wa mfanyakazi mmoja mara nyingi hauwezi kugawanywa kwa usahihi kati ya
+      counter mbili. Angalia takwimu hii pembeni unapoamua.
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Batch history (sacks / batch-cooked items) ── #}
+  <h6 style="color:var(--gold-light);" class="mt-4 mb-2">📦 Historia ya Batch (mf. Magunia ya Viazi)</h6>
+  <div class="kv-card p-0 overflow-hidden mb-4">
+    {% if batch_history %}
+    <div class="table-responsive">
+      <table class="table table-dark table-borderless mb-0" style="--bs-table-bg: transparent;">
+        <thead style="border-bottom:1px solid rgba(201,168,76,.15)">
+          <tr>
+            <th class="ps-3">Bidhaa</th>
+            <th>Ilipokewa</th>
+            <th>Hali</th>
+            <th>Gharama</th>
+            <th>Mapato</th>
+            <th>Faida</th>
+            <th>Faida %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in batch_history %}
+          <tr>
+            <td class="ps-3">{{ b.item_name }}</td>
+            <td>{{ b.received_on }}</td>
+            <td class="status-{{ b.status|lower }}">{{ b.status }}</td>
+            <td>KES {{ b.cost_total|floatformat:0 }}</td>
+            <td>KES {{ b.revenue|floatformat:0 }}</td>
+            <td class="{% if b.profit >= 0 %}pos{% else %}neg{% endif %}">KES {{ b.profit|floatformat:0 }}</td>
+            <td>{% if b.profit_pct != None %}{{ b.profit_pct }}%{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="p-3" style="color:#888;">Hakuna batch iliyopokewa katika kipindi hiki.</div>
+    {% endif %}
+  </div>
+
+  {# ── Receipt history (chicken pieces, smokies received via Stock Receipt) ── #}
+  <h6 style="color:var(--gold-light);" class="mt-4 mb-2">🧾 Historia ya Stock Receipt (mf. Vipande vya Kuku)</h6>
+  <div class="kv-card p-0 overflow-hidden mb-4">
+    {% if receipt_history %}
+    <div class="table-responsive">
+      <table class="table table-dark table-borderless mb-0" style="--bs-table-bg: transparent;">
+        <thead style="border-bottom:1px solid rgba(201,168,76,.15)">
+          <tr>
+            <th class="ps-3">Muuzaji</th>
+            <th>Bidhaa</th>
+            <th>Ilipokewa</th>
+            <th>Hali</th>
+            <th>Gharama</th>
+            <th>Mapato</th>
+            <th>Faida</th>
+            <th>Faida %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in receipt_history %}
+          <tr>
+            <td class="ps-3">{{ r.supplier|default:"—" }}</td>
+            <td>{{ r.items }}</td>
+            <td>{{ r.received_on }}</td>
+            <td class="status-{{ r.status|lower }}">{{ r.status }}</td>
+            <td>KES {{ r.cost_total|floatformat:0 }}</td>
+            <td>KES {{ r.revenue|floatformat:0 }}</td>
+            <td class="{% if r.profit >= 0 %}pos{% else %}neg{% endif %}">KES {{ r.profit|floatformat:0 }}</td>
+            <td>{% if r.profit_pct != None %}{{ r.profit_pct }}%{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="p-3" style="color:#888;">Hakuna Stock Receipt katika kipindi hiki.</div>
+    {% endif %}
+  </div>
+
+  <div class="explainer" style="background: rgba(201,168,76,.08); border-left: 3px solid var(--gold); border-radius: 6px; padding: .65rem 1rem; font-size: .8rem; color: #b0b0b0;">
+    <strong style="color:var(--gold-light)">Hii inatoka wapi?</strong>
+    Mapato/Gharama hapo juu yanajumuisha mauzo yote ya kitchen (Chipo, vipande vya Kuku, na kila kitu
+    kingine kilichoko kwenye store ya kitchen) katika kipindi hiki, kikijumuisha khaki/mafuta/sosi
+    (Consumables) na Matumizi ya Leo yaliyowekwa alama "kitchen" — si mishahara ya wafanyakazi (angalia
+    kisanduku cha bluu hapo juu kama kipo).
+  </div>
+
+</div>
+{% endblock %}

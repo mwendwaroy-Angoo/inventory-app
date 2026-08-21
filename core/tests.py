@@ -21387,6 +21387,254 @@ class PortioningEventTest(TestCase):
         self.assertEqual(resp.status_code, 403)
 
 
+class KitchenViabilityTest(TestCase):
+    """2026-08-21 live request, in a real business owner's voice: "revenue
+    and profit from all these receipts, profit of one sack of potatoes
+    compared to the previous ones, is the kitchen worth pursuing, can it
+    survive on its own revenue?" — see core/kitchen_viability.py's module
+    docstring for the full investigation of what was already answerable
+    vs. genuinely missing before this report existed."""
+
+    def setUp(self):
+        _make_kitchen_setup(self, biz_suffix='viab')
+        self.chipo = self.item  # is_kitchen_batch=True, from the shared fixture
+        self.today = timezone.localdate()
+        self.client.force_login(self.owner_user)
+
+    def _make_batch(self, cost=Decimal('1500'), revenue=Decimal('2000'),
+                     status='DEPLETED', received_on=None):
+        b = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            cost_total=cost, revenue_collected=revenue, status=status,
+            received_on=received_on or self.today,
+        )
+        if revenue > 0:
+            Transaction.objects.create(
+                business=self.biz, item=self.chipo, type='Issue',
+                qty=Decimal('-1'), sale_amount=revenue, kitchen_batch=b,
+                payment_method='cash', date=received_on or self.today,
+            )
+        return b
+
+    # ── kitchen_net_pnl() ──────────────────────────────────────────────
+
+    def test_pnl_revenue_cogs_from_batch_sale(self):
+        from core.kitchen_viability import kitchen_net_pnl
+        self._make_batch(cost=Decimal('1500'), revenue=Decimal('2000'))
+        pnl = kitchen_net_pnl(self.biz, self.today, self.today)
+        self.assertEqual(pnl['revenue'], 2000.0)
+        self.assertEqual(pnl['cogs'], 1500.0)
+        self.assertEqual(pnl['gross_profit'], 500.0)
+
+    def test_pnl_nets_consumables_and_kitchen_expenses(self):
+        from core.kitchen_viability import kitchen_net_pnl
+        self._make_batch(cost=Decimal('1500'), revenue=Decimal('2000'))
+        KitchenConsumableLog.objects.create(
+            business=self.biz, consumable_type='OIL_COOKING', qty=Decimal('5'),
+            unit_cost=Decimal('300'), total_cost=Decimal('1500'), date=self.today,
+        )
+        BusinessExpense.objects.create(
+            business=self.biz, description='Gas', amount=Decimal('500'),
+            category='utilities', station='kitchen', date=self.today,
+        )
+        pnl = kitchen_net_pnl(self.biz, self.today, self.today)
+        self.assertEqual(pnl['consumables_cost'], 1500.0)
+        self.assertEqual(pnl['kitchen_expenses'], 500.0)
+        self.assertEqual(pnl['net_profit'], -1500.0)   # 500 gross - 1500 - 500
+        self.assertFalse(pnl['is_self_sufficient'])
+
+    def test_pnl_ignores_expenses_for_a_different_station(self):
+        from core.kitchen_viability import kitchen_net_pnl
+        self._make_batch(cost=Decimal('500'), revenue=Decimal('2000'))
+        BusinessExpense.objects.create(
+            business=self.biz, description='Cup purchase', amount=Decimal('9000'),
+            category='supplies', station='bar', date=self.today,
+        )
+        BusinessExpense.objects.create(
+            business=self.biz, description='Rent', amount=Decimal('20000'),
+            category='rent', station='', date=self.today,
+        )
+        pnl = kitchen_net_pnl(self.biz, self.today, self.today)
+        self.assertEqual(pnl['kitchen_expenses'], 0.0)
+        self.assertEqual(pnl['net_profit'], 1500.0)   # untouched by bar/whole-business expenses
+        self.assertTrue(pnl['is_self_sufficient'])
+
+    def test_pnl_period_boundary_excludes_out_of_window_sale(self):
+        from core.kitchen_viability import kitchen_net_pnl
+        from datetime import timedelta
+        old_date = self.today - timedelta(days=40)
+        self._make_batch(cost=Decimal('500'), revenue=Decimal('1000'), received_on=old_date)
+        pnl = kitchen_net_pnl(self.biz, self.today - timedelta(days=7), self.today)
+        self.assertEqual(pnl['revenue'], 0.0)
+
+    def test_pnl_bar_sales_never_counted_as_kitchen(self):
+        from core.kitchen_viability import kitchen_net_pnl
+        bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        bar_item = Item.objects.create(
+            business=self.biz, store=bar_store, description='Tusker',
+            material_no='VIAB-BAR-01', unit='Btl', selling_price=Decimal('200'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash', date=self.today,
+        )
+        self._make_batch(cost=Decimal('500'), revenue=Decimal('1000'))
+        pnl = kitchen_net_pnl(self.biz, self.today, self.today)
+        self.assertEqual(pnl['revenue'], 1000.0)         # bar's 200 excluded
+        self.assertEqual(pnl['kitchen_share_pct'], round(1000 / 1200 * 100, 1))
+
+    def test_pnl_voided_sale_excluded(self):
+        from core.kitchen_viability import kitchen_net_pnl
+        b = self._make_batch(cost=Decimal('500'), revenue=Decimal('0'))
+        Transaction.objects.create(
+            business=self.biz, item=self.chipo, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('1000'), kitchen_batch=b,
+            payment_method='void', date=self.today,
+        )
+        pnl = kitchen_net_pnl(self.biz, self.today, self.today)
+        self.assertEqual(pnl['revenue'], 0.0)
+
+    # ── kitchen_batch_history() ────────────────────────────────────────
+
+    def test_batch_history_lists_newest_first_with_profit(self):
+        from core.kitchen_viability import kitchen_batch_history
+        from datetime import timedelta
+        b_old = self._make_batch(cost=Decimal('1000'), revenue=Decimal('1200'),
+                                  received_on=self.today - timedelta(days=2))
+        b_new = self._make_batch(cost=Decimal('1500'), revenue=Decimal('2000'),
+                                  received_on=self.today)
+        rows = kitchen_batch_history(self.biz, self.today - timedelta(days=5), self.today)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['id'], b_new.id)   # newest first
+        self.assertEqual(rows[0]['profit'], 500.0)
+        self.assertEqual(rows[1]['id'], b_old.id)
+        self.assertEqual(rows[1]['profit'], 200.0)
+
+    def test_batch_history_includes_still_open_batch(self):
+        from core.kitchen_viability import kitchen_batch_history
+        b = self._make_batch(cost=Decimal('500'), revenue=Decimal('300'), status='OPEN')
+        rows = kitchen_batch_history(self.biz, self.today, self.today)
+        self.assertEqual(rows[0]['status'], 'OPEN')
+        self.assertEqual(rows[0]['profit'], -200.0)
+
+    def test_batch_history_excludes_out_of_window_batch(self):
+        from core.kitchen_viability import kitchen_batch_history
+        from datetime import timedelta
+        self._make_batch(received_on=self.today - timedelta(days=40))
+        rows = kitchen_batch_history(self.biz, self.today - timedelta(days=7), self.today)
+        self.assertEqual(rows, [])
+
+    def test_batch_history_scoped_to_business(self):
+        from core.kitchen_viability import kitchen_batch_history
+        other_biz = Business.objects.create(name='Other Viability Biz', has_kitchen=True)
+        other_store = Store.objects.create(business=other_biz, name='Kitchen', is_kitchen=True)
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Chipo',
+            material_no='VIAB-OTHER-01', unit='Batch', selling_price=Decimal('0'),
+            is_kitchen_batch=True,
+        )
+        KitchenBatch.objects.create(
+            business=other_biz, store=other_store, item=other_item,
+            cost_total=Decimal('100'), revenue_collected=Decimal('200'),
+            status='DEPLETED', received_on=self.today,
+        )
+        self._make_batch()
+        rows = kitchen_batch_history(self.biz, self.today, self.today)
+        self.assertEqual(len(rows), 1)  # only this business's own batch, not the other business's
+
+    # ── kitchen_receipt_history() ──────────────────────────────────────
+
+    def test_receipt_history_lists_receipt_with_profit(self):
+        from core.kitchen_viability import kitchen_receipt_history
+        wing = Item.objects.create(
+            business=self.biz, store=self.store, description='Wing',
+            material_no='VIAB-WING-01', unit='Pcs', selling_price=Decimal('0'),
+        )
+        receipt = KitchenStockReceipt.objects.create(
+            business=self.biz, store=self.store, supplier='Meatco', received_on=self.today,
+        )
+        KitchenStockReceiptLine.objects.create(
+            receipt=receipt, item=wing, qty_received=Decimal('20'), line_cost=Decimal('1960'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=wing, type='Issue', qty=Decimal('-5'),
+            sale_amount=Decimal('500'), payment_method='cash', date=self.today,
+        )
+        rows = kitchen_receipt_history(self.biz, self.today, self.today)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['supplier'], 'Meatco')
+        self.assertEqual(rows[0]['cost_total'], 1960.0)
+        self.assertEqual(rows[0]['revenue'], 500.0)
+        self.assertEqual(rows[0]['profit'], 500.0 - 1960.0)
+
+    def test_receipt_history_excludes_out_of_window_receipt(self):
+        from core.kitchen_viability import kitchen_receipt_history
+        from datetime import timedelta
+        KitchenStockReceipt.objects.create(
+            business=self.biz, store=self.store, supplier='Old Supplier',
+            received_on=self.today - timedelta(days=40),
+        )
+        rows = kitchen_receipt_history(self.biz, self.today - timedelta(days=7), self.today)
+        self.assertEqual(rows, [])
+
+    # ── kitchen_staff_cost_context() ───────────────────────────────────
+
+    def test_staff_cost_context_sums_kitchen_role_salaries_only(self):
+        from core.kitchen_viability import kitchen_staff_cost_context
+        from core.models import RecurringExpense
+        kitchen_staff = User.objects.create_user(username='viab_kstaff', password='x')
+        kitchen_up = UserProfile.objects.create(
+            user=kitchen_staff, business=self.biz, role='kitchen',
+        )
+        RecurringExpense.objects.create(
+            business=self.biz, description='Kitchen staffer salary', category='labor',
+            amount=Decimal('15000'), period='MONTHLY', staff_profile=kitchen_up, is_active=True,
+        )
+        bar_staff = User.objects.create_user(username='viab_bstaff', password='x')
+        bar_up = UserProfile.objects.create(user=bar_staff, business=self.biz, role='staff')
+        RecurringExpense.objects.create(
+            business=self.biz, description='Bar staffer salary', category='labor',
+            amount=Decimal('12000'), period='MONTHLY', staff_profile=bar_up, is_active=True,
+        )
+        ctx = kitchen_staff_cost_context(self.biz)
+        self.assertEqual(ctx['staff_count'], 1)
+        self.assertEqual(ctx['approx_monthly_wages'], 15000.0)
+
+    # ── view ────────────────────────────────────────────────────────────
+
+    def test_view_owner_sees_200_with_correct_context(self):
+        self._make_batch(cost=Decimal('1500'), revenue=Decimal('2000'))
+        resp = self.client.get('/kitchen/viability/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['pnl']['revenue'], 2000.0)
+        self.assertEqual(len(resp.context['batch_history']), 1)
+
+    def test_view_period_param_widens_window(self):
+        from datetime import timedelta
+        self._make_batch(cost=Decimal('500'), revenue=Decimal('1000'),
+                          received_on=self.today - timedelta(days=60))
+        resp = self.client.get('/kitchen/viability/?period=90')
+        self.assertEqual(resp.context['pnl']['revenue'], 1000.0)
+        resp30 = self.client.get('/kitchen/viability/?period=30')
+        self.assertEqual(resp30.context['pnl']['revenue'], 0.0)
+
+    def test_view_manager_allowed(self):
+        manager_user = User.objects.create_user(username='viab_manager', password='x')
+        UserProfile.objects.create(user=manager_user, business=self.biz, role='manager')
+        self.client.logout()
+        self.client.force_login(manager_user)
+        resp = self.client.get('/kitchen/viability/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_view_staff_redirected(self):
+        staff_user = User.objects.create_user(username='viab_staff', password='x')
+        UserProfile.objects.create(user=staff_user, business=self.biz, role='kitchen')
+        self.client.logout()
+        self.client.force_login(staff_user)
+        resp = self.client.get('/kitchen/viability/')
+        self.assertEqual(resp.status_code, 302)
+
+
 class KitchenStockReceiptPresetCostingTest(TestCase):
     """2026-07-25 same-day follow-up, Roy's explicit design call: for a
     single catalogued item that's really several differently-priced

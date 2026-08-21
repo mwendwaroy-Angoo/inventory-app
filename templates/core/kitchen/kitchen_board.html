@@ -314,6 +314,14 @@
       {% if is_owner %}
       <button class="btn btn-sm" style="background:rgba(232,144,144,.08);border:1px solid rgba(232,144,144,.3);color:#e89090;font-size:.8rem;"
               onclick="window.openExpenseModal()">💸 Matumizi</button>
+      <!-- 2026-08-21 live request (Roy, in a business owner's voice): "is
+           the kitchen collectively worth it, can it survive on its own
+           revenue" — a real net-P&L + per-batch/per-receipt history report,
+           owner/manager only same tier as this whole button row. -->
+      <a class="btn btn-sm" href="{% url 'kitchen_viability_report' %}"
+         style="background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.3);color:#4caf50;font-size:.8rem;text-decoration:none;">
+        📊 Uwezekano wa Kitchen
+      </a>
       {% endif %}
       <button class="btn btn-sm" style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.35);color:#e87090;font-size:.8rem;"
               onclick="window.openKbWastageModal()">🗑️ Chakula Taka</button>
