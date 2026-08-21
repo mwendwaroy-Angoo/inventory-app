@@ -7280,3 +7280,63 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `python manage.py diagnose_customer_debt --business="X" --customer="Y"` to inspect
   their raw history directly and manually reconcile with `record_debt_payment`'s existing
   backdate field if needed.
+- Kitchen Stock Receipt auto-close + Gawa Kuku (2026-08-21), live request: Monsoon Inn
+  switching from buying pre-cut chicken pieces to whole birds portioned in-house. Two
+  ordered features, built in the sequence Roy asked for. **(1) Auto-close** (built first,
+  per Roy's own ordering): `KitchenStockReceipt.maybe_auto_close()` — checked lazily on
+  read (`kitchen_stock_receipts_list()`), closes an OPEN receipt the moment every one of
+  its lines' own item hits `current_balance() <= 0`, reliable now specifically because of
+  `Item.capped_deduction()` (2026-08-07, "stock cannot be negative") — reverses the
+  original 2026-07-25 "closing is always deliberate, never automatic" decision, which
+  predates that guarantee. Roy's own backdating/no-internet concern ("a later receipt for
+  the SAME item shouldn't stop an earlier day's paper-recorded sale from counting once it's
+  finally entered") is satisfied for free — `total_revenue()`'s window only ever WIDENS
+  (closed_at is stamped at the real moment auto-close fires; a backdated sale entered later
+  still lands inside `[received_on, closed_at]` as long as it's dated before the close),
+  locked in by a dedicated regression test. **Confirmed scope, mid-build, from a live
+  clarifying message**: this ONLY ever touches `KitchenStockReceipt` (the portion-item "🧾
+  Stock Receipt" flow — Kuku pieces, Whole Chicken, Raw Potatoes) — `KitchenBatch` (Chipo)
+  is a completely separate model/lifecycle and still closes ONLY via the explicit "✓
+  Imekwisha"/"🗑 Tupa" buttons, untouched by this fix. **(2) Gawa Kuku**: new
+  `PortioningEvent`/`PortioningEventLine` models (migration 0169) — staff cuts one whole
+  raw unit (Whole Chicken) into whatever mix of named cuts it actually yields (never
+  assumed fixed — a bigger bird gives more/different pieces), funding one or more of the
+  finished item's own existing cut-presets in a single motion. Deliberately its own
+  raw-to-multi-cut flow rather than reusing `KitchenBatch.open_batch()` (that mechanism
+  draws one raw unit into exactly ONE derived item's `cost_total`; this needs one raw unit
+  to fund SEVERAL independently-priced presets at once). Reuses `Item.raw_material_source`
+  (generalized the same day beyond KitchenBatch-only — see its updated docstring) and
+  `ItemPortionPreset.cost_price` (2026-07-28) so a portioned cut sells exactly like any
+  other preset-costed piece, through the ALREADY-correct Kitchen Performance analytics —
+  deliberately does NOT attribute a later sale back to which specific bird/event it came
+  from (no FK from Transaction to a line here), per Roy's own explicit worry about
+  repeating the Kuku/Chipo Mapato time-window precision trap already abandoned earlier this
+  session; Kitchen Performance's per-preset cost/revenue was never built on a receipt
+  time-window in the first place, so it's already immune. `PortioningEvent.create_locked()`
+  locks the raw item, validates enough balance, creates one Draw transaction for the bird
+  plus one Receipt transaction per cut produced, and writes each preset's `cost_price` — a
+  blank per-line cost is filled as an even split of the bird's own cost across ALL pieces
+  declared in the same submission (a pre-filled SUGGESTION only, per Roy's own answer —
+  "if the staff does not change the cost manually the system should assume that" — a
+  staff-typed cost always wins, never re-derived). One PortioningEvent = one bird
+  (`qty_drawn`, default 1, a field not a constant purely for future flexibility) — "receipt
+  of 10 whole chickens does not mean they all get portioned at the same time," matching
+  Roy's own sack-of-potatoes analogy. Supports backdating (`created_at`) so a bird
+  portioned to catch up a past paper record lands on the real date. New
+  `portion_event_create` view (`core/kitchen_views.py`) mirrors `kitchen_stock_receipt_
+  create()`'s exact permission/idempotency shape — `_kb_gate` (shift + station scoping) +
+  `can_receive_kitchen_stock` tier, `claim_checkout_token` double-submit guard, `ValueError`
+  → 400 JSON — at `/kitchen/portion-event/create/`. Kitchen Board: `kitchen_board()` gained
+  `gawa_kuku_targets` per raw item (its linked finished item(s)' own non-tethered presets,
+  `derived_batch_items.filter(is_kitchen_batch=False)` — deliberately excludes a
+  KitchenBatch target like Chipo, which already has its own raw-material-draw flow) driving
+  a new "🍗 Gawa" button on the raw item's own tile (owner/manager or `can_receive_stock`
+  staff, hidden once out of stock), opening a new modal listing the finished item's cuts
+  with a qty input per cut and an optional cost override — same "server resolution is
+  authoritative" convention as every other checkout surface in this app. 21 new tests
+  (`PortioningEventTest` — model-layer happy path, explicit-cost override, insufficient
+  balance, no-real-lines, backdating; endpoint happy path, unlinked-pair rejection,
+  duplicate-token block, cross-business rejection, and the full staff/shift/station
+  permission matrix mirroring `KitchenStockReceipt`'s own coverage) plus 9 for auto-close
+  (`KitchenStockReceiptAutoCloseTest`). One migration (0169, additive). 2117 tests pass
+  (core + accounts).
