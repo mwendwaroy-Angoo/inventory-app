@@ -150,6 +150,16 @@ def kitchen_wastage(request):
     if not item:
         return JsonResponse({"ok": False, "error": "Bidhaa haikupatikana"}, status=404)
 
+    # 2026-08-21 fix: the picker itself no longer offers a KitchenBatch or
+    # BUNCH-mode item (see wastage_items above for the full reasoning), but
+    # the backend must not trust a stale client either — reject one here too
+    # rather than silently create a mispriced, unaccounted-for Transaction.
+    if item.is_kitchen_batch or (item.is_produce and item.produce_mode == 'BUNCH'):
+        return JsonResponse({
+            "ok": False,
+            "error": "Bidhaa hii ina njia yake ya kurekodi upotezaji — tumia 🗑 kwenye tile yake.",
+        }, status=400)
+
     try:
         qty = Decimal(str(request.POST.get("qty", "1")))
         if qty <= 0:
@@ -515,10 +525,29 @@ def kitchen_board(request):
                     'is_raw_material_source': item.derived_batch_items.exists(),
                 })
 
-    # Flat list for the food wastage modal — all kitchen items, sorted by name.
+    # Flat list for the food wastage modal — PORTION items only. 2026-08-21
+    # fix (cross-sectional sweep after the sales_dashboard naive-cost-formula
+    # bug, live report): this used to also include batch_items (ProduceBunch-
+    # tracked BUNCH items) and kitchen_batches (KitchenBatch items, e.g.
+    # Chipo). kitchen_wastage()'s Transaction.objects.create() never sets
+    # produce_bunch=/kitchen_batch= on the row it creates, so even after
+    # switching its KES formula to loss_value() (see kitchen_wastage() below)
+    # that helper falls through to the same wrong item.cost_price branch
+    # anyway — for a KitchenBatch item, item.cost_price is deliberately the
+    # WHOLE batch's cost_total (not a per-portion price), so a wasted "2"
+    # would misprice by however large the batch is; for a BUNCH item, cost
+    # lives on the ProduceBunch, not the item, and current_balance() has no
+    # real meaning for either type via a bare qty typed here. Both already
+    # have their own correct, dedicated discard flows (🗑 Tupa on a
+    # KitchenBatch tile → discard_kitchen_batch; 🗑 on a bunch tile →
+    # discard_bunch) that properly reverse the right envelope — this generic
+    # modal should only ever offer what it can price and account for
+    # correctly. Matches bar_board.html's own non_keg_items precedent for
+    # record_breakage(), which is scoped the same way for the identical
+    # reason.
     wastage_items = sorted(
         [{'id': i['id'], 'name': i['name'], 'unit': i.get('unit', '')}
-         for i in portion_items + batch_items + kitchen_batches],
+         for i in portion_items],
         key=lambda x: x['name'],
     )
 

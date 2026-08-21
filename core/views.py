@@ -3146,6 +3146,18 @@ def sales_dashboard(request):
         item_sales[key]["cost"] += t.cost()
         item_sales[key]["profit"] += t.profit()
 
+    # 2026-08-21 fix (live report — Roy: Blue Ice showed "55.60000000000003"
+    # while KC Ginger showed a clean "40.25"): units_sold accumulates raw
+    # Python floats across many fractional preset sales (e.g. 0.25/0.5
+    # increments) with no rounding anywhere in the pipeline — ordinary
+    # binary-float summation noise, the exact bug already fixed for
+    # analytics_views.py's top_products/store_list on 2026-08-11 but never
+    # applied to this sibling view. Round every accumulated total to 2 dp
+    # before it ever reaches the template (which has no floatformat filter
+    # on this field either).
+    for row in item_sales.values():
+        row["units_sold"] = round(row["units_sold"], 2)
+
     item_sales_list = sorted(
         item_sales.values(), key=lambda x: x["revenue"], reverse=True
     )
@@ -3164,10 +3176,21 @@ def sales_dashboard(request):
         type='OwnerConsumption',
         date__gte=start_date,
         date__lte=end_date,
-    ).select_related('item')
+    ).select_related('item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset')
+    # 2026-08-21 fix (live report — Roy: "Owner Drawings" showed
+    # KES -11,702,202 and "Net Profit" -11,633,993 on a business doing
+    # ~KES 212k of revenue for the period). Root cause: the naive
+    # `abs(qty) * item.cost_price` formula is correct only for a plain
+    # item — for a keg pour, qty is stored in ML while item.cost_price is
+    # priced per WHOLE KEG (thousands of KES), so a single ~500ml owner
+    # draw computed as 500 * cost_per_keg, inflating by roughly 1000x.
+    # This is the exact same bug already found and fixed for
+    # analytics_views.py's wastage_loss/void_loss/owner_drawings_cost on
+    # 2026-08-11 (Transaction.loss_value() was built specifically for
+    # this) — that fix never reached this sibling view. Switched to the
+    # shared, keg/bunch/batch/preset-aware helper.
     owner_drawings_cost = round(sum(
-        abs(float(t.qty or 0)) * float(t.item.cost_price or 0)
-        for t in owner_txns
+        t.loss_value() for t in owner_txns
     ), 2)
     net_profit_after_drawings = round(total_profit - owner_drawings_cost, 2)
 

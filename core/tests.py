@@ -4520,6 +4520,92 @@ class AnalyticsUnitsFloatRoundingTest(TestCase):
         self.assertEqual(units, 0.3)
 
 
+class SalesDashboardUnitsFloatAndOwnerDrawingsTest(TestCase):
+    """2026-08-21 live report (Roy, screenshots): "Blue Ice" showed
+    "55.60000000000003" units on /sales/ (Sales by Item) while "KC Ginger"
+    showed a clean "40.25" — the exact same binary-float summation noise
+    already fixed for analytics_views.py's top_products/store_list on
+    2026-08-11 (AnalyticsUnitsFloatRoundingTest above), but sales_dashboard()
+    in core/views.py is a completely separate, never-audited view with its
+    own copy of the same unrounded accumulation. Same screenshots also
+    showed "Owner Drawings -11,702,202" and "Net Profit -11,633,993" on a
+    business doing ~KES 212k of revenue — the naive `abs(qty) *
+    item.cost_price` formula misprices a keg pour by ~1000x (qty in ml vs
+    cost_price per whole keg), the identical bug already fixed for
+    analytics_views.py's wastage_loss/void_loss/owner_drawings_cost on
+    2026-08-11 via Transaction.loss_value(), never applied to this sibling
+    view either."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Sales Dash Float Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='salesdash_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Blue Ice',
+            material_no='SDF-01', selling_price=Decimal('80'), cost_price=Decimal('20'),
+        )
+
+    def test_units_sold_never_shows_float_noise(self):
+        today = timezone.localdate()
+        for _ in range(3):
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('-0.1'), sale_amount=Decimal('20'),
+                payment_method='cash', date=today,
+            )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/sales/?period=month')
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.context['item_sales_list']
+        self.assertEqual(len(rows), 1)
+        units = rows[0]['units_sold']
+        self.assertEqual(units, round(units, 2), 'units_sold must already be exactly 2dp-rounded')
+        self.assertEqual(units, 0.3)
+
+    def test_owner_drawings_from_keg_pour_uses_proportional_cost_not_naive_formula(self):
+        """A single ~500ml owner draw from a keg costing 12000 with a
+        20000 target must price at the same proportional share cost()
+        already uses for a real sale — NOT abs(qty) * item.cost_price
+        (500 * 12000 = 6,000,000, the exact bug reported)."""
+        keg_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Gold',
+            material_no='SDF-KEG', is_keg=True,
+            selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=keg_item,
+            cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
+            status='TAPPED',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=keg_item, type='OwnerConsumption',
+            qty=Decimal('-500'), sale_amount=Decimal('200'),
+            keg_barrel=barrel, date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/sales/?period=month')
+        self.assertEqual(resp.status_code, 200)
+        # Correct proportional cost: 200 * 12000 / 20000 = 120
+        self.assertEqual(resp.context['owner_drawings_cost'], 120.0)
+        self.assertLess(
+            abs(resp.context['owner_drawings_cost']), 10000,
+            "must never reach the naive-formula scale of millions of KES",
+        )
+
+    def test_owner_drawings_from_plain_item_unaffected(self):
+        """A plain (non-keg/non-bunch/non-batch/non-preset) owner draw must
+        still price exactly as before — abs(qty) * item.cost_price, now via
+        loss_value() instead of the removed inline formula."""
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='OwnerConsumption',
+            qty=Decimal('-3'), date=timezone.localdate(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/sales/?period=month')
+        self.assertEqual(resp.context['owner_drawings_cost'], 60.0)  # 3 * 20
+
+
 class AnalyticsDashboardKitchenBatchPresetQueryCountTest(TestCase):
     """2026-08-19 live incident (Roy, correlated with a real Render
     "HTTP health check failed" 502): "the period filter... is not
@@ -6907,6 +6993,97 @@ class KitchenWastageExplainsItselfTest(TestCase):
         self.client.post('/kitchen/wastage/', {'item_id': self.item.id, 'qty': '1', 'note': 'test'})
         notif = Notification.objects.filter(user=self.owner, title__icontains='Chakula').first()
         self.assertIsNotNone(notif, 'Owner must be notified when kitchen wastage is logged')
+
+
+class KitchenWastageExcludesBatchBunchItemsTest(TestCase):
+    """2026-08-21 fix (cross-sectional sweep after the sales_dashboard
+    naive-cost-formula report): kitchen_wastage()'s item picker used to also
+    offer KitchenBatch items (e.g. Chipo) and BUNCH-mode produce items —
+    its Transaction.objects.create() call never sets kitchen_batch=/
+    produce_bunch= on the row it creates, so item.cost_price is not even
+    the same unit of account for either type (for a KitchenBatch item it's
+    the WHOLE batch's cost_total; for a bunch item cost lives on the
+    ProduceBunch). Both already have their own correct, dedicated discard
+    flows. Fixed by excluding both from the offered item list and rejecting
+    either server-side even if a stale client still submits one."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kitchen Wastage Scope Biz')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kwscope_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.portion_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Portion Item',
+            material_no='KWSCOPE-01', unit='Pcs', selling_price=Decimal('80'), cost_price=Decimal('40'),
+        )
+        self.batch_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo Batch',
+            material_no='KWSCOPE-02', unit='Batch', selling_price=Decimal('0'),
+            cost_price=Decimal('1500'), is_kitchen_batch=True,
+        )
+        KitchenBatch.objects.create(
+            business=self.biz, store=self.kitchen_store, item=self.batch_item,
+            cost_total=Decimal('1500'), status='OPEN',
+        )
+        self.bunch_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Grill Bunch',
+            material_no='KWSCOPE-03', unit='Bunch', selling_price=Decimal('0'),
+            is_produce=True, produce_mode='BUNCH',
+        )
+
+    def test_portion_items_still_appear_in_picker(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/kitchen/')
+        import json as _json
+        ids = [i['id'] for i in _json.loads(resp.context['wastage_items_json'])]
+        self.assertIn(self.portion_item.id, ids)
+
+    def test_kitchen_batch_item_excluded_from_picker(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/kitchen/')
+        import json as _json
+        ids = [i['id'] for i in _json.loads(resp.context['wastage_items_json'])]
+        self.assertNotIn(self.batch_item.id, ids)
+
+    def test_bunch_item_excluded_from_picker(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/kitchen/')
+        import json as _json
+        ids = [i['id'] for i in _json.loads(resp.context['wastage_items_json'])]
+        self.assertNotIn(self.bunch_item.id, ids)
+
+    def test_backend_rejects_kitchen_batch_item_even_if_submitted(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/kitchen/wastage/', {
+            'item_id': self.batch_item.id, 'qty': '2',
+        })
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        self.assertFalse(
+            Transaction.objects.filter(business=self.biz, item=self.batch_item, type='Wastage').exists()
+        )
+
+    def test_backend_rejects_bunch_item_even_if_submitted(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/kitchen/wastage/', {
+            'item_id': self.bunch_item.id, 'qty': '2',
+        })
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        self.assertFalse(
+            Transaction.objects.filter(business=self.biz, item=self.bunch_item, type='Wastage').exists()
+        )
+
+    def test_portion_item_still_records_normally(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/kitchen/wastage/', {
+            'item_id': self.portion_item.id, 'qty': '1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(
+            Transaction.objects.filter(business=self.biz, item=self.portion_item, type='Wastage').exists()
+        )
 
 
 class KitchenEnvelopeSaleLockTest(TransactionTestCase):
@@ -26263,6 +26440,55 @@ class AdjustmentNoRealLossTest(TestCase):
         today = timezone.localdate()
         contrib = _staff_contribution(owner_profile, self.biz, today, today)
         self.assertEqual(contrib['wastage_kes'], 0.0)
+
+
+class HakiWastageKesBunchPricingTest(TestCase):
+    """2026-08-21 fix (cross-sectional sweep after the sales_dashboard
+    naive-cost-formula report): _staff_contribution()'s wastage_kes used
+    to sum Abs(qty) * item.cost_price directly in SQL — wrong for a
+    ProduceBunch.discard() Wastage row, whose qty is a FRACTION OF THE
+    BUNCH'S TARGET REVENUE, priced against bunch.cost_price, never
+    item.cost_price (see Transaction._stock_movement_cost()'s own bunch
+    branch). Switched to the shared loss_value() helper."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Haki Bunch Pricing Biz')
+        self.store = Store.objects.create(business=self.biz, name='Kibanda')
+        self.owner = User.objects.create_user(username='hbp_owner', password='x')
+        self.owner_profile = UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='hbp_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Sukuma Bunch',
+            material_no='HBP-01', unit='Bunch', is_produce=True, produce_mode='BUNCH',
+            # Deliberately a very different value from bunch.cost_price below
+            # — proves the fix actually reads the bunch's own cost, not this.
+            cost_price=Decimal('9999'),
+        )
+
+    def test_bunch_discard_wastage_priced_from_bunch_not_item(self):
+        bunch = ProduceBunch.objects.create(
+            business=self.biz, item=self.item, size='MEDIUM',
+            cost_price=Decimal('50'), target_revenue=Decimal('200'),
+            revenue_collected=Decimal('40'), status='OPEN',
+        )
+        # discard() creates a Wastage txn with qty = -(unrecovered fraction
+        # of target_revenue), recorded_by is set manually below since
+        # discard() itself doesn't take a recorded_by param.
+        txn = bunch.discard(reason='Wilted')
+        txn.recorded_by = self.staff
+        txn.save(update_fields=['recorded_by'])
+
+        from core.haki_views import _staff_contribution
+        today = timezone.localdate()
+        staff_profile = UserProfile.objects.get(user=self.staff)
+        contrib = _staff_contribution(staff_profile, self.biz, today, today)
+
+        # Correct: unrecovered fraction (200-40)/200 = 0.8, *bunch.cost_price(50) = 40
+        self.assertAlmostEqual(contrib['wastage_kes'], 40.0, places=2)
+        # The naive (buggy) formula would have used item.cost_price(9999)
+        # instead — must never appear.
+        self.assertNotAlmostEqual(contrib['wastage_kes'], 9999.0 * 0.8, places=2)
 
 
 # ── Revenue tile survives midnight while a shift stays open (2026-08-01) ────

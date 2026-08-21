@@ -182,15 +182,26 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
     # explicitly marked "not a real loss" (e.g. reversing a duplicate-receipt
     # bug) must not be attributed to a staffer's own accountability record
     # as if it were a real handling loss (2026-07-31 live report).
-    wastage_kes = float(Transaction.objects.filter(
-        business=business, type='Wastage', recorded_by=user,
-        date__gte=date_from, date__lte=date_to,
-    ).exclude(invoice_no='[ADJ-NOLOSS]').aggregate(
-        t=Sum(
-            Abs(F('qty')) * Coalesce(F('item__cost_price'), Value(0)),
-            output_field=DecimalField(max_digits=12, decimal_places=2),
+    # 2026-08-21 fix (cross-sectional sweep after the sales_dashboard
+    # naive-cost-formula report): this used to sum
+    # Abs(qty) * item.cost_price directly in SQL — correct for a plain item,
+    # but a bunch-discarded Wastage row (ProduceBunch.discard()) stores
+    # qty as a FRACTION OF THE BUNCH'S TARGET REVENUE and prices against
+    # bunch.cost_price, not item.cost_price (see Transaction.
+    # _stock_movement_cost()'s own bunch branch and docstring — "never
+    # item.cost_price, which isn't even the same unit of account for a
+    # bunch-tracked produce item") — misattributing a staffer's wastage_kes
+    # for any discarded batch/bunch they handled. Switched to the shared
+    # loss_value() helper, iterated in Python (same pattern already used by
+    # analytics_views.py's wastage_loss/void_loss for the identical reason).
+    wastage_kes = sum(
+        t.loss_value() for t in Transaction.objects.filter(
+            business=business, type='Wastage', recorded_by=user,
+            date__gte=date_from, date__lte=date_to,
+        ).exclude(invoice_no='[ADJ-NOLOSS]').select_related(
+            'item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
         )
-    )['t'] or 0)
+    )
 
     variance_loss_kes = float(StockVarianceQuery.objects.filter(
         attributed_shift__staff=user, attributed_shift__business=business,
