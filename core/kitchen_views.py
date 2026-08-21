@@ -25,7 +25,7 @@ from django.views.decorators.http import require_POST
 from .models import (
     BarTab, BarTabEntry, Customer, Item, ItemPortionPreset, KitchenBatch,
     KitchenConsumableLog, KitchenStockReceipt, KitchenStockReceiptLine,
-    PortioningEvent, ProduceBunch, Receipt, Store, Transaction,
+    PortioningEvent, PortioningEventLine, ProduceBunch, Receipt, Store, Transaction,
 )
 from . import keg_metrics
 
@@ -293,6 +293,26 @@ def kitchen_board(request):
             .annotate(anchor_id=_KCoalesce(F('preset__tracks_stock_of_id'), F('preset_id')))
             .values('anchor_id').annotate(total=Sum('qty_received')).values_list('anchor_id', 'total')
         )
+        # 2026-08-21 live report (Roy, Monsoon Inn — Kuku showing "KES 0",
+        # all presets hidden): Gawa Kuku (PortioningEvent, built earlier the
+        # same session) creates real stock-adding Transactions for each cut
+        # but was NEVER counted here — only KitchenStockReceiptLine was.
+        # Real stock portioned via Gawa Kuku correctly grew the item's own
+        # balance (current_balance()), but the per-preset visibility gate
+        # never saw it as "received" for any preset, while sales kept
+        # draining _sold_by_preset — eventually every preset's anchor tally
+        # went to zero/negative and the whole tile fell back to a bare,
+        # preset-less "sell at item.selling_price" (KES 0, since Kuku's own
+        # base price is 0 by design — all real pricing lives on presets).
+        # Not related to the KitchenStockReceipt auto-close fix (that only
+        # touches receipt.status, never this query, which was never
+        # filtered by status in the first place).
+        for _pe_anchor_id, _pe_total in (
+            PortioningEventLine.objects.filter(event__store=kitchen_store)
+            .annotate(anchor_id=_KCoalesce(F('preset__tracks_stock_of_id'), F('preset_id')))
+            .values('anchor_id').annotate(total=Sum('qty_produced')).values_list('anchor_id', 'total')
+        ):
+            _received_by_preset[_pe_anchor_id] = float(_received_by_preset.get(_pe_anchor_id) or 0) + float(_pe_total)
         _sold_by_preset = dict(
             Transaction.objects.filter(
                 business=business, type='Issue', item__store=kitchen_store,
@@ -331,6 +351,16 @@ def kitchen_board(request):
                 .annotate(anchor_id=_KCoalesce(F('preset__tracks_stock_of_id'), F('preset_id')))
                 .filter(anchor_id=_anchor_id)
                 .aggregate(total=Sum('qty_received'))['total'] or 0
+            ) + float(
+                # Gawa Kuku contributions since the restock point too — see
+                # the 2026-08-21 comment above for why this must mirror the
+                # lifetime sum's own PortioningEventLine inclusion.
+                PortioningEventLine.objects.filter(
+                    event__store=kitchen_store, event__created_at__gte=_anchor_dt,
+                )
+                .annotate(anchor_id=_KCoalesce(F('preset__tracks_stock_of_id'), F('preset_id')))
+                .filter(anchor_id=_anchor_id)
+                .aggregate(total=Sum('qty_produced'))['total'] or 0
             )
             _sold_by_preset[_anchor_id] = float(
                 Transaction.objects.filter(

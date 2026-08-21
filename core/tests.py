@@ -22128,6 +22128,42 @@ class PortioningEventTest(TestCase):
         self.assertFalse(resp.json().get('ok'))
         self.assertEqual(resp.status_code, 403)
 
+    def test_gawa_kuku_receiving_keeps_presets_visible_on_kitchen_board(self):
+        """2026-08-21 same-day live report (Roy, Monsoon Inn): Kuku's tile
+        showed "KES 0" with all 4 presets hidden ("4 zimefichwa") right
+        after portioning a bird via Gawa Kuku. Root cause: the cut-
+        visibility gate's received/sold anchor tally only ever counted
+        KitchenStockReceiptLine — a Gawa Kuku event correctly grew the
+        item's own real balance but was invisible to this gate, so a sale
+        right after portioning could immediately push received-sold <= 0
+        and hide every preset even though real stock still exists."""
+        PortioningEvent.create_locked(
+            business=self.biz, store=self.store, raw_item=self.raw_item,
+            finished_item=self.finished_item,
+            lines_data=[
+                {'preset_id': self.bawa.id, 'qty_produced': Decimal('2')},
+                {'preset_id': self.paja.id, 'qty_produced': Decimal('2')},
+            ],
+            recorded_by=self.owner_user,
+        )
+        # Sell 1 Bawa — before the fix, _received_by_preset had NOTHING for
+        # this preset (Gawa Kuku never wrote a KitchenStockReceiptLine), so
+        # even this single sale would have driven received-sold negative
+        # and hidden it, despite 1 Bawa physically remaining.
+        Transaction.objects.create(
+            business=self.biz, item=self.finished_item, type='Issue',
+            qty=Decimal('-1'), preset=self.bawa, payment_method='cash',
+            sale_amount=Decimal('80'),
+        )
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.status_code, 200)
+        portion_items = json.loads(resp.context['portion_items'])
+        row = next(r for r in portion_items if r['id'] == self.finished_item.id)
+        visible_labels = {p['label'] for p in row['presets']}
+        self.assertIn('Bawa', visible_labels)
+        self.assertIn('Paja', visible_labels)
+        self.assertEqual(row['hidden_presets'], [])
+
 
 class KitchenViabilityTest(TestCase):
     """2026-08-21 live request, in a real business owner's voice: "revenue

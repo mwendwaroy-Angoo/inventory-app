@@ -7546,3 +7546,27 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   tests across 4 test classes (`ShiftStockCountPhaseTest` +4 for midshift coexistence/
   exclusion, `StockTakeApiAndKitchenBoardBatchMetricsTest`, `BarBoardApiActiveWaitressBatch
   ingTest`, `AnalyticsStockHealthBatchMetricsTest`). One migration (0171, additive).
+- Kitchen preset visibility — Gawa Kuku receiving gap (2026-08-21, live on-site at Monsoon
+  Inn). Roy: Kuku's tile showed "KES 0" with "4 zimefichwa" (4 hidden) right after
+  portioning a bird via Gawa Kuku, asked whether the earlier auto-close/stock-receipt work
+  caused it. Traced directly: `kitchen_board()`'s cut-visibility gate (`_received_by_preset`/
+  `_sold_by_preset`, the received-minus-sold anchor tally deciding whether a preset is
+  sellable) only ever summed `KitchenStockReceiptLine.qty_received` — `PortioningEvent`
+  (Gawa Kuku, built earlier the same session) creates real stock-adding Transactions per cut
+  but writes to a completely separate model, `PortioningEventLine`, never counted here. Real
+  stock portioned via Gawa Kuku correctly grew the item's own balance (`current_balance()`,
+  confirmed correct in Roy's own screenshot — "21 Pcs") but was invisible to the PER-PRESET
+  gate; the very next sale against any cut drained `_sold_by_preset` with nothing on the
+  "received" side to offset it, pushing every preset's anchor tally to zero/negative and
+  hiding all of them at once — falling back to a bare, preset-less tile at `item.
+  selling_price` (KES 0, since Kuku's own base price is always 0 by design, per the
+  2026-07-29 per-cut-costing entry). Confirmed NOT related to the KitchenStockReceipt auto-
+  close fix — that only ever touches `receipt.status`, and this query was never filtered by
+  status in the first place. Fixed by summing `PortioningEventLine.qty_produced` (same
+  `tracks_stock_of` anchor-coalescing logic) into `_received_by_preset` — both the lifetime
+  sum and the `restock_anchor_at`-windowed override (keyed off `PortioningEvent.created_at`
+  instead of `KitchenStockReceiptLine.receipt.received_on`, the closest equivalent "when did
+  this stock arrive" signal Gawa Kuku has). 1 new regression test reproducing the exact
+  scenario end-to-end (portion via Gawa Kuku, sell one cut, assert both presets stay visible
+  and `hidden_presets` is empty) — before the fix, this test failed exactly as Roy described.
+  No migrations.
