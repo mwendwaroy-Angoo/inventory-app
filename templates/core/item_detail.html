@@ -179,29 +179,58 @@
 
 <hr class="gold-divider">
 
-<!-- Transaction History -->
-<h4 class="page-title mb-3">{% trans 'Transaction History' %}</h4>
+<!-- Item Journey — 2026-08-21 urgent live request: "I need to see balances
+     standing at a certain point when a specific transactional function was
+     happening, and the user responsible per action" — every row shows the
+     running balance immediately AFTER it (Item.balance_journey(), the same
+     computation current_balance() itself is built from) plus who recorded
+     it, so a physical-vs-system discrepancy can be traced to an exact
+     moment and person instead of guessed at. -->
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <h4 class="page-title mb-0">🧭 {% trans 'Safari ya Bidhaa (Item Journey)' %}</h4>
+    {% if journey %}
+    <a href="?order={% if journey_order == 'asc' %}desc{% else %}asc{% endif %}"
+       class="btn btn-sm btn-outline-secondary">
+        {% if journey_order == 'asc' %}
+            🔄 {% trans 'Onyesha mpya kwanza' %}
+        {% else %}
+            🔄 {% trans 'Onyesha tarehe ya kwanza juu (hadithi kamili)' %}
+        {% endif %}
+    </a>
+    {% endif %}
+</div>
 
-{% if transactions %}
+{% if journey %}
 <div class="table-responsive">
     <table class="table table-hover">
         <thead>
             <tr>
-                <th>{% trans 'Date' %}</th>
+                <th>{% trans 'Tarehe / Muda' %}</th>
                 <th>{% trans 'Type' %}</th>
-                <th>{% trans 'Quantity' %}</th>
+                <th>{% trans 'Mabadiliko' %}</th>
+                <th>{% trans 'Salio Baada' %}</th>
+                <th>{% trans 'Nani' %}</th>
+                <th>{% trans 'Malipo' %}</th>
                 <th>{% trans 'Recipient' %}</th>
                 <th>{% trans 'Invoice No' %}</th>
             </tr>
         </thead>
         <tbody>
-            {% for trans in transactions %}
+            {% for entry in journey %}
+            {% with trans=entry.txn %}
             <tr>
-                <td>{{ trans.date }}</td>
+                <td>
+                    {{ trans.date }}
+                    {% if trans.created_at %}<br><small style="color:var(--muted)">{{ trans.created_at|date:"H:i" }}</small>{% endif %}
+                </td>
                 <td>
                     {% if trans.invoice_no == '[ADJ]' %}
                     <span class="type-pill type-adjustment" title="{% trans 'Stock-count correction, not a real delivery/loss' %}">
                         🔧 {% trans 'Rekebisho' %}
+                    </span>
+                    {% elif trans.invoice_no == '[ADJ-NOLOSS]' %}
+                    <span class="type-pill type-adjustment" style="background:rgba(110,231,183,0.12); color:#6ee7b7;" title="{% trans 'Stock-count correction — marked as not a real loss' %}">
+                        🔧 {% trans 'Rekebisho' %} ({% trans 'hakuna hasara' %})
                     </span>
                     {% elif trans.type == 'Draw' %}
                     <span class="type-pill type-draw" title="{% trans 'Raw material drawn into a kitchen batch — not a sale' %}">
@@ -220,9 +249,31 @@
                         {% if trans.qty > 0 %}+{% endif %}{{ trans.qty }} {{ item.unit }}
                     </strong>
                 </td>
+                <td><strong style="color:var(--gold)">{{ entry.running_balance }}</strong></td>
+                <td>
+                    {% if trans.recorded_by %}
+                        {{ trans.recorded_by.get_full_name|default:trans.recorded_by.username }}
+                    {% else %}
+                        <span style="color:var(--muted)">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if trans.payment_method == 'mpesa' %}
+                        <span style="color:#4caf50;">📱 M-Pesa</span>
+                    {% elif trans.payment_method == 'credit' %}
+                        <span style="color:var(--warning);">📒 Credit</span>
+                    {% elif trans.payment_method == 'cash' %}
+                        <span style="color:var(--gold);">💵 Cash</span>
+                    {% elif trans.payment_method == 'void' %}
+                        <span style="color:var(--raspberry);">🗑 Void</span>
+                    {% else %}
+                        <span style="color:var(--muted);">—</span>
+                    {% endif %}
+                </td>
                 <td>{{ trans.recipient|default:"—" }}</td>
                 <td>{{ trans.invoice_no|default:"—" }}</td>
             </tr>
+            {% endwith %}
             {% endfor %}
         </tbody>
     </table>

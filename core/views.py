@@ -1989,10 +1989,24 @@ def item_detail(request, item_id):
         return redirect("home")
 
     item = get_object_or_404(Item, id=item_id, store__business=user_profile.business)
-    transactions = item.transactions.all().order_by("-date")
+    # 2026-08-21 urgent live request (Roy, Monsoon Inn): "staff physically
+    # counted 8 Dallas bottles but the system showed 16 — I need to know if
+    # the owner received double via the latest receipt, or if there were
+    # unrecorded sales." Item.balance_journey() (core/models.py) is the
+    # canonical, single computation of "balance at every point in this
+    # item's history" — reused here and by diagnose_item_balance_trail so
+    # the two can never disagree. ?order=asc reads oldest-first (the literal
+    # "journey/story" framing); default stays newest-first to match every
+    # other history table in this app.
+    journey = item.balance_journey()
+    order = request.GET.get("order", "desc")
+    if order != "asc":
+        journey = list(reversed(journey))
+        order = "desc"
     context = {
         "item": item,
-        "transactions": transactions,
+        "journey": journey,
+        "journey_order": order,
         "today": timezone.now().strftime("%B %d, %Y"),
     }
     return render(request, "core/item_detail.html", context)

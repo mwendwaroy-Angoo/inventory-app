@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 from accounts.models import Business
 from core.models import BusinessException, Item, Transaction
@@ -26,13 +27,26 @@ class Command(BaseCommand):
         "--item=NAME shows one item's full transaction ledger + every shrinkage "
         "exception ever flagged for it, in one place.\n"
         "--all-items scans every item in the business for unacknowledged shrinkage "
-        "exceptions and reports which ones have a live, uncorrected gap."
+        "exceptions and reports which ones have a live, uncorrected gap.\n\n"
+        "2026-08-21 same-item follow-up (Roy — 'staff physically counted 8 Dallas "
+        "bottles but the system showed 16, I need to know if the owner received "
+        "double via the latest receipt, or if there were unrecorded sales'): "
+        "--item mode now also flags two Receipt transactions close together in time "
+        "with matching/similar quantities (the concrete signature of a duplicate "
+        "delivery entry), and --physical=N prints the exact system-vs-physical gap "
+        "with a plain-language explanation of what each direction of gap implies. "
+        "The same ledger this prints is also now shown directly in the app, per "
+        "item, at /stock/<item_id>/ (Item.balance_journey())."
     )
 
     def add_arguments(self, parser):
         parser.add_argument('--business', type=str, required=True, help='Business name substring.')
         parser.add_argument('--item', type=str, help='Item description (exact, case-insensitive).')
         parser.add_argument('--all-items', action='store_true', help='Scan every item with a shrinkage exception.')
+        parser.add_argument(
+            '--physical', type=float,
+            help='The real physical count just taken — prints the exact gap vs the system balance (--item mode only).',
+        )
 
     def handle(self, *args, **options):
         businesses = Business.objects.filter(name__icontains=options['business'])
@@ -55,7 +69,7 @@ class Command(BaseCommand):
                 self.stdout.write(f"[{business.name}] No item named '{options['item']}'.")
                 continue
             for item in items:
-                self._diagnose_one(business, item)
+                self._diagnose_one(business, item, physical=options.get('physical'))
 
     def _scan_all(self, business):
         self.stdout.write(self.style.WARNING(f"\n=== [{business.name}] Shrinkage exceptions ==="))
@@ -77,7 +91,7 @@ class Command(BaseCommand):
             self.stdout.write(f"    {exc.detail}")
             self.stdout.write(f"    ({ack})")
 
-    def _diagnose_one(self, business, item):
+    def _diagnose_one(self, business, item, physical=None):
         self.stdout.write(self.style.WARNING(
             f"\n=== [{business.name}] Item #{item.id}: {item.description} ({item.unit}) ==="
         ))
@@ -184,3 +198,56 @@ class Command(BaseCommand):
             ))
             for o in others:
                 self.stdout.write(f"    item#{o.id} material_no={o.material_no!r} store={o.store} balance={o.current_balance()}")
+
+        # ── Duplicate-receipt heuristic (2026-08-21) ────────────────────────
+        # "was the owner receiving double" — two Receipts close together in
+        # time with a matching/near-matching qty is the concrete signature
+        # of one physical delivery entered into the system twice.
+        self.stdout.write(self.style.WARNING("\n-- Possible duplicate receipts --"))
+        receipts = [(t, timezone.localtime(t.created_at)) for t in txns if t.type == 'Receipt' and t.created_at]
+        found_dup = False
+        for i in range(len(receipts)):
+            t1, w1 = receipts[i]
+            for j in range(i + 1, len(receipts)):
+                t2, w2 = receipts[j]
+                gap_hours = abs((w2 - w1).total_seconds()) / 3600
+                if gap_hours > 48:
+                    continue
+                same_qty = t1.qty == t2.qty
+                similar_qty = t1.qty != 0 and abs(t1.qty - t2.qty) / abs(t1.qty) <= Decimal('0.1')
+                if same_qty or similar_qty:
+                    found_dup = True
+                    self.stdout.write(self.style.ERROR(
+                        f"  ⚠️  txn#{t1.id} ({w1}, qty={t1.qty}, invoice={t1.invoice_no or '-'}) and "
+                        f"txn#{t2.id} ({w2}, qty={t2.qty}, invoice={t2.invoice_no or '-'}) are "
+                        f"{gap_hours:.1f}h apart with {'matching' if same_qty else 'similar'} "
+                        f"quantities — check whether this was one delivery entered twice."
+                    ))
+        if not found_dup:
+            self.stdout.write("  None found — no two Receipts close together with matching/similar qty.")
+
+        # ── Physical-count gap (2026-08-21) ─────────────────────────────────
+        if physical is not None:
+            current = item.current_balance()
+            gap = current - Decimal(str(physical))
+            self.stdout.write(self.style.WARNING(
+                f"\n-- Physical count given: {physical} {item.unit} vs system {current} {item.unit} --"
+            ))
+            if gap == 0:
+                self.stdout.write(self.style.SUCCESS("  ✓ System matches physical count exactly."))
+            elif gap > 0:
+                self.stdout.write(self.style.ERROR(
+                    f"  System shows {gap} {item.unit} MORE than what's physically there. Either "
+                    f"(a) a Receipt above didn't reflect a real delivery — check the duplicate-"
+                    f"receipt flag above, or a receipt entered against the wrong item, or "
+                    f"(b) real sales/wastage happened that were never recorded as a Transaction "
+                    f"— an unrecorded sale leaves NO trace in this ledger at all, so its ABSENCE, "
+                    f"not a wrong entry, is what to look for (ask staff directly whether every "
+                    f"sale of this item went through Quick Sell/Bar Board)."
+                ))
+            else:
+                self.stdout.write(self.style.ERROR(
+                    f"  System shows {abs(gap)} {item.unit} FEWER than what's physically there — "
+                    f"a real receipt/return was never recorded, or an earlier Rekebisha "
+                    f"overcorrected downward."
+                ))

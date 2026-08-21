@@ -7440,3 +7440,36 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   itself — the diagnostic command is the next step once he can run it against the real data.
   8 new tests (`TransactionHistoryDateCorrectionFallbackTest`). No migrations. 2121 tests
   pass (core + accounts).
+- Item Journey — per-item balance-at-every-point + who, urgent live request (2026-08-21).
+  Roy: staff physically counted 8 Dallas bottles, system showed 16 — "I need to know if the
+  business owner might have received double the amount in system based on the latest
+  receipt, or if there were unrecorded sales... widening the scope of the transaction
+  history of each and every stock item via stock list or history should tell a story or
+  show the journey of the item." New `Item.balance_journey()` (`core/models.py`, right next
+  to `current_balance()`) — the single canonical computation: every `Transaction` for the
+  item ordered `(date, created_at, id)`, each carrying the running BIN balance immediately
+  after it, starting from `opening_bin_balance`. Deliberately mirrors `current_balance()`'s
+  own exact math so the final entry's `running_balance` always equals `current_balance()`
+  exactly — locked in by a dedicated test, never re-derived separately. `item_detail()`
+  (`/item/<id>/`, already the click-through destination from every `stock_list.html` row —
+  no new navigation needed) now renders this as "🧭 Safari ya Bidhaa," each row showing
+  time-of-day, running balance, and who recorded it (`recorded_by`, already an existing
+  field on every `Transaction` — simply never surfaced anywhere before), plus payment
+  method for context. Defaults to newest-first (matching every other history table in this
+  app); a `?order=asc` toggle switches to oldest-first — the literal "read it like a story"
+  framing — since a forensic investigation like Roy's often wants to start from a known-good
+  count and read forward. **Avoided building a duplicate diagnostic tool**: `diagnose_stock_
+  shortfalls --item=` (2026-08-19, built for this SAME Dallas item two days earlier) already
+  prints a full chronological ledger with running balance + who — rather than ship a second,
+  90%-overlapping command, extended that one instead with the two genuinely new pieces of
+  investigative value Roy's new question needs: a duplicate-receipt heuristic (flags two
+  Receipt transactions within 48h with matching/near-matching quantities — the concrete
+  signature of one delivery entered twice) and a new `--physical=N` flag that prints the
+  exact system-vs-physical gap with a plain-language explanation of what each direction
+  implies (system HIGHER → check the duplicate-receipt flag above, or ask staff whether
+  every sale went through Quick Sell/Bar Board, since an unrecorded sale leaves NO trace in
+  the ledger at all — its ABSENCE, not a wrong entry, is the signature to look for; system
+  LOWER → an unrecorded receipt/return, or an earlier Rekebisha overcorrected). 19 new tests
+  (`ItemBalanceJourneyTest`, plus 4 more on `DiagnoseStockShortfallsCommandTest`). No
+  migrations (no schema change — `balance_journey()` is a pure computation over existing
+  fields).

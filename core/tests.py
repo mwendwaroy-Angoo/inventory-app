@@ -12623,6 +12623,193 @@ class DiagnoseStockShortfallsCommandTest(TestCase):
         output = out.getvalue()
         self.assertNotIn("preset's fraction was very", output)
 
+    def test_duplicate_receipt_flagged(self):
+        """2026-08-21 same-item live follow-up: 'staff physically counted 8
+        Dallas bottles but the system showed 16 — I need to know if the
+        owner received double via the latest receipt.' Two Receipts of the
+        same qty a few minutes apart is the concrete signature of one
+        delivery entered twice."""
+        from io import StringIO
+        from django.core.management import call_command
+        t1 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('8'),
+            payment_method='', created_at=timezone.now(), recorded_by=None,
+        )
+        t2 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('8'),
+            payment_method='', created_at=timezone.now() + timedelta(minutes=3),
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas', stdout=out)
+        output = out.getvalue()
+        self.assertIn('one delivery entered twice', output)
+        self.assertIn(f'txn#{t1.id}', output)
+        self.assertIn(f'txn#{t2.id}', output)
+
+    def test_receipts_far_apart_not_flagged_as_duplicate(self):
+        from io import StringIO
+        from django.core.management import call_command
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('8'),
+            payment_method='', created_at=timezone.now() - timedelta(days=10),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('8'),
+            payment_method='', created_at=timezone.now(),
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas', stdout=out)
+        output = out.getvalue()
+        self.assertIn('None found', output)
+
+    def test_physical_gap_reports_more_in_system(self):
+        from io import StringIO
+        from django.core.management import call_command
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('16'), payment_method='',
+        )
+        out = StringIO()
+        call_command(
+            'diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas',
+            physical=8, stdout=out,
+        )
+        output = out.getvalue()
+        self.assertIn('MORE than what', output)
+        self.assertIn('unrecorded sale', output)
+
+    def test_physical_gap_matches_exactly(self):
+        from io import StringIO
+        from django.core.management import call_command
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('8'), payment_method='',
+        )
+        out = StringIO()
+        call_command(
+            'diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas',
+            physical=8, stdout=out,
+        )
+        self.assertIn('matches physical count exactly', out.getvalue())
+
+
+class ItemBalanceJourneyTest(TestCase):
+    """2026-08-21 urgent live request (Roy, Monsoon Inn): "I need to see
+    balances standing at a certain point when a specific transactional
+    function was happening, and 2 the user responsible per action" — the
+    same Dallas-bottle investigation, widened into a permanent, per-item
+    capability rather than a one-off diagnostic. Item.balance_journey() is
+    the single canonical computation; item_detail() (/stock/<id>/) is the
+    UI surface."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Journey Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='jrn_owner', password='x', first_name='Roy')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='jrn_staff', password='x', first_name='Bosco')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Dallas',
+            material_no='JRN-01', unit='250ml', selling_price=Decimal('200'),
+            cost_price=Decimal('80'), opening_bin_balance=0,
+        )
+
+    def test_running_balance_matches_current_balance_at_the_end(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('16'),
+            recorded_by=self.owner, created_at=timezone.now() - timedelta(hours=2),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-3'),
+            recorded_by=self.staff, payment_method='cash', created_at=timezone.now() - timedelta(hours=1),
+        )
+        journey = self.item.balance_journey()
+        self.assertEqual(len(journey), 2)
+        self.assertEqual(journey[0]['running_balance'], Decimal('16'))
+        self.assertEqual(journey[1]['running_balance'], Decimal('13'))
+        self.assertEqual(journey[-1]['running_balance'], self.item.current_balance())
+
+    def test_journey_ordered_chronologically_regardless_of_creation_order(self):
+        later = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            created_at=timezone.now(),
+        )
+        earlier = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('5'),
+            created_at=timezone.now() - timedelta(hours=5),
+        )
+        journey = self.item.balance_journey()
+        self.assertEqual(journey[0]['txn'].id, earlier.id)
+        self.assertEqual(journey[1]['txn'].id, later.id)
+
+    def test_item_detail_shows_running_balance_and_recorded_by(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('16'),
+            recorded_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/item/{self.item.id}/')
+        self.assertContains(resp, 'Roy')
+        self.assertContains(resp, '16')
+        self.assertContains(resp, 'Safari ya Bidhaa')
+
+    def test_item_detail_default_order_is_newest_first(self):
+        first = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('16'),
+            created_at=timezone.now() - timedelta(hours=2),
+        )
+        second = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-3'),
+            created_at=timezone.now() - timedelta(hours=1), payment_method='cash',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/item/{self.item.id}/')
+        # Newest (second) should render before the oldest (first) in the
+        # default (desc) order — check ordering via the journey context list.
+        journey = resp.context['journey']
+        self.assertEqual(journey[0]['txn'].id, second.id)
+        self.assertEqual(journey[1]['txn'].id, first.id)
+
+    def test_item_detail_order_asc_reverses_to_oldest_first(self):
+        first = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('16'),
+            created_at=timezone.now() - timedelta(hours=2),
+        )
+        second = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-3'),
+            created_at=timezone.now() - timedelta(hours=1), payment_method='cash',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/item/{self.item.id}/?order=asc')
+        journey = resp.context['journey']
+        self.assertEqual(journey[0]['txn'].id, first.id)
+        self.assertEqual(journey[1]['txn'].id, second.id)
+
+    def test_no_transactions_shows_empty_state(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/item/{self.item.id}/')
+        self.assertEqual(resp.context['journey'], [])
+        self.assertContains(resp, 'No transactions recorded')
+
+    def test_null_recorded_by_shows_dash(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('16'),
+            recorded_by=None,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/item/{self.item.id}/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_cross_business_item_not_reachable(self):
+        other_biz = Business.objects.create(name='Other Journey Biz')
+        other_store = Store.objects.create(business=other_biz, name='Bar')
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Foreign',
+            material_no='OJ-01', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/item/{other_item.id}/')
+        self.assertEqual(resp.status_code, 404)
+
 
 class DiagnoseReceiptCommandTest(TestCase):
     """2026-08-16 live report (Roy, Monsoon Inn) — a customer's live receipt

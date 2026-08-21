@@ -794,6 +794,43 @@ class Item(models.Model):
         total_movement = self.transactions.aggregate(models.Sum('qty'))['qty__sum'] or 0
         return self.opening_bin_balance + total_movement
 
+    def balance_journey(self):
+        """Full chronological ledger for this item — every Transaction ever
+        recorded against it, oldest first, each carrying the running BIN
+        balance immediately after it plus who recorded it. Mirrors current_
+        balance()'s own exact math (opening_bin_balance + cumulative qty),
+        so the final entry's running_balance always equals current_balance()
+        exactly — locked in by a dedicated test, never re-derived
+        separately.
+
+        2026-08-21 urgent live request (Roy, Monsoon Inn): "staff physically
+        counted 8 Dallas bottles but the system showed 16 — I need to know
+        if the owner received double via the latest receipt, or if there
+        were unrecorded sales." Nothing in this app let anyone see "the
+        balance at a specific point in time, plus who did what" for one
+        item — every existing report only ever showed the CURRENT balance
+        or a flat, unordered transaction list. This is the single source of
+        truth for that story, reused by item_detail() and the
+        diagnose_item_balance_trail management command so both can never
+        disagree.
+
+        Ordered by (date, created_at, id) — date alone isn't a stable sort
+        key for two same-day transactions, and created_at can be null on
+        very old pre-migration rows, hence the id tie-breaker last.
+
+        Returns a list of dicts: {'txn': Transaction, 'running_balance': ...}
+        """
+        txns = list(
+            self.transactions.select_related('recorded_by')
+            .order_by('date', 'created_at', 'id')
+        )
+        running = self.opening_bin_balance
+        journey = []
+        for t in txns:
+            running = running + t.qty
+            journey.append({'txn': t, 'running_balance': running})
+        return journey
+
     def uses_envelope_stock_tracking(self):
         """True for an item whose real stock lives in a separate envelope
         model (KegBarrel, ProduceBunch, KitchenBatch) rather than in its own
