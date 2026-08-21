@@ -3579,6 +3579,15 @@
             '<button onclick="window.kbCorrectPreset(' + e.id + ',' + e.item_id + ',' + e.preset_id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
             'style="background:rgba(110,231,183,.1);border:1px solid rgba(110,231,183,.3);border-radius:4px;color:#6ee7b7;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔄 Kipande</button>';
         }
+        // 2026-08-21 urgent live request (Roy): staff backdating a whole
+        // day's catch-up sales forgot to toggle the backdate switch on
+        // some — they posted as today instead of the intended earlier
+        // date, with no way to fix it. correct_transaction_date() moves
+        // BOTH date and created_at together (see that view's own
+        // docstring for why both must move, never just one).
+        html +=
+          '<button onclick="window.kbCorrectDate(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+          'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">📅 Tarehe</button>';
         html += '</div>';
       });
     }
@@ -3930,6 +3939,42 @@
           .then(function(d){
             if (d.ok) {
               showToast(d.message || '✓ Kipande kimerekebishwa');
+              window.kbLoadRecentPayments();
+            } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
+            else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
+          })
+          .catch(function(){ showToast('Hitilafu ya mtandao'); });
+      },
+    });
+  };
+
+  // 2026-08-21 urgent live request (Roy): "the staff was backdating
+  // yesterday's sales today and she made an error where she put some as
+  // if they were today's sales... she has no idea how she would rectify
+  // them." A plain prompt() for the intended date — defaults to
+  // yesterday, the overwhelmingly common case for this exact mistake —
+  // never blocks on a typed reason, matching this app's own "quick-reason
+  // chips never block" discipline for a fast, mid-shift correction.
+  window.kbCorrectDate = function (txnId, desc, anchorEl) {
+    var yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    var newDate = prompt('Tarehe sahihi ya "' + desc + '" (YYYY-MM-DD)?', yesterday);
+    if (!newDate) return;
+    openReasonChips({
+      anchorEl: anchorEl,
+      title: 'Kwa nini unarekebisha tarehe ya "' + desc + '"?',
+      chips: ['Ilisahaulika kuwekwa nyuma (backdate)', 'Ilibonyezwa leo kimakosa'],
+      onSelect: function (reason) {
+        var fd = new URLSearchParams();
+        fd.append('new_date', newDate);
+        fd.append('reason', reason || '');
+        fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+        fetch('/bar/transactions/' + txnId + '/correct-date/', {
+          method: 'POST', credentials: 'same-origin', body: fd
+        })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            if (d.ok) {
+              showToast(d.message || '✓ Tarehe imerekebishwa');
               window.kbLoadRecentPayments();
             } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
             else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }

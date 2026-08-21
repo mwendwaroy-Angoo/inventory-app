@@ -1981,6 +1981,79 @@ def correct_transaction_payment_method(request, txn_id):
 
 @login_required
 @require_POST
+def correct_transaction_date(request, txn_id):
+    """Correct the date on a DIRECT (non-tab) sale — urgent live request
+    (Roy, Monsoon Inn): staff backdating a whole day's catch-up sales
+    accidentally forgot to toggle "⏰ Haya ni Mauzo ya Nyuma" on some of
+    them, so those posted as TODAY instead of the intended earlier date,
+    with no way to fix it after the fact. Sibling of
+    correct_transaction_payment_method — same permission tier (any staff
+    with an open shift may correct their own recent mistake), same
+    direct-sale scope (tab_entry__isnull=True — a tab/food-tab entry isn't
+    "sold" yet in this sense, nothing to backdate).
+
+    Moves BOTH Transaction.date and .created_at together, preserving the
+    original clock time-of-day and only changing the calendar day — the
+    2026-08-12 fix already established these two fields must never drift
+    apart (that was the root cause of a real "today's revenue" inflation
+    bug), so a correction tool that only touched one would reintroduce
+    exactly that class of bug.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    txn = get_object_or_404(
+        Transaction.objects.select_related('item__store'),
+        id=txn_id, business=up.business, type='Issue', tab_entry__isnull=True,
+    )
+    try:
+        is_kitchen = bool(txn.item.store.is_kitchen)
+    except Exception:
+        is_kitchen = False
+    if ('kitchen' if is_kitchen else 'bar') not in _allowed_tab_sources(up):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kurekebisha mauzo haya.'}, status=403)
+
+    new_date_raw = (request.POST.get('new_date') or '').strip()
+    try:
+        from datetime import datetime as _dt
+        new_date = _dt.strptime(new_date_raw, '%Y-%m-%d').date()
+    except ValueError:
+        return JsonResponse({'ok': False, 'error': 'Tarehe si sahihi.'}, status=400)
+
+    if new_date > timezone.localdate():
+        return JsonResponse({'ok': False, 'error': 'Huwezi kuweka tarehe ya mbeleni.'}, status=400)
+
+    reason = (request.POST.get('reason') or '').strip()
+    old_when = timezone.localtime(txn.created_at)
+    old_date_str = old_when.strftime('%d %b %Y')
+
+    txn.created_at = timezone.make_aware(_dt.combine(new_date, old_when.time()))
+    txn.date = new_date
+    txn.save(update_fields=['created_at', 'date'])
+
+    who = request.user.get_full_name() or request.user.username
+    message = (
+        f'📅 {who} amerekebisha tarehe ya "{txn.item.description}" '
+        f'(KES {float(txn.revenue()):,.0f}) kutoka {old_date_str} kwenda '
+        f'{new_date.strftime("%d %b %Y")}.'
+        + (f' Sababu: {reason}' if reason else '')
+    )
+    _notify_direct_correction(up.business, message, request.user, source=('kitchen' if is_kitchen else 'bar'))
+
+    return JsonResponse({'ok': True, 'message': message, 'new_date': new_date.isoformat()})
+
+
+@login_required
+@require_POST
 def split_transaction_payment_method(request, txn_id):
     """Split a direct sale's payment across two methods (2026-07-26 live
     request) — e.g. a KES 500 sale entered entirely as M-Pesa when the

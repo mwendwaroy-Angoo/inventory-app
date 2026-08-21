@@ -18970,6 +18970,161 @@ class DirectSalePaymentCorrectionTest(TestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+class CorrectTransactionDateTest(TestCase):
+    """2026-08-21 urgent live request (Roy, Monsoon Inn): "the staff was
+    backdating yesterday's sales today and she made an error where she
+    put some as if they were today's sales and she has no idea how she
+    would rectify them so that the app knows they were meant to be
+    backdated to yesterday." Sibling of correct_transaction_payment_method
+    — same scope (a direct, non-tab sale), same permission tier."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Correct Date Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='cd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.staff = User.objects.create_user(username='cd_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='kitchen', can_access_kitchen=True)
+        Shift.objects.create(business=self.biz, store=self.kitchen_store, staff=self.staff, status='OPEN')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chips',
+            material_no='CD-KIT-01', unit='Pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('60'), opening_bin_balance=Decimal('20'),
+        )
+        self.today = timezone.localdate()
+
+    def _direct_txn(self, created_at=None):
+        created_at = created_at or timezone.now()
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+            created_at=created_at, date=timezone.localtime(created_at).date(),
+        )
+
+    def test_owner_moves_date_and_created_at_together(self):
+        txn = self._direct_txn()
+        yesterday = self.today - timedelta(days=1)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {
+            'new_date': yesterday.isoformat(), 'reason': 'Ilisahaulika backdate',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        txn.refresh_from_db()
+        self.assertEqual(txn.date, yesterday)
+        self.assertEqual(timezone.localtime(txn.created_at).date(), yesterday)
+
+    def test_preserves_original_time_of_day(self):
+        from datetime import datetime as _dt, time as _time
+        original = timezone.make_aware(_dt.combine(self.today, _time(14, 37)))
+        txn = self._direct_txn(created_at=original)
+        yesterday = self.today - timedelta(days=1)
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {'new_date': yesterday.isoformat()})
+        txn.refresh_from_db()
+        moved = timezone.localtime(txn.created_at)
+        self.assertEqual(moved.date(), yesterday)
+        self.assertEqual(moved.time().hour, 14)
+        self.assertEqual(moved.time().minute, 37)
+
+    def test_never_touches_qty_sale_amount_or_payment_method(self):
+        txn = self._direct_txn()
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {
+            'new_date': (self.today - timedelta(days=1)).isoformat(),
+        })
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('-1'))
+        self.assertEqual(txn.sale_amount, Decimal('100'))
+        self.assertEqual(txn.payment_method, 'cash')
+
+    def test_future_date_rejected(self):
+        txn = self._direct_txn()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {
+            'new_date': (self.today + timedelta(days=1)).isoformat(),
+        })
+        self.assertFalse(resp.json().get('ok'))
+        txn.refresh_from_db()
+        self.assertEqual(txn.date, self.today)
+
+    def test_invalid_date_format_rejected(self):
+        txn = self._direct_txn()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {'new_date': 'not-a-date'})
+        self.assertFalse(resp.json().get('ok'))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_kitchen_staff_with_open_shift_allowed(self):
+        txn = self._direct_txn()
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {
+            'new_date': (self.today - timedelta(days=1)).isoformat(),
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+
+    def test_staff_without_shift_blocked(self):
+        txn = self._direct_txn()
+        Shift.objects.filter(staff=self.staff).update(status='CLOSED')
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {
+            'new_date': (self.today - timedelta(days=1)).isoformat(),
+        })
+        data = resp.json()
+        self.assertFalse(data.get('ok'))
+        self.assertTrue(data.get('shift_required'))
+
+    def test_bar_only_staff_blocked_from_kitchen_sale(self):
+        """Station scoping: a bar-only staffer must not correct a kitchen
+        sale's date, matching every other direct-sale correction tool."""
+        bar_staff = User.objects.create_user(username='cd_barstaff', password='x')
+        UserProfile.objects.create(user=bar_staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, store=self.bar_store, staff=bar_staff, status='OPEN')
+        txn = self._direct_txn()
+        self.client.force_login(bar_staff)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {
+            'new_date': (self.today - timedelta(days=1)).isoformat(),
+        })
+        self.assertFalse(resp.json().get('ok'))
+        self.assertEqual(resp.status_code, 403)
+
+    def test_tab_linked_transaction_not_reachable(self):
+        txn = self._direct_txn()
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Tab Customer', status='OPEN',
+            source='kitchen', store=self.kitchen_store,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Chips',
+            amount=Decimal('100'), is_paid=True, payment_method='cash', paid_at=timezone.now(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {
+            'new_date': (self.today - timedelta(days=1)).isoformat(),
+        })
+        self.assertEqual(resp.status_code, 404)
+
+    def test_cross_business_transaction_rejected(self):
+        other_biz = Business.objects.create(name='Other Correct Date Biz')
+        other_store = Store.objects.create(business=other_biz, name='Kitchen', is_kitchen=True)
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Foreign Item',
+            material_no='CD-FOREIGN', unit='Pcs', selling_price=Decimal('100'),
+        )
+        other_txn = Transaction.objects.create(
+            business=other_biz, item=other_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{other_txn.id}/correct-date/', {
+            'new_date': (self.today - timedelta(days=1)).isoformat(),
+        })
+        self.assertEqual(resp.status_code, 404)
+
+
 class VoidDirectTransactionTest(TestCase):
     """2026-08-02 audit finding (Roy's transactional-integrity audit,
     Monsoon Inn): a tab sale has a full undo (remove_tab_entry / "Futa"),

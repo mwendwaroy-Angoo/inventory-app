@@ -3286,6 +3286,10 @@
                     'style="background:rgba(93,168,240,.06);border:1px solid rgba(93,168,240,.25);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🔁 Badilisha</button>' +
                     (e.payment_method !== 'credit' ? '<button onclick="window.qsVoidDirectPayment(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
                     'style="background:rgba(192,57,90,.1);border:1px solid rgba(192,57,90,.3);border-radius:4px;color:#c0395a;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🗑 Futa</button>' : '') +
+                    // 2026-08-21 urgent live request (Roy) — mirrors bar_board.
+                    // html / kitchen_board.html's identical fix.
+                    '<button onclick="window.qsCorrectDate(' + e.id + ',\'' + e.description.replace(/'/g, "\\'") + '\', this)" ' +
+                    'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">📅 Tarehe</button>' +
                     '</div>';
             });
         }
@@ -3576,6 +3580,36 @@
                     .then(function (d) {
                         if (d.ok) {
                             qsShowToast(d.message || '✓ Imerekebishwa');
+                            window.qsLoadRecentPayments();
+                        } else if (d.shift_required) {
+                            qsShowToast('Fungua shift kwanza.', true);
+                        } else {
+                            qsShowToast('Hitilafu: ' + (d.error || 'Jaribu tena.'), true);
+                        }
+                    })
+                    .catch(function () { qsShowToast('Hitilafu ya mtandao. Jaribu tena.', true); });
+            },
+        });
+    };
+
+    // 2026-08-21 urgent live request (Roy): staff backdating a whole day's
+    // catch-up sales forgot to toggle the backdate switch on some — posted
+    // as today instead of the intended earlier date, no way to fix it
+    // afterward. Default to yesterday; never blocks on a typed reason.
+    window.qsCorrectDate = function (txnId, desc, anchorEl) {
+        var yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        var newDate = prompt('Tarehe sahihi ya "' + desc + '" (YYYY-MM-DD)?', yesterday);
+        if (!newDate) return;
+        openReasonChips({
+            anchorEl: anchorEl,
+            title: 'Kwa nini unarekebisha tarehe ya "' + desc + '"?',
+            chips: ['Ilisahaulika kuwekwa nyuma (backdate)', 'Ilibonyezwa leo kimakosa'],
+            onSelect: function (reason) {
+                qsPost('/bar/transactions/' + txnId + '/correct-date/', {new_date: newDate, reason: reason || ''})
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) {
+                        if (d.ok) {
+                            qsShowToast(d.message || '✓ Tarehe imerekebishwa');
                             window.qsLoadRecentPayments();
                         } else if (d.shift_required) {
                             qsShowToast('Fungua shift kwanza.', true);
