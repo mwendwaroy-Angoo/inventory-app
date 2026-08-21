@@ -5011,6 +5011,17 @@
     if (s.is_mine && s.status === 'OPEN') {
       closeBtnHtml = '<button class="shift-close-btn" onclick="window.openCloseShiftModal()">Funga Shift</button>';
     }
+    // 2026-08-21 live request (Roy): a mid-service, peace-of-mind stock
+    // check staff can choose to run any time an shift is open — not tied
+    // to opening/closing. Same is_mine/!IS_WAITRESS scoping as the
+    // open/close stock-take offers (a waitress is a concurrent helper, not
+    // the stock custodian).
+    var midShiftBtnHtml = '';
+    if (s.is_mine && s.status === 'OPEN' && !IS_WAITRESS) {
+      midShiftBtnHtml = '<button class="btn btn-sm" style="background:rgba(201,168,76,.1); border:1px solid rgba(201,168,76,.3); color:#c9a84c;" ' +
+        'onclick="window.openStockTake(' + s.id + ', \'midshift\')" ' +
+        'title="Hesabu ya haraka wakati wa zamu — ya taarifa tu">📦 Hesabu Stock</button>';
+    }
     var histLink = '<a href="/bar/shift/history/" style="color:#888; font-size:.75rem; white-space:nowrap;">Historia ›</a>';
 
     panel.innerHTML =
@@ -5024,7 +5035,7 @@
             : '') +
         '</div>' +
         '<div style="display:flex; align-items:center; gap:.5rem;">' +
-          closeBtnHtml + histLink +
+          midShiftBtnHtml + closeBtnHtml + histLink +
         '</div>' +
       '</div>' +
       '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
@@ -5759,22 +5770,32 @@
   ════════════════════════════════════════════════════════ */
   var _stockTakeShiftId = null;
   var _stockTakeItems   = [];
-  var _stockTakePhase   = 'closing';  // 'opening' or 'closing' — see ShiftStockCount.phase
+  var _stockTakePhase   = 'closing';  // 'opening'/'closing'/'midshift' — see ShiftStockCount.phase
 
+  // 2026-08-21 live request (Roy): staff should be able to run a
+  // peace-of-mind stock count any time DURING an open shift, not just at
+  // open/close — reuses this exact modal/endpoint with a third phase
+  // value ('midshift'), purely informational (see ShiftStockCount's own
+  // docstring for why it's automatically excluded from every
+  // reconciliation figure with zero other code changes).
   window.openStockTake = function (shiftId, phase) {
     _stockTakeShiftId = shiftId;
-    _stockTakePhase   = (phase === 'opening') ? 'opening' : 'closing';
+    _stockTakePhase   = (phase === 'opening' || phase === 'midshift') ? phase : 'closing';
     _stockTakeItems   = [];
     var titleEl = document.querySelector('#stockTakeModal .modal-title');
     var introEl = document.getElementById('stock-take-intro');
     if (titleEl) {
       titleEl.textContent = _stockTakePhase === 'opening'
         ? '📦 Hesabu Stock — Mwanzo wa Shift'
+        : _stockTakePhase === 'midshift'
+        ? '📦 Hesabu Stock — Wakati wa Zamu'
         : '📦 Hesabu Stock — Mwisho wa Shift';
     }
     if (introEl) {
       introEl.textContent = _stockTakePhase === 'opening'
         ? 'Hesabu bidhaa zilizopo sasa, kabla hujaanza kuuza. Ingiza idadi halisi — mfumo utaonyesha tofauti.'
+        : _stockTakePhase === 'midshift'
+        ? 'Hesabu ya haraka wakati wa zamu — hii ni ya taarifa tu, haiathiri hesabu ya mwisho wa shift. Ingiza idadi halisi — mfumo utaonyesha tofauti.'
         : 'Hesabu bidhaa zilizobaki. Ingiza idadi halisi — mfumo utaonyesha tofauti.';
     }
     var loadEl   = document.getElementById('stock-take-loading');

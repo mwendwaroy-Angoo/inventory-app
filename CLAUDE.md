@@ -7500,3 +7500,49 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   duplicate` — a direct regression lock on Roy's own real-world shape; `test_same_sitting_
   double_entry_still_caught`), 3 more for the comma-separated `--item` support. No
   migrations.
+- Responsiveness audit + mid-shift stock take (2026-08-21, live request before Roy travels
+  to Monsoon Inn). Three asks in one: "audit the speed of responsiveness... navigating
+  through sections"; "when staff click on hesabu stock during opening and closing shift,
+  everything works seamlessly"; "add a stock take function for staff... mid service if it
+  is not there already." **Performance**: found and fixed the same N+1 shape already closed
+  for `stock_list()`/`home()` on 2026-08-09/10 (`item.current_balance()` called per item,
+  each its own DB round-trip) at four more real, frequently-hit surfaces, all reusing the
+  same proven `_batch_stock_metrics()` helper rather than four separate optimizations:
+  (1) `stock_take_api()`'s GET (the exact endpoint the Hesabu Stock modal calls) — was
+  issuing one query per item just to open the count form, on the single most time-pressured
+  moment of a shift; (2) `kitchen_board()` — `current_balance()` per portion item AND per
+  kitchen-batch item's raw-material source, plus a missing `select_related('raw_material_
+  source')` (one query per batch item just to follow that FK) — Kitchen Board is one of the
+  most-visited pages in the app, hit on nearly every checkout/shift/receive action;
+  (3) `analytics_dashboard()`'s stock-health section — up to 3 separate `current_balance()`
+  calls per item (out-of-stock check, low-stock check, velocity-ranking loop); (4)
+  `bar_board_api()`'s active-waitresses block — a genuinely different shape (not item
+  balances): walked every one of today's TableOrders one at a time, firing 2 extra COUNT
+  queries per distinct waitress found, on the single most-polled endpoint on the busiest
+  page — replaced with one aggregate query (`Count` with a conditional filter, grouped by
+  waitress) regardless of order volume. None of the underlying Item/model methods were
+  touched — every other caller in the app is completely unaffected, per this helper's own
+  established scoping discipline. **Hesabu Stock open/close audit**: traced both boards'
+  `openStockTake()`/`submitStockTake()` flow end to end — structurally sound, including the
+  2026-08-16 modal-stacking race fix already in place; the N+1 fix above is the concrete
+  "seamless" improvement, since a slow GET on a busy/flaky connection is what would have
+  made it feel broken rather than merely slow. **Mid-shift stock take**: `ShiftStockCount.
+  PHASE_CHOICES` gains `'midshift'` (migration 0171, additive) — a voluntary, informational
+  spot-check any time during an open shift, distinct from the existing opening/closing
+  phases. Safe by construction: every consumer that sums these into a real loss/variance
+  figure (`keg_metrics.staff_shrinkage`'s bottle loss, `bar_z_report`'s day variance,
+  `_missed_tasks_for_shift`'s "did you do your stock take" reminder) already filters to an
+  EXPLICIT `phase='closing'`, never a bare "not opening" — so a midshift row is
+  automatically excluded from all of them with zero other code change, same "excluded by
+  construction" pattern already used elsewhere in this app (`Transaction` type `'Draw'`/
+  `'Transfer'`). `stock_take_api()`'s phase validation widened to accept it. New persistent
+  "📦 Hesabu Stock" button in both boards' live shift-status header (visible whenever `s.
+  is_mine && s.status === 'OPEN'`, same `!IS_WAITRESS` scoping as the existing open/close
+  offers — a waitress is a concurrent helper, not the stock custodian), calling the exact
+  same modal/endpoint with `phase='midshift'`; the modal's own title/intro text branches to
+  a distinct "Wakati wa Zamu" (during the shift) framing making clear it's informational
+  only and doesn't affect the real shift-close reconciliation. Mirrored identically across
+  `bar_board.html`/`kitchen_board.html` per this file's own counter-parity rule. 15 new
+  tests across 4 test classes (`ShiftStockCountPhaseTest` +4 for midshift coexistence/
+  exclusion, `StockTakeApiAndKitchenBoardBatchMetricsTest`, `BarBoardApiActiveWaitressBatch
+  ingTest`, `AnalyticsStockHealthBatchMetricsTest`). One migration (0171, additive).

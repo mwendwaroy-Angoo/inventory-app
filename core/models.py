@@ -6305,10 +6305,24 @@ class ShiftStockCount(models.Model):
     an opening count would be a meaningless (usually ~zero) input there and
     double-count the same shift if left unfiltered. _missed_tasks_for_shift's
     "did you do your stock take" reminder is about the closing count too.
+
+    2026-08-21 (Roy, mid-service peace-of-mind check): gained 'midshift' —
+    staff can voluntarily spot-check counts any time during an open shift,
+    not just at open/close. Purely informational/voluntary, never part of
+    the shift's own reconciliation: every consumer above already filters to
+    an EXPLICIT phase='closing' (never a bare "not opening"), so a
+    'midshift' row is automatically excluded from all of them with zero
+    code change needed — same "excluded by construction" pattern already
+    used elsewhere in this app (Transaction type='Draw'/'Transfer').
+    unique_together means a second mid-shift count on the same item during
+    the same shift simply overwrites the first (the current snapshot, not
+    a running history) — matching how 'closing' already behaves if the
+    close-shift modal is reopened and recounted.
     """
     PHASE_CHOICES = [
         ('opening', 'Opening'),
         ('closing', 'Closing'),
+        ('midshift', 'Mid-shift'),
     ]
     shift       = models.ForeignKey(Shift, on_delete=models.CASCADE, related_name='stock_counts')
     item        = models.ForeignKey('Item', on_delete=models.SET_NULL, null=True, related_name='stock_counts')

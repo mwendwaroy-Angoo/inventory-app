@@ -2894,13 +2894,27 @@ def stock_take_api(request, shift_id):
         # actually ran on. Fixed to the real, explicit-field-first station
         # discriminator this file itself established (_shift_station()).
         items = items.filter(store__is_kitchen=(_shift_station(shift) == 'kitchen'))
+        # 2026-08-21 live request (Roy, about to travel to Monsoon Inn —
+        # "check the responsiveness... hesabu stock during opening and
+        # closing shift"): this GET was calling item.current_balance() per
+        # item, each its own DB round-trip (self.transactions.aggregate) —
+        # for a real bar's item count that's dozens of queries just to open
+        # the Hesabu Stock modal, on the single most time-pressured moment
+        # in a shift (staff waiting to start/finish serving). Reuses the
+        # same batch helper already proven for the identical stock_list()/
+        # home() N+1 fix (2026-08-09/10) instead of a second, separate
+        # optimization — item.stock_balance is byte-identical to
+        # current_balance(), locked in by StockListBatchMetricsTest.
+        items = list(items)
+        from .views import _batch_stock_metrics
+        _batch_stock_metrics(items)
         data = []
         for item in items:
             data.append({
                 'item_id':      item.id,
                 'name':         item.description,
                 'unit':         item.unit or '',
-                'book_balance': float(item.current_balance()),
+                'book_balance': float(item.stock_balance),
                 'bottle_envelope':  item.bottle_envelope,
                 'tots_per_unit':    float(item.tots_per_unit or 0),
                 'expected_rev_per_unit': item.bottle_expected_revenue_per_unit(),
@@ -2917,8 +2931,12 @@ def stock_take_api(request, shift_id):
         # able to do the same count when OPENING a shift, not just closing).
         # Defaults to 'closing' so every pre-existing caller (the close-shift
         # modal) keeps writing exactly what it always has.
+        # 2026-08-21 — 'midshift': a voluntary spot-check any time during an
+        # open shift (see ShiftStockCount's own docstring for why this is
+        # safe by construction — every reconciliation query already filters
+        # to an explicit phase='closing').
         phase = request.POST.get('phase') or 'closing'
-        if phase not in ('opening', 'closing'):
+        if phase not in ('opening', 'closing', 'midshift'):
             phase = 'closing'
 
         # 2026-08-02 regression sweep: same broken shift.store proxy as the

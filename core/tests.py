@@ -26126,6 +26126,70 @@ class ShiftStockCountPhaseTest(TestCase):
         missed_owner = _missed_tasks_for_shift(self.shift, self.biz)
         self.assertIn('Hesabu ya bidhaa (stock take) haikufanywa', missed_owner)
 
+    def test_midshift_count_coexists_with_opening_and_closing(self):
+        """2026-08-21 live request (Roy): staff should be able to run a
+        voluntary, peace-of-mind stock check any time during an open shift.
+        A midshift count must be its own row, never clobbering (or being
+        clobbered by) opening/closing for the same item."""
+        from core.models import ShiftStockCount
+        self._post_count('opening', 10)
+        self._post_count('midshift', 9)
+        self._post_count('closing', 7)
+        self.assertEqual(ShiftStockCount.objects.filter(shift=self.shift).count(), 3)
+        midshift = ShiftStockCount.objects.get(shift=self.shift, phase='midshift')
+        self.assertEqual(midshift.actual_count, Decimal('9'))
+        # The other two phases are untouched by the midshift write.
+        self.assertEqual(
+            ShiftStockCount.objects.get(shift=self.shift, phase='opening').actual_count,
+            Decimal('10'),
+        )
+        self.assertEqual(
+            ShiftStockCount.objects.get(shift=self.shift, phase='closing').actual_count,
+            Decimal('7'),
+        )
+
+    def test_bottle_loss_excludes_midshift_count(self):
+        """Same discipline as the opening-count exclusion above — a
+        mid-shift spot-check is informational only, never part of the real
+        shift-close reconciliation."""
+        from core import keg_metrics as km
+        bottle = Item.objects.create(
+            business=self.biz, store=self.store, description='Gin 750ml',
+            material_no='SP-GIN-MID', selling_price=Decimal('300'),
+            bottle_envelope=True, tots_per_unit=Decimal('30'),
+        )
+        from core.models import ShiftStockCount
+        ShiftStockCount.objects.create(
+            shift=self.shift, item=bottle, phase='midshift',
+            book_balance=Decimal('5'), actual_count=Decimal('1'), recorded_by=self.owner,
+        )
+        self.shift.status = 'CLOSED'
+        self.shift.save(update_fields=['status'])
+        ShiftStockCount.objects.create(
+            shift=self.shift, item=bottle, phase='closing',
+            book_balance=Decimal('5'), actual_count=Decimal('4'), recorded_by=self.owner,
+        )
+        today = timezone.localdate()
+        rows = km.staff_shrinkage(self.biz, today, today)
+        self.assertGreater(len(rows), 0)
+        # 1 bottle missing (closing only) × 30 × 300 = 9000, NOT
+        # (4 midshift + 1 closing) × 30 × 300 = 45000.
+        self.assertAlmostEqual(rows[0].bottle_loss_kes, 9000.0, places=1)
+
+    def test_missed_tasks_ignores_midshift_only_count(self):
+        """A mid-shift count alone must not silently satisfy the 'did you
+        do your closing stock take' reminder."""
+        from core.shift_views import _missed_tasks_for_shift
+        self._post_count('midshift', 9)
+        missed = _missed_tasks_for_shift(self.shift, self.biz)
+        self.assertIn('Hesabu ya bidhaa (stock take) haikufanywa', missed)
+
+    def test_invalid_phase_falls_back_to_closing(self):
+        from core.models import ShiftStockCount
+        self._post_count('not-a-real-phase', 5)
+        row = ShiftStockCount.objects.get(shift=self.shift)
+        self.assertEqual(row.phase, 'closing')
+
 
 class OpenShiftIncludesStockTakeAccessTest(TestCase):
     """The open-shift endpoint returns a shift_id staff can immediately use
@@ -29529,6 +29593,224 @@ class StockListBatchMetricsTest(TestCase):
             f"stock_list issued {len(ctx.captured_queries)} queries for 23 items — "
             "the batch-metrics helper should keep this roughly constant, not scale per item.",
         )
+
+
+class StockTakeApiAndKitchenBoardBatchMetricsTest(TestCase):
+    """2026-08-21 live request (Roy, about to travel to Monsoon Inn —
+    "audit the speed of responsiveness... hesabu stock during opening and
+    closing shift"): stock_take_api's GET was calling item.current_balance()
+    per item (same N+1 shape as the 2026-08-09 stock_list()/home() bug,
+    fixed with the same proven _batch_stock_metrics() helper) — hit on
+    every single shift open/close. kitchen_board() had the identical
+    pattern for both plain portion items and a kitchen-batch item's raw
+    material source. Both fixed the same way; this locks in correctness
+    (book_balance actually matches current_balance()) and query-count
+    (doesn't scale per item)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='ST Batch Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='stb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Whisky',
+            material_no='STB-WHISKY', unit='Bottle', selling_price=Decimal('500'),
+            opening_bin_balance=Decimal('20'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-3'),
+            payment_method='cash',
+        )
+        self.shift = Shift.objects.create(business=self.biz, staff=self.owner, status='OPEN')
+        self.client.force_login(self.owner)
+
+    def test_stock_take_get_book_balance_matches_current_balance(self):
+        resp = self.client.get(f'/bar/shift/{self.shift.id}/stock-take/')
+        data = resp.json()
+        row = next(r for r in data['items'] if r['item_id'] == self.item.id)
+        self.assertEqual(row['book_balance'], float(self.item.current_balance()))
+
+    def test_stock_take_get_query_count_does_not_scale_with_item_count(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        for i in range(15):
+            Item.objects.create(
+                business=self.biz, store=self.store, description=f'Extra Spirit {i}',
+                material_no=f'STB-EXTRA-{i}', unit='Bottle', selling_price=Decimal('300'),
+            )
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get(f'/bar/shift/{self.shift.id}/stock-take/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertLess(
+            len(ctx.captured_queries), 30,
+            f"stock_take_api GET issued {len(ctx.captured_queries)} queries for 16 items — "
+            "should stay roughly constant, not scale per item.",
+        )
+
+    def test_kitchen_board_balance_matches_current_balance_and_stays_batched(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chips',
+            material_no='STB-CHIPS', unit='Plate', selling_price=Decimal('100'),
+            opening_bin_balance=Decimal('50'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=kitchen_item, type='Issue', qty=Decimal('-5'),
+            payment_method='cash',
+        )
+        for i in range(15):
+            Item.objects.create(
+                business=self.biz, store=self.kitchen_store, description=f'Extra Portion {i}',
+                material_no=f'STB-KEXTRA-{i}', unit='Pcs', selling_price=Decimal('50'),
+            )
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.status_code, 200)
+        portion_items = json.loads(resp.context['portion_items'])
+        row = next(r for r in portion_items if r['id'] == kitchen_item.id)
+        self.assertEqual(row['balance'], float(kitchen_item.current_balance()))
+        # kitchen_board() does substantially more than stock_list() per
+        # request (tabs, khaki pool, mix siblings, food tabs) so its own
+        # baseline query count is legitimately higher — the ceiling here is
+        # generous specifically to allow for that, while still catching a
+        # real per-item scale-up (before this fix, current_balance() alone
+        # would add 1+ extra query PER item on top of everything else).
+        self.assertLess(
+            len(ctx.captured_queries), 150,
+            f"kitchen_board issued {len(ctx.captured_queries)} queries for 16 kitchen items — "
+            "should stay roughly constant, not scale per item.",
+        )
+
+    def test_kitchen_board_raw_material_balance_still_correct(self):
+        raw_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Raw Potatoes',
+            material_no='STB-RAW', unit='Kg', cost_price=Decimal('50'),
+            opening_bin_balance=Decimal('30'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=raw_item, type='Issue', qty=Decimal('-10'), payment_method='cash',
+        )
+        batch_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            material_no='STB-CHIPO', unit='Bakuli', selling_price=Decimal('100'),
+            is_kitchen_batch=True, raw_material_source=raw_item,
+        )
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.status_code, 200)
+        kitchen_batches = json.loads(resp.context['kitchen_batches'])
+        row = next(r for r in kitchen_batches if r['id'] == batch_item.id)
+        self.assertEqual(row['raw_source_balance'], float(raw_item.current_balance()))
+
+
+class BarBoardApiActiveWaitressBatchingTest(TestCase):
+    """2026-08-21 live request (Roy, about to travel to Monsoon Inn —
+    "audit the speed... navigating through sections"): bar_board_api's
+    active-waitresses block used to walk every one of today's TableOrders
+    one at a time, firing 2 extra COUNT queries per distinct waitress —
+    real, avoidable latency on the most-polled endpoint on the busiest
+    page. Replaced with one aggregate query regardless of order volume."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Waitress Batch Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='wb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.w1 = User.objects.create_user(username='wb_w1', password='x', first_name='Amina')
+        UserProfile.objects.create(user=self.w1, business=self.biz, role='waitress')
+        self.w2 = User.objects.create_user(username='wb_w2', password='x', first_name='Beatrice')
+        UserProfile.objects.create(user=self.w2, business=self.biz, role='waitress')
+        self.client.force_login(self.owner)
+
+    def _order(self, waitress, status):
+        from core.models import TableOrder
+        return TableOrder.objects.create(
+            business=self.biz, table_label='T1', waitress=waitress, status=status,
+        )
+
+    def test_active_waitresses_correct_pending_and_total_counts(self):
+        self._order(self.w1, 'PENDING')
+        self._order(self.w1, 'SERVED')
+        self._order(self.w1, 'ACCEPTED')
+        self._order(self.w2, 'CANCELLED')
+        resp = self.client.get('/stock/bar/board/')
+        data = resp.json()
+        by_name = {w['name']: w for w in data['active_waitresses']}
+        self.assertEqual(by_name['Amina']['total'], 3)
+        self.assertEqual(by_name['Amina']['pending'], 2)  # PENDING + ACCEPTED, not SERVED
+        self.assertEqual(by_name['Beatrice']['total'], 1)
+        self.assertEqual(by_name['Beatrice']['pending'], 0)  # CANCELLED doesn't count as pending
+
+    def test_query_count_does_not_scale_with_order_count(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        for _ in range(30):
+            self._order(self.w1, 'PENDING')
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get('/stock/bar/board/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertLess(
+            len(ctx.captured_queries), 20,
+            f"bar_board_api issued {len(ctx.captured_queries)} queries for 30 orders from "
+            "one waitress — should stay roughly constant, not scale per order.",
+        )
+
+
+class AnalyticsStockHealthBatchMetricsTest(TestCase):
+    """2026-08-21 live request (Roy, about to travel to Monsoon Inn —
+    "audit the speed of responsiveness"): analytics_dashboard()'s stock-
+    health section (out_of_stock/low_stock/velocity ranking) called
+    current_balance() up to 3 times per item — same N+1 shape already
+    fixed for stock_list()/home()/kitchen_board()/stock_take_api(). Locks
+    in that the counts stay correct after switching to the batch helper,
+    across in-stock, out-of-stock, low-stock, and envelope-tracked items."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Analytics Stock Health Biz')
+        self.store = Store.objects.create(business=self.biz, name='Shop')
+        self.owner = User.objects.create_user(username='ash_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+        Item.objects.create(
+            business=self.biz, store=self.store, description='Healthy Item',
+            material_no='ASH-HEALTHY', unit='pcs', selling_price=Decimal('10'),
+            opening_bin_balance=50, reorder_level=5,
+        )
+        Item.objects.create(
+            business=self.biz, store=self.store, description='Out of Stock Item',
+            material_no='ASH-OOS', unit='pcs', selling_price=Decimal('10'),
+            opening_bin_balance=0, reorder_level=5,
+        )
+        Item.objects.create(
+            business=self.biz, store=self.store, description='Low Stock Item',
+            material_no='ASH-LOW', unit='pcs', selling_price=Decimal('10'),
+            opening_bin_balance=3, reorder_level=5,
+        )
+        # Envelope-tracked (keg) item — must be excluded from all three
+        # buckets regardless of its own (structurally meaningless) balance.
+        Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Item',
+            material_no='ASH-KEG', unit='Ml', selling_price=Decimal('10'),
+            is_keg=True, opening_bin_balance=0,
+        )
+
+    def test_stock_health_counts_match_expected(self):
+        resp = self.client.get('/analytics/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['total_items'], 4)
+        self.assertEqual(resp.context['out_of_stock'], 1)
+        self.assertEqual(resp.context['low_stock'], 1)
+        self.assertEqual(resp.context['healthy_stock'], 2)
+
+    def test_velocity_ranking_excludes_envelope_tracked_item(self):
+        resp = self.client.get('/analytics/')
+        velocity_names = {row['name'] for row in resp.context['velocity_data']}
+        self.assertIn('Healthy Item', velocity_names)
+        self.assertIn('Out of Stock Item', velocity_names)
+        self.assertIn('Low Stock Item', velocity_names)
+        self.assertNotIn('Keg Item', velocity_names)
 
 
 class NeedsReorderRespectsExplicitLevelTest(TestCase):

@@ -337,30 +337,40 @@ def bar_board_api(request):
 
     open_tabs_qs = BarTab.objects.filter(business=business, status='OPEN')
 
-    # Active waitresses — those who placed at least one order today
+    # Active waitresses — those who placed at least one order today.
+    # 2026-08-21 live request (Roy, about to travel to Monsoon Inn —
+    # "audit the speed of responsiveness... navigating through sections"):
+    # this used to walk every one of today's TableOrders one at a time,
+    # firing 2 extra COUNT queries per DISTINCT waitress found — for a busy
+    # board with several waitresses and dozens of orders that's real,
+    # avoidable latency on the single most-polled endpoint on this page.
+    # One aggregate query (grouped + conditionally counted) replaces the
+    # whole loop, regardless of order volume or waitress count.
     from .models import TableOrder as _TO
+    from django.contrib.auth.models import User as _User
     today = timezone.localdate()
+    waitress_counts = list(
+        _TO.objects.filter(business=business, created_at__date=today)
+        .values('waitress_id')
+        .annotate(
+            total=Count('id'),
+            pending=Count('id', filter=Q(status__in=['PENDING', 'ACCEPTED', 'READY'])),
+        )
+    )
+    _waitress_users = {
+        u.id: u for u in _User.objects.filter(
+            id__in=[row['waitress_id'] for row in waitress_counts if row['waitress_id']]
+        )
+    }
     active_w = []
-    seen_ids = set()
-    for order in _TO.objects.filter(
-        business=business, created_at__date=today
-    ).select_related('waitress').order_by('waitress_id'):
-        uid = order.waitress_id
-        if uid in seen_ids:
+    for row in waitress_counts:
+        w = _waitress_users.get(row['waitress_id'])
+        if not w:
             continue
-        seen_ids.add(uid)
-        pending = _TO.objects.filter(
-            business=business, waitress_id=uid,
-            created_at__date=today, status__in=['PENDING', 'ACCEPTED', 'READY']
-        ).count()
-        total = _TO.objects.filter(
-            business=business, waitress_id=uid, created_at__date=today
-        ).count()
-        w = order.waitress
         active_w.append({
             'name':    w.get_full_name() or w.username,
-            'pending': pending,
-            'total':   total,
+            'pending': row['pending'],
+            'total':   row['total'],
         })
 
     cup_pool = keg_metrics.business_cup_pool(business)

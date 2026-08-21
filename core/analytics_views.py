@@ -297,6 +297,15 @@ def analytics_dashboard(request):
     # ── Stock health ──
     all_items = list(Item.objects.filter(business=business))
     total_items = len(all_items)
+    # 2026-08-21 live request (Roy, about to travel to Monsoon Inn — "audit
+    # the speed of responsiveness"): this section called current_balance()
+    # up to 3 times per item (out_of_stock check, low_stock check, velocity
+    # loop below), each its own DB round-trip — same N+1 shape already
+    # fixed for stock_list()/home()/kitchen_board()/stock_take_api() on
+    # this exact date. Reuses the same proven batch helper; item.stock_
+    # balance is byte-identical to current_balance() (StockListBatchMetricsTest).
+    from .views import _batch_stock_metrics
+    _batch_stock_metrics(all_items)
     # 2026-08-19 — was two separately-duplicated is_keg/BUNCH-produce checks
     # that never included is_kitchen_batch (Chipo's own class of item) —
     # unified onto Item.uses_envelope_stock_tracking(), the same helper now
@@ -306,11 +315,11 @@ def analytics_dashboard(request):
     # would otherwise register them as permanently out-of-stock/low-stock.
     out_of_stock = sum(
         1 for i in all_items
-        if i.current_balance() <= 0 and not i.uses_envelope_stock_tracking()
+        if i.stock_balance <= 0 and not i.uses_envelope_stock_tracking()
     )
     low_stock = sum(
         1 for i in all_items
-        if 0 < i.current_balance() <= i.reorder_level and not i.uses_envelope_stock_tracking()
+        if 0 < i.stock_balance <= i.reorder_level and not i.uses_envelope_stock_tracking()
     )
     healthy_stock = total_items - out_of_stock - low_stock
     stock_value = sum(i.stock_value() for i in all_items)
@@ -328,7 +337,7 @@ def analytics_dashboard(request):
         # BUNCH produce already were.
         if item.uses_envelope_stock_tracking():
             continue
-        balance    = float(item.current_balance())
+        balance    = float(item.stock_balance)
         units_sold = item_units_sold.get(item.id, 0.0)
         daily_rate = units_sold / days if days > 0 else 0.0
 

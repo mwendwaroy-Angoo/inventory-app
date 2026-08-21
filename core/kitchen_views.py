@@ -250,6 +250,7 @@ def kitchen_board(request):
         items_qs = (
             Item.objects
             .filter(store=kitchen_store)
+            .select_related('raw_material_source')
             .prefetch_related('portion_presets')
             .order_by('description')
         )
@@ -359,6 +360,23 @@ def kitchen_board(request):
             ).values_list('item_id', flat=True).distinct()
         )
 
+        # 2026-08-21 live request (Roy, about to travel to Monsoon Inn —
+        # "check the responsiveness... navigating through sections"): this
+        # loop used to call item.current_balance()/raw_src.current_balance()
+        # per item, each its own DB round-trip — Kitchen Board is one of the
+        # most-visited pages in the whole app (every checkout, every shift,
+        # every stock receive routes back through it), so this ran on
+        # nearly every navigation. Reuses the same batch helper already
+        # proven for the identical stock_list()/home() N+1 fix (2026-08-09)
+        # instead of a third, separate optimization.
+        items_qs = list(items_qs)
+        _balance_targets = list(items_qs) + [
+            it.raw_material_source for it in items_qs
+            if it.is_kitchen_batch and it.raw_material_source_id
+        ]
+        from .views import _batch_stock_metrics
+        _batch_stock_metrics(_balance_targets)
+
         for item in items_qs:
             _all_item_presets = list(item.portion_presets.all().order_by('display_order', 'price'))
 
@@ -444,7 +462,7 @@ def kitchen_board(request):
                     'raw_source_id': raw_src.id if raw_src else None,
                     'raw_source_name': raw_src.description if raw_src else '',
                     'raw_source_unit': raw_src.unit if raw_src else '',
-                    'raw_source_balance': float(raw_src.current_balance()) if raw_src else None,
+                    'raw_source_balance': float(raw_src.stock_balance) if raw_src else None,
                     'raw_source_cost_price': float(raw_src.cost_price or 0) if raw_src else None,
                 })
             elif item.is_produce and item.produce_mode == 'BUNCH':
@@ -476,7 +494,7 @@ def kitchen_board(request):
                 })
             else:
                 # Portion item (chicken wing, smokie, samosa)
-                balance = float(item.current_balance())
+                balance = float(item.stock_balance)
                 portion_items.append({
                     'id': item.id,
                     'name': item.description,
