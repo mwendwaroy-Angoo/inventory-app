@@ -7473,3 +7473,30 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`ItemBalanceJourneyTest`, plus 4 more on `DiagnoseStockShortfallsCommandTest`). No
   migrations (no schema change — `balance_journey()` is a pure computation over existing
   fields).
+- Same-day follow-up: `--item` accepts a comma-separated list + duplicate-receipt heuristic
+  tightened after real Dallas data (2026-08-21). Roy: "can I do the same for all other
+  spirits, not Dallas only?" Investigated whether `Item.category` could drive an automatic
+  "scan every spirit" mode and found it unreliably populated across this app's history —
+  only items added via the enriched liquor catalogue or a supplier upload get a real
+  `category.level1='spirit'`; items added via the original static catalogue or the plain
+  item form very often have `category=None` — an automatic filter would have silently
+  skipped real spirit items rather than named them honestly. Widened `--item` to accept a
+  comma-separated list instead (`--item="Dallas,KC Ginger,Blue Ice"`), running the full
+  diagnostic for each in one call; `--physical` now explicitly rejected when more than one
+  name is given, since one physical count can't describe several different items at once.
+  **Roy then ran the tool for real against Dallas and shared the output** — surfaced a real
+  false-positive bug in the SAME-DAY duplicate-receipt heuristic: a wall of "duplicate"
+  warnings for 20-unit receipts 30-46h apart, spanning over a week — not a mistake, just
+  Dallas being restocked in the same standard crate size every day or two, completely
+  normal for a fast-moving spirit. The 48h window couldn't tell routine restocking apart
+  from a genuine same-sitting double-entry (which WAS present in the same output — two
+  receipts of the same qty just 2 minutes apart). Tightened the window to 3h and sorted
+  hits closest-gap-first so the most suspicious pair leads. Separately, the real output's
+  `--physical=8` comparison against a system balance of 0 pointed the OPPOSITE direction
+  from the original "16 vs 8" report — flagged to Roy as most likely an unrecorded recent
+  delivery (physically on the shelf, never logged as a Receipt) given no receipt had been
+  recorded since Aug 13 while sales continued through the 21st, not a duplicate-entry
+  question at all. 2 new tests (`test_routine_restocking_30h_apart_not_flagged_as_
+  duplicate` — a direct regression lock on Roy's own real-world shape; `test_same_sitting_
+  double_entry_still_caught`), 3 more for the comma-separated `--item` support. No
+  migrations.

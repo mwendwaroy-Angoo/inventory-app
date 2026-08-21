@@ -36,16 +36,32 @@ class Command(BaseCommand):
         "delivery entry), and --physical=N prints the exact system-vs-physical gap "
         "with a plain-language explanation of what each direction of gap implies. "
         "The same ledger this prints is also now shown directly in the app, per "
-        "item, at /stock/<item_id>/ (Item.balance_journey())."
+        "item, at /stock/<item_id>/ (Item.balance_journey()).\n\n"
+        "2026-08-21 same-day follow-up ('can I do the same for all other spirits, "
+        "not Dallas only?'): --item now accepts a COMMA-SEPARATED list of names — "
+        "e.g. --item=\"Dallas,KC Ginger,Blue Ice,Chrome\" — running the full "
+        "diagnostic (ledger + duplicate-receipt check) for each one in a single "
+        "call. Deliberately NOT an automatic 'all spirits' scan: Item.category is "
+        "unreliably populated across this app's history (only items added via the "
+        "enriched liquor catalogue or a supplier upload get a real 'spirit' "
+        "category — items added via the original static catalogue or the plain "
+        "item form often have category=None), so an automatic filter would "
+        "silently skip real spirit items rather than name them all honestly. "
+        "List the names you want checked instead — --physical=N only applies "
+        "when exactly one name is given, since one physical count can't describe "
+        "several different items at once."
     )
 
     def add_arguments(self, parser):
         parser.add_argument('--business', type=str, required=True, help='Business name substring.')
-        parser.add_argument('--item', type=str, help='Item description (exact, case-insensitive).')
+        parser.add_argument(
+            '--item', type=str,
+            help='Item description (exact, case-insensitive). Comma-separated for several at once, e.g. "Dallas,KC Ginger,Blue Ice".',
+        )
         parser.add_argument('--all-items', action='store_true', help='Scan every item with a shrinkage exception.')
         parser.add_argument(
             '--physical', type=float,
-            help='The real physical count just taken — prints the exact gap vs the system balance (--item mode only).',
+            help='The real physical count just taken — prints the exact gap vs the system balance. Only valid with a single --item name.',
         )
 
     def handle(self, *args, **options):
@@ -60,16 +76,25 @@ class Command(BaseCommand):
             return
 
         if not options['item']:
-            self.stdout.write(self.style.ERROR('Pass --item=NAME or --all-items.'))
+            self.stdout.write(self.style.ERROR('Pass --item=NAME (comma-separated for several) or --all-items.'))
+            return
+
+        item_names = [n.strip() for n in options['item'].split(',') if n.strip()]
+        if options.get('physical') is not None and len(item_names) > 1:
+            self.stdout.write(self.style.ERROR(
+                '--physical can only be used with a single --item name — one physical '
+                'count cannot describe several different items at once.'
+            ))
             return
 
         for business in businesses:
-            items = Item.objects.filter(business=business, description__iexact=options['item'])
-            if not items.exists():
-                self.stdout.write(f"[{business.name}] No item named '{options['item']}'.")
-                continue
-            for item in items:
-                self._diagnose_one(business, item, physical=options.get('physical'))
+            for name in item_names:
+                items = Item.objects.filter(business=business, description__iexact=name)
+                if not items.exists():
+                    self.stdout.write(f"[{business.name}] No item named '{name}'.")
+                    continue
+                for item in items:
+                    self._diagnose_one(business, item, physical=options.get('physical'))
 
     def _scan_all(self, business):
         self.stdout.write(self.style.WARNING(f"\n=== [{business.name}] Shrinkage exceptions ==="))
@@ -199,32 +224,39 @@ class Command(BaseCommand):
             for o in others:
                 self.stdout.write(f"    item#{o.id} material_no={o.material_no!r} store={o.store} balance={o.current_balance()}")
 
-        # ── Duplicate-receipt heuristic (2026-08-21) ────────────────────────
-        # "was the owner receiving double" — two Receipts close together in
-        # time with a matching/near-matching qty is the concrete signature
-        # of one physical delivery entered into the system twice.
-        self.stdout.write(self.style.WARNING("\n-- Possible duplicate receipts --"))
+        # ── Duplicate-receipt heuristic (2026-08-21, tightened same-day
+        #    after a real Dallas run: a fast-moving spirit restocked in the
+        #    same standard crate size every day or two produced a WALL of
+        #    "duplicate" warnings 30-46h apart — that's just normal
+        #    restocking rhythm, not a mistake. A genuine same-sitting
+        #    double-entry (typed twice within minutes) is the real
+        #    signature to catch; a 48h window couldn't tell the two apart.
+        #    Narrowed to 3h — comfortably catches "typed it twice a moment
+        #    later" while excluding "restocked again the next day/evening".
+        #    Sorted closest-gap-first so the most suspicious pair leads. ──
+        self.stdout.write(self.style.WARNING("\n-- Possible duplicate receipts (same-sitting double-entry, not routine restocking) --"))
         receipts = [(t, timezone.localtime(t.created_at)) for t in txns if t.type == 'Receipt' and t.created_at]
-        found_dup = False
+        hits = []
         for i in range(len(receipts)):
             t1, w1 = receipts[i]
             for j in range(i + 1, len(receipts)):
                 t2, w2 = receipts[j]
                 gap_hours = abs((w2 - w1).total_seconds()) / 3600
-                if gap_hours > 48:
+                if gap_hours > 3:
                     continue
                 same_qty = t1.qty == t2.qty
                 similar_qty = t1.qty != 0 and abs(t1.qty - t2.qty) / abs(t1.qty) <= Decimal('0.1')
                 if same_qty or similar_qty:
-                    found_dup = True
-                    self.stdout.write(self.style.ERROR(
-                        f"  ⚠️  txn#{t1.id} ({w1}, qty={t1.qty}, invoice={t1.invoice_no or '-'}) and "
-                        f"txn#{t2.id} ({w2}, qty={t2.qty}, invoice={t2.invoice_no or '-'}) are "
-                        f"{gap_hours:.1f}h apart with {'matching' if same_qty else 'similar'} "
-                        f"quantities — check whether this was one delivery entered twice."
-                    ))
-        if not found_dup:
-            self.stdout.write("  None found — no two Receipts close together with matching/similar qty.")
+                    hits.append((gap_hours, t1, w1, t2, w2, same_qty))
+        if not hits:
+            self.stdout.write("  None found — no two Receipts within 3h of each other with matching/similar qty.")
+        for gap_hours, t1, w1, t2, w2, same_qty in sorted(hits, key=lambda h: h[0]):
+            self.stdout.write(self.style.ERROR(
+                f"  ⚠️  txn#{t1.id} ({w1}, qty={t1.qty}, invoice={t1.invoice_no or '-'}) and "
+                f"txn#{t2.id} ({w2}, qty={t2.qty}, invoice={t2.invoice_no or '-'}) are "
+                f"{gap_hours:.1f}h apart with {'matching' if same_qty else 'similar'} "
+                f"quantities — check whether this was one delivery entered twice."
+            ))
 
         # ── Physical-count gap (2026-08-21) ─────────────────────────────────
         if physical is not None:

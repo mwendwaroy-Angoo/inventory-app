@@ -12662,6 +12662,49 @@ class DiagnoseStockShortfallsCommandTest(TestCase):
         output = out.getvalue()
         self.assertIn('None found', output)
 
+    def test_routine_restocking_30h_apart_not_flagged_as_duplicate(self):
+        """2026-08-21 same-day follow-up — Roy ran this for real against
+        Dallas and got a WALL of "duplicate" warnings for receipts 30-46h
+        apart, all qty=20: just a fast-moving spirit restocked in the same
+        standard crate size every day or two, not a mistake. The 48h window
+        couldn't tell routine restocking apart from a genuine same-sitting
+        double-entry, tightened to 3h. This is a direct regression lock on
+        his exact real-world shape (multiple 20-unit receipts ~30-46h
+        apart) — must report clean."""
+        from io import StringIO
+        from django.core.management import call_command
+        base = timezone.now()
+        for hours_ago in (200, 170, 124, 78):
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+                payment_method='', created_at=base - timedelta(hours=hours_ago),
+            )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas', stdout=out)
+        output = out.getvalue()
+        self.assertIn('None found', output)
+
+    def test_same_sitting_double_entry_still_caught(self):
+        """The genuine case the heuristic exists for: two Receipts of the
+        same qty just minutes apart — still flagged even at the tightened
+        3h window."""
+        from io import StringIO
+        from django.core.management import call_command
+        t1 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+            payment_method='', created_at=timezone.now(),
+        )
+        t2 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+            payment_method='', created_at=timezone.now() + timedelta(minutes=2),
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas', stdout=out)
+        output = out.getvalue()
+        self.assertIn('one delivery entered twice', output)
+        self.assertIn(f'txn#{t1.id}', output)
+        self.assertIn(f'txn#{t2.id}', output)
+
     def test_physical_gap_reports_more_in_system(self):
         from io import StringIO
         from django.core.management import call_command
@@ -12689,6 +12732,56 @@ class DiagnoseStockShortfallsCommandTest(TestCase):
             physical=8, stdout=out,
         )
         self.assertIn('matches physical count exactly', out.getvalue())
+
+    def test_comma_separated_items_all_diagnosed(self):
+        """2026-08-21 same-day follow-up: 'can I do the same for all other
+        spirits, not Dallas only?' --item now accepts several names at once."""
+        from io import StringIO
+        from django.core.management import call_command
+        kc_ginger = Item.objects.create(
+            business=self.biz, store=self.store, description='KC Ginger',
+            material_no='SFD-KC', unit='750ml', selling_price=Decimal('300'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('16'), payment_method='',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=kc_ginger, type='Receipt', qty=Decimal('12'), payment_method='',
+        )
+        out = StringIO()
+        call_command(
+            'diagnose_stock_shortfalls', business='Shortfall Diagnose',
+            item='Dallas,KC Ginger', stdout=out,
+        )
+        output = out.getvalue()
+        self.assertIn('Dallas', output)
+        self.assertIn('KC Ginger', output)
+
+    def test_physical_rejected_with_multiple_items(self):
+        from io import StringIO
+        from django.core.management import call_command
+        Item.objects.create(
+            business=self.biz, store=self.store, description='KC Ginger',
+            material_no='SFD-KC2', unit='750ml', selling_price=Decimal('300'),
+        )
+        out = StringIO()
+        call_command(
+            'diagnose_stock_shortfalls', business='Shortfall Diagnose',
+            item='Dallas,KC Ginger', physical=8, stdout=out,
+        )
+        self.assertIn('single --item name', out.getvalue())
+
+    def test_comma_separated_reports_missing_item_by_name(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command(
+            'diagnose_stock_shortfalls', business='Shortfall Diagnose',
+            item='Dallas,Nonexistent Brand', stdout=out,
+        )
+        output = out.getvalue()
+        self.assertIn('Dallas', output)
+        self.assertIn("No item named 'Nonexistent Brand'", output)
 
 
 class ItemBalanceJourneyTest(TestCase):
