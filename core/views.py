@@ -1889,11 +1889,35 @@ def transaction_history(request):
     if not user_profile:
         return redirect("home")
 
-    transactions = (
+    # 2026-08-21 urgent live request (Roy, Monsoon Inn): staff backdating
+    # catch-up sales couldn't find the "recent-settled" panel showing them
+    # for today (see recent_settled_tabs_api — a separate, day-bucketed AJAX
+    # endpoint whose exact production behavior couldn't be reproduced from a
+    # clean test even after multiple realistic scenarios; flagged to Roy as
+    # still under investigation rather than guess-fixed). This page is a
+    # deliberately more robust FALLBACK correction surface: it lists EVERY
+    # transaction with no day-bucket computation at all (server returns the
+    # whole business's history; the date/text filter below is pure
+    # client-side over an already-rendered `data-date` attribute) — so a
+    # staffer unsure why the other panel came up empty can still find and
+    # fix the exact row here by searching the item/time directly. has_tab_
+    # entry is annotated so the 📅 button only ever appears on a genuinely
+    # DIRECT (non-tab) sale — correct_transaction_date's own tab_entry__
+    # isnull=True requirement would 404 otherwise.
+    from django.db.models import Exists, OuterRef
+    from .models import BarTabEntry as _BTE
+
+    transactions = list(
         Transaction.objects.filter(item__store__business=user_profile.business)
         .select_related("item", "item__store")
+        .annotate(has_tab_entry=Exists(_BTE.objects.filter(transaction_id=OuterRef("pk"))))
         .order_by("-date")
     )
+    for t in transactions:
+        t.is_direct_correctable = (
+            t.type == "Issue" and not t.has_tab_entry
+            and t.payment_method in ("cash", "mpesa", "credit")
+        )
 
     context = {
         "transactions": transactions,

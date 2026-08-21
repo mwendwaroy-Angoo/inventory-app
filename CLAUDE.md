@@ -7340,3 +7340,103 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   permission matrix mirroring `KitchenStockReceipt`'s own coverage) plus 9 for auto-close
   (`KitchenStockReceiptAutoCloseTest`). One migration (0169, additive). 2117 tests pass
   (core + accounts).
+- Kitchen Stock Receipt live bug arc, same-day follow-up (2026-08-21). Five live reports
+  from Roy, each fixed and pushed same-day, all continuing directly off the auto-close
+  sprint above. **(1) Duplicate receipt card** — the just-added auto-close (checked
+  lazily on read) mutated a receipt to CLOSED in-memory (`newly_closed`) but
+  `kitchen_stock_receipts_list()` then separately re-queried `recent_closed` from the DB,
+  which now ALSO included that same now-committed row — concatenated with no dedup, so
+  the exact receipt Roy was watching showed as two identical cards for one poll cycle.
+  Fixed by deduping on `id`, preferring the `newly_closed` copy. **(2) Kamau's closed
+  receipt showing a later, unrelated delivery's stock** — `_kitchen_stock_receipt_to_dict()`
+  always showed `item.current_balance()` (live, whole-item balance) regardless of the
+  receipt's own status, so a CLOSED receipt displayed whatever the item's balance happened
+  to be NOW, including stock from a completely different, LATER Stock Receipt for the same
+  item. Fixed: `current_balance` is `None` unless `receipt.status == 'OPEN'`. **(3) Backdate
+  rectification tool ("prioritise this first — needed right now by the staff")** — new
+  `Transaction.split_from`-adjacent standalone fix: `correct_transaction_date()`
+  (`core/keg_views.py`, `/bar/transactions/<id>/correct-date/`) moves BOTH `created_at` AND
+  `date` together (never just one — see the 2026-08-12 `Transaction.date`/`created_at` drift
+  entry above for why leaving one behind silently breaks every day-bucketed revenue query),
+  preserves the original time-of-day, rejects a future date, and is reachable via a new
+  "📅 Tarehe" button on the direct-sale rows of all three tabs drawers' "🕐 Malipo ya Hivi
+  Karibuni" panel (tabs-drawer-parity rule) — same shift+station permission tier as every
+  other direct-sale correction (`correct_transaction_payment_method`). **(4) A deleted/
+  voided item still showed on the customer's own receipt** — `receipt.lines` is a static
+  JSON snapshot taken at checkout time, never re-read once a correction tool (Futa/void)
+  later changes the underlying `Transaction`. New `core.receipt_views._live_direct_lines()`
+  — the DIRECT-sale sibling of the tab-linked `_get_live_tab_state()` — recomputes lines
+  live at render/poll time by cross-referencing each line's new `txn_id` field (added to
+  every `receipt_lines.append(...)` call across Quick Sell, Bar Board's keg-cart checkout,
+  and all three Kitchen checkout branches) against the real current `Transaction` rows,
+  dropping any that are now voided or zero-qty. Wired into both `public_receipt()` (initial
+  render) and `receipt_live_status()` (the 20s live poll), so a Futa'd item disappears from
+  the customer's receipt automatically, no reload needed. **Roy's own completeness
+  challenge, same session**: "will backdating, gawanya and all other relevant functions...
+  change and adjust the receipt situation accordingly?" — traced `split_payment_method_
+  locked()` directly (not assumed) and found a real, previously-unnoticed gap: the
+  split-off sibling transaction (`qty=Decimal('0')`, the unpaid/other-method remainder) had
+  NO receipt line at all — a Gawanya split silently vanished from the customer's own bill.
+  Fixed with new `Transaction.split_from` self-FK (migration 0170, `on_delete=SET_NULL`,
+  one-level-deep by design — a split-of-a-split is out of scope, matching this feature's own
+  real-world usage) stamped by `split_payment_method_locked()`; `_live_direct_lines()`
+  extended to SYNTHESIZE a receipt line for any such child transaction alongside its
+  (amount-adjusted) parent line, so a checkout-time split (new cart-level split-payment
+  feature) AND a later correction-time split both self-heal the receipt for free from the
+  same mechanism. **(5) Raw-material receipt's structurally-guaranteed -100% Faida** — Roy:
+  "how when 5 buckets have been sold... each bucket shows the chipo profit [but the raw
+  potatoes receipt still shows -100%]?" `KitchenStockReceipt.total_revenue()` sums sales of
+  the receipt's OWN item (Raw Potatoes) — which is NEVER sold directly, only drawn into a
+  batch (Chipo) via `type='Draw'` — so revenue=0/profit=-100% for a raw-material receipt is
+  a structural fact about the model, not a real loss signal; the real profit lives on
+  `KitchenBatch.revenue_collected`/`cost_total` for whichever batches drew from it (already
+  correct, per Roy's own screenshot of a real per-bucket Chipo profit). Fixed the DISPLAY,
+  not the (correct) underlying math: `_kitchen_stock_receipt_to_dict()`'s `raw_material_for`
+  computation rebuilt to sum ALL batches (not just currently-open ones) drawn from that
+  specific raw-material receipt, windowed by "which raw-material delivery was active when
+  this batch opened" (`[this_receipt.received_on, next_receipt.received_on)` for that same
+  item, open-ended if no next receipt exists — same reasoning `total_revenue()`'s own
+  window already uses) — so a CLOSED raw-material receipt still correctly attributes every
+  batch it ever fed, not just ones still open. New `is_all_raw_material` flag (every line's
+  item is a `raw_material_source` for something) on the receipt dict and `is_raw_material_
+  source` per line; `kitchen_board.html`'s `_ksrCostLineHtml()` hides the misleading
+  Gharama/Mapato/Faida line entirely for such a receipt (an italic note points to the batch
+  history instead), and `kitchen_viability.html`'s receipt-history table does the same
+  (`core/kitchen_viability.py`'s `kitchen_receipt_history()` gained the identical
+  `is_raw_material` flag). No migrations beyond `split_from` (0170, additive).
+- Fix: Recent Payments panel showed nothing for a date Receipts clearly had entries for
+  (2026-08-21, same-day urgent follow-up). Roy: kitchen staff backdated yesterday's catch-up
+  sales but mistakenly left some un-backdated (landing on today); wanted to correct them via
+  the just-shipped "📅 Tarehe" button — but the ONLY place that button lives, the "🕐 Malipo
+  ya Hivi Karibuni" panel (`recent_settled_tabs_api`), showed "Hakuna malipo tarehe hii" for
+  today even though the Receipts list clearly showed real entries dated today. Investigated
+  the query line-by-line (day-boundary computation, station scoping, direct-vs-tab
+  discrimination) and reproduced the EXACT reported scenario twice against a clean test
+  database — a plain portion-item cash sale AND a KitchenBatch (Chipo) cash sale, made by
+  both an owner and a kitchen staffer, with explicit `?date=<today>&station=kitchen` — and
+  in every case the sale correctly appeared. Could not reproduce a backend bug; rather than
+  guess further at an unreproduced production-only symptom (this app's own standing
+  discipline), shipped two things instead of a blind fix: (1) **`diagnose_recent_sales_
+  visibility`** (new, read-only management command, `core/management/commands/`) — runs the
+  SAME query logic `recent_settled_tabs_api` uses against REAL production data for one day,
+  then cross-references every `Receipt` issued that day against it, printing for each
+  underlying transaction exactly which bucket it landed in (direct list / tab list /
+  EXCLUDED by station filter) or, if found in neither, the SPECIFIC reason why (wrong type,
+  wrong payment_method, `created_at` falling outside the day window despite the receipt
+  being inside it, a tab entry that's unpaid or paid-but-outside-the-window, void) — turning
+  the next report into a direct read of the real data instead of another blind guess.
+  (2) **A second, independent correction surface** — `transaction_history()`
+  (`/history/`, `core/views.py`) now annotates every business-scoped `Transaction` with
+  `has_tab_entry` (via `Exists(BarTabEntry...)`) and a computed `is_direct_correctable` flag
+  (Issue type, no tab entry, cash/mpesa/credit), and `transaction_history.html` gains a
+  "📅 tarehe" link per matching row, reusing the same `correct_transaction_date` endpoint —
+  deliberately chosen because this page has NO day-bucket computation at all (the server
+  returns the WHOLE business's history; the existing date/text filter is pure client-side
+  matching over an already-rendered `data-date` attribute), so a staffer unsure why the
+  other panel came up empty can still find and fix the exact row here by searching the
+  item/time directly, completely independent of whatever turns out to be wrong with
+  `recent_settled_tabs_api`. Told to Roy plainly: this is a working fallback shipped
+  alongside an honest "couldn't reproduce it yet" rather than a claimed fix for the mystery
+  itself — the diagnostic command is the next step once he can run it against the real data.
+  8 new tests (`TransactionHistoryDateCorrectionFallbackTest`). No migrations. 2121 tests
+  pass (core + accounts).

@@ -235,6 +235,13 @@
                     {% else %}
                         <span style="color:var(--muted);">—</span>
                     {% endif %}
+                    {% if trans.is_direct_correctable %}
+                    <br>
+                    <a href="#" onclick="correctHistoryTxnDate({{ trans.id }}, '{{ trans.item.description|escapejs }}', this); return false;"
+                       style="font-size:0.68rem; color:#5da8f0;" title="{% trans 'Rekebisha tarehe halisi ya muamala huu — mfano ilikuwa ni ya jana lakini ikaingizwa leo bila backdate' %}">
+                       📅 {% trans 'tarehe' %}
+                    </a>
+                    {% endif %}
                 </td>
             </tr>
             {% empty %}
@@ -399,6 +406,33 @@
             }
         })
         .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho.'); });
+    };
+
+    // 2026-08-21 urgent live request (Roy, Monsoon Inn) — a fallback
+    // correction path independent of the Recent Payments panel's own
+    // day-bucketed AJAX endpoint (see transaction_history() in views.py
+    // for why this page exists as a more robust surface). Same
+    // correct_transaction_date() endpoint the "📅 Tarehe" button in
+    // bar_board.html/kitchen_board.html/quick_sell.html already uses.
+    window.correctHistoryTxnDate = function (txnId, itemName, linkEl) {
+        var newDate = prompt('Tarehe SAHIHI ya "' + itemName + '" (YYYY-MM-DD):');
+        if (!newDate) return;
+        var reason = prompt('Sababu (hiari):') || '';
+        var body = new URLSearchParams();
+        body.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        body.append('new_date', newDate);
+        body.append('reason', reason);
+        fetch('/bar/transactions/' + txnId + '/correct-date/', { method: 'POST', body: body })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.ok) {
+                    alert('✅ ' + d.message);
+                    location.reload();
+                } else {
+                    alert('❌ ' + (d.error || 'Hitilafu. Jaribu tena.'));
+                }
+            })
+            .catch(function () { alert('Hitilafu ya mtandao. Angalia uunganisho.'); });
     };
 </script>
 {% endblock %}

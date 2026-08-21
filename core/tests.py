@@ -19125,6 +19125,85 @@ class CorrectTransactionDateTest(TestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+class TransactionHistoryDateCorrectionFallbackTest(TestCase):
+    """2026-08-21 urgent live follow-up: Roy reported the Recent Payments
+    panel (recent_settled_tabs_api, a day-bucketed AJAX endpoint) showed
+    NOTHING for today even though the Receipts list clearly showed real
+    entries for today — meaning staff had no way to reach the just-built
+    📅 Tarehe correction button at all. Reproduced the underlying query
+    directly (owner + staff, portion-item + KitchenBatch sale, explicit
+    ?date=&station=kitchen) and could not find a backend bug — the query
+    is structurally correct in every tested scenario. Rather than guess
+    further at an unreproduced production-only symptom, added a second,
+    independent correction surface on Transaction History: it lists every
+    transaction with NO day-bucket computation at all (server returns the
+    whole business's history; filtering is pure client-side text/date
+    matching over an already-rendered row), so staff can find and fix the
+    exact row by searching the item/time directly regardless of whatever
+    is wrong with the other panel."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Hist Fallback Biz', has_kitchen=True)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='hf_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chips',
+            material_no='HF-KIT-01', unit='Pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('60'), opening_bin_balance=Decimal('20'),
+        )
+
+    def test_direct_cash_sale_shows_date_correction_link(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/history/')
+        self.assertContains(resp, '📅')
+        self.assertContains(resp, 'correctHistoryTxnDate')
+
+    def test_tab_linked_sale_has_no_date_correction_link(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Tab Customer', status='OPEN',
+            source='kitchen', store=self.kitchen_store,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Chips',
+            amount=Decimal('100'), is_paid=True, payment_method='cash', paid_at=timezone.now(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/history/')
+        self.assertNotContains(resp, 'correctHistoryTxnDate(' + str(txn.id) + ',')
+
+    def test_receipt_type_transaction_has_no_correction_link(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt',
+            qty=Decimal('5'), payment_method='',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/history/')
+        self.assertNotContains(resp, 'correctHistoryTxnDate(' + str(txn.id) + ',')
+
+    def test_correction_from_this_page_actually_works(self):
+        """The template only links to correct_transaction_date — already
+        covered end-to-end by CorrectTransactionDateTest. This just proves
+        the annotation-gated button points at a transaction that endpoint
+        genuinely accepts."""
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        self.client.force_login(self.owner)
+        yesterday = (timezone.localdate() - timedelta(days=1)).isoformat()
+        resp = self.client.post(f'/bar/transactions/{txn.id}/correct-date/', {'new_date': yesterday})
+        self.assertTrue(resp.json().get('ok'), resp.json())
+
+
 class VoidDirectTransactionTest(TestCase):
     """2026-08-02 audit finding (Roy's transactional-integrity audit,
     Monsoon Inn): a tab sale has a full undo (remove_tab_entry / "Futa"),
