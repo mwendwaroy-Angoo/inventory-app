@@ -4938,11 +4938,19 @@
   // "kilichobaki: X") — just never surfaced on the card itself, so seeing
   // it meant opening that modal first. Same "(kilichobaki: X)" wording,
   // now on the card too.
+  // 2026-08-21 live report (Roy — a CLOSED receipt "displayed the new
+  // order of chicken legs when it was not supposed to"): current_balance
+  // is now only sent for an OPEN receipt's own lines — server-side null
+  // for a closed one, since there's no lot-tracking to say how much of
+  // THIS specific delivery remains once other, unrelated stock has since
+  // been added to the same item. Omit the suffix entirely rather than
+  // print "null" or a live number that isn't this receipt's own.
   function _ksrLineHtml(r) {
     return r.lines.map(function(l){
       var lbl = l.preset_label ? (l.item_name + ' — ' + l.preset_label) : l.item_name;
-      return '<span style="display:inline-block;margin-right:.6rem;color:#b0b0b0;">' + lbl + ': ' + l.qty_received + ' @ KES ' + l.unit_cost.toFixed(2) +
-        ' <span style="color:#6ee7b7;">(kilichobaki: ' + l.current_balance + ')</span></span>';
+      var bal = (l.current_balance !== null && l.current_balance !== undefined)
+        ? ' <span style="color:#6ee7b7;">(kilichobaki: ' + l.current_balance + ')</span>' : '';
+      return '<span style="display:inline-block;margin-right:.6rem;color:#b0b0b0;">' + lbl + ': ' + l.qty_received + ' @ KES ' + l.unit_cost.toFixed(2) + bal + '</span>';
     }).join('');
   }
 

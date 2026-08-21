@@ -1729,7 +1729,26 @@ def _kitchen_stock_receipt_to_dict(receipt):
                 'qty_received':  float(l.qty_received),
                 'line_cost':     float(l.line_cost),
                 'unit_cost':     float(l.unit_cost),
-                'current_balance': float(l.item.current_balance()),
+                # 2026-08-21 live report (Roy — "Kamau's previously closed
+                # receipt now displayed the new order of chicken legs when
+                # it was not supposed to"): item.current_balance() is the
+                # ITEM'S WHOLE, LIVE stock balance — never scoped to this
+                # one receipt's own delivery (this app has no lot/batch
+                # tracking for portion items to make that distinction).
+                # While OPEN that's exactly the useful figure (staff
+                # watching stock run down toward auto-close). Once CLOSED,
+                # showing it at all is actively misleading: any LATER,
+                # completely unrelated stock addition to the same item —
+                # a fresh delivery, a Gawa Kuku portioning event, a plain
+                # Add Transaction Receipt — makes an old closed card look
+                # like it still has leftover stock from ITS OWN original
+                # delivery, when it doesn't. Rather than fabricate a
+                # "remaining from this receipt" figure this app has no
+                # honest way to compute, simply stop showing one once the
+                # receipt is closed — matches this app's own established
+                # "never conflate two different figures as one" discipline
+                # (see raw_material_for's docstring above).
+                'current_balance': float(l.item.current_balance()) if receipt.status == 'OPEN' else None,
             }
             for l in lines
         ],
@@ -1993,6 +2012,19 @@ def kitchen_stock_receipts_list(request):
     Board already polls, so a depleted receipt moves out of the active
     list into "closed" within one normal poll cycle, no new polling
     mechanism needed.
+
+    2026-08-21, same-day follow-up (Roy, screenshot — the SAME closed
+    receipt rendered as two identical cards): a receipt that
+    maybe_auto_close() JUST closed lands in `newly_closed` (the in-memory
+    object, mutated by that call) — but the `recent_closed` query below
+    runs AFTER that save() already committed, so the SAME row (now
+    status='DONE' in the DB) is also returned by that fresh query, as a
+    second, separate Python object with the same id. The merge below used
+    to concatenate both lists with no de-duplication, rendering one
+    receipt as two cards for exactly one poll cycle — the one where the
+    transition actually happens. Deduping by id, preferring the
+    `newly_closed` copy (it already carries the fresh closed_at this
+    request just set) fixes it.
     """
     up, business, err = _kb_gate(request)
     if err:
@@ -2019,8 +2051,9 @@ def kitchen_stock_receipts_list(request):
         .order_by('-closed_at')[:10]
     )
     if newly_closed:
+        newly_closed_ids = {r.id for r in newly_closed}
         recent_closed = sorted(
-            newly_closed + recent_closed,
+            newly_closed + [r for r in recent_closed if r.id not in newly_closed_ids],
             key=lambda r: r.closed_at or timezone.now(), reverse=True,
         )[:10]
 

@@ -21168,6 +21168,58 @@ class KitchenStockReceiptAutoCloseTest(TestCase):
         )
         self.assertEqual(receipt.total_revenue(), Decimal('150'))
 
+    def test_list_endpoint_never_duplicates_a_just_auto_closed_receipt(self):
+        """2026-08-21, same-day live report (Roy, screenshot): the SAME
+        auto-closed receipt rendered as two identical cards. Root cause:
+        maybe_auto_close() mutates the in-memory receipt AND commits to the
+        DB; the recent_closed query then re-fetches the same row as a
+        second object with the same id, and the old merge concatenated
+        both lists with no de-duplication."""
+        receipt, _ = self._make_receipt()
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Draw', qty=Decimal('-6'),
+        )
+        resp = self.client.get('/kitchen/stock-receipt/list/')
+        data = resp.json()
+        closed_ids = [r['id'] for r in data['closed']]
+        self.assertEqual(closed_ids.count(receipt.id), 1)
+
+    def test_closed_receipt_line_hides_live_current_balance(self):
+        """2026-08-21, live report (Roy): "Kamau's previously closed
+        receipt now displayed the new order of chicken legs when it was
+        not supposed to." Root cause: current_balance was always
+        item.current_balance() — the item's WHOLE, LIVE stock balance,
+        never scoped to this one receipt's own delivery — so a completely
+        unrelated LATER stock addition to the same item made an old,
+        already-closed receipt appear to still hold leftover stock from
+        its own original delivery. Fixed: only an OPEN receipt's lines
+        carry a live current_balance; a closed one is None."""
+        receipt, line = self._make_receipt(qty=Decimal('6'), cost=Decimal('600'))
+        receipt.close(self.owner_user)
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, 'DONE')
+
+        # A completely unrelated, later delivery of the SAME item —
+        # exactly Roy's "new order of chicken legs" scenario.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('23'),
+        )
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), Decimal('29'))  # 6 + 23 — proves new stock landed
+
+        from core.kitchen_views import _kitchen_stock_receipt_to_dict
+        data = _kitchen_stock_receipt_to_dict(receipt)
+        self.assertIsNone(data['lines'][0]['current_balance'])
+
+    def test_open_receipt_line_still_shows_live_current_balance(self):
+        """Regression lock: the fix above must not blank this out for a
+        receipt that's still genuinely open — that live figure is exactly
+        what staff use to watch stock run down toward auto-close."""
+        from core.kitchen_views import _kitchen_stock_receipt_to_dict
+        receipt, line = self._make_receipt(qty=Decimal('6'), cost=Decimal('600'))
+        data = _kitchen_stock_receipt_to_dict(receipt)
+        self.assertEqual(data['lines'][0]['current_balance'], 6.0)
+
 
 class PortioningEventTest(TestCase):
     """Gawa Kuku (2026-08-21 live request): Monsoon Inn switching from
