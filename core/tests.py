@@ -12574,6 +12574,55 @@ class DiagnoseStockShortfallsCommandTest(TestCase):
         call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', stdout=out)
         self.assertIn('--item', out.getvalue())
 
+    def test_preset_drift_flagged_when_fraction_was_edited_after_sales(self):
+        """2026-08-21 live follow-up (Roy, screenshots): "Blue Ice" balance/
+        units never land on a clean quarter-bottle multiple the way
+        "KC Ginger" does. Each sale's qty is a PERMANENT SNAPSHOT of
+        quantity_consumed*cart_qty taken at sale time; the preset's own
+        fraction is read live, never versioned. If it's edited after some
+        sales already used the old value, the balance becomes an honest
+        sum of two different schemes — flagged here rather than left to
+        look like a mystery."""
+        from io import StringIO
+        from django.core.management import call_command
+        preset = ItemPortionPreset.objects.create(
+            item=self.item, label='Double', price=Decimal('50'),
+            quantity_consumed=Decimal('0.25'),
+        )
+        # An older sale recorded when "Double" consumed 0.2 (since edited to 0.25) —
+        # 0.2 does not divide evenly into the CURRENT 0.25.
+        drift_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-0.2'),
+            payment_method='cash', preset=preset,
+        )
+        # A newer sale, correctly using the current fraction — must NOT be flagged.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-0.5'),
+            payment_method='cash', preset=preset,
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas', stdout=out)
+        output = out.getvalue()
+        self.assertIn('preset\'s fraction was very', output)
+        self.assertIn(f'txn#{drift_txn.id}', output)
+        self.assertIn('quantity_consumed=0.25', output)
+
+    def test_no_drift_when_every_sale_matches_current_fraction(self):
+        from io import StringIO
+        from django.core.management import call_command
+        preset = ItemPortionPreset.objects.create(
+            item=self.item, label='Kimoja', price=Decimal('50'),
+            quantity_consumed=Decimal('0.25'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-0.75'),
+            payment_method='cash', preset=preset,
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Shortfall Diagnose', item='Dallas', stdout=out)
+        output = out.getvalue()
+        self.assertNotIn("preset's fraction was very", output)
+
 
 class DiagnoseReceiptCommandTest(TestCase):
     """2026-08-16 live report (Roy, Monsoon Inn) — a customer's live receipt

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.core.management.base import BaseCommand
 
 from accounts.models import Business
@@ -100,6 +102,46 @@ class Command(BaseCommand):
                 f"recorded_by={t.recorded_by.username if t.recorded_by_id else '-'} "
                 f"invoice_no={t.invoice_no!r}"
             )
+
+        # 2026-08-21 live report (Roy): "Blue Ice" balance/units never land on
+        # a clean quarter-bottle multiple the way "KC Ginger" does. Each
+        # preset-attributed sale's Transaction.qty is a PERMANENT SNAPSHOT of
+        # `preset.quantity_consumed * cart_qty` taken at sale time (core/
+        # views.py's quick_sell() checkout) — but the preset's own
+        # quantity_consumed is read LIVE, never versioned. If a preset's
+        # fraction is ever edited (e.g. "Double" changed from 0.25 to 0.2)
+        # after some sales already happened under the old value, every
+        # OLDER transaction's qty stays permanently based on the fraction
+        # that existed then, while newer sales use the new one — the running
+        # balance becomes an honest sum of two different schemes, which
+        # will almost never land on a clean multiple of either. This isn't
+        # a bug in the sum itself (each individual sale WAS correctly priced
+        # and deducted for the fraction that was configured at the time) —
+        # it's a real, permanent record of a preset that changed shape
+        # mid-history. Flags any transaction whose |qty| isn't a clean
+        # integer multiple of its preset's CURRENT quantity_consumed.
+        preset_drift = []
+        for t in txns:
+            if t.preset_id and t.preset and t.preset.quantity_consumed:
+                qc = t.preset.quantity_consumed
+                remainder = abs(t.qty or 0) % qc if qc else None
+                if remainder is not None and remainder > Decimal('0.0001') and (qc - remainder) > Decimal('0.0001'):
+                    preset_drift.append((t, qc, remainder))
+        if preset_drift:
+            self.stdout.write(self.style.ERROR(
+                f"\n-- ⚠️  {len(preset_drift)} transaction(s) don't divide evenly by their "
+                "preset's CURRENT quantity_consumed — this preset's fraction was very "
+                "likely edited after these sales already happened. Each was correctly "
+                "priced/deducted for whatever fraction was configured AT THE TIME — this "
+                "is why the running balance doesn't land on a clean multiple today: --"
+            ))
+            for t, qc, remainder in preset_drift[:20]:
+                self.stdout.write(
+                    f"  txn#{t.id} {t.date} preset={t.preset.label!r} qty={t.qty} "
+                    f"(current quantity_consumed={qc}, remainder={remainder})"
+                )
+            if len(preset_drift) > 20:
+                self.stdout.write(f"  ... and {len(preset_drift) - 20} more")
 
         exceptions = BusinessException.objects.filter(
             business=business, kind='shrinkage', title__icontains=item.description,
