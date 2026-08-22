@@ -5339,13 +5339,23 @@
             'title="Sahihisha float — kwa mfano ulisahau kuweka fedha ulizohesabu" ' +
             'style="cursor:pointer; color:#c9a84c; font-size:.75rem;">&#9998;</span>' : '') +
         '</span></div>' +
-        '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(s.cash_sales) + '</span></div>' +
-        '<div class="shift-stat"><span class="s-label">M-Pesa</span><span class="s-val">' + _fmt(s.mpesa_sales) + '</span></div>' +
-        (s.credit_sales > 0 ? '<div class="shift-stat" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa"><span class="s-label">Mikopo Mapya</span><span class="s-val">' + _fmt(s.credit_sales) + '</span></div>' : '') +
-        ((s.debt_recovered_cash > 0 || s.debt_recovered_mpesa > 0) ? '<div class="shift-stat" title="Wateja waliolipa deni la zamani — hii NI fedha halisi, tofauti na Mikopo Mapya"><span class="s-label">Deni Zilizolipwa</span><span class="s-val">' + _fmt((s.debt_recovered_cash || 0) + (s.debt_recovered_mpesa || 0)) + '</span></div>' : '') +
+        '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(s.cash_sales) +
+          (s.owner_facilitated_cash > 0 ? '<div style="font-size:.68rem;color:#b0b0b0;font-weight:400;" title="Tayari imejumuishwa kwenye KES ' + _fmt(s.cash_sales) + ' hapo juu — si nyongeza tofauti">(ikiwemo KES ' + _fmt(s.owner_facilitated_cash) + ' kutoka kwa mmiliki)</div>' : '') +
+          '</span></div>' +
+        '<div class="shift-stat"><span class="s-label">M-Pesa</span><span class="s-val">' + _fmt(s.mpesa_sales) +
+          (s.owner_facilitated_mpesa > 0 ? '<div style="font-size:.68rem;color:#b0b0b0;font-weight:400;" title="Tayari imejumuishwa kwenye KES ' + _fmt(s.mpesa_sales) + ' hapo juu — si nyongeza tofauti">(ikiwemo KES ' + _fmt(s.owner_facilitated_mpesa) + ' kutoka kwa mmiliki)</div>' : '') +
+          '</span></div>' +
+        (s.credit_sales > 0 ? '<div class="shift-stat" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa"><span class="s-label">Mikopo Mapya</span><span class="s-val">' + _fmt(s.credit_sales) +
+          (s.owner_facilitated_credit > 0 ? '<div style="font-size:.68rem;color:#b0b0b0;font-weight:400;">(ikiwemo KES ' + _fmt(s.owner_facilitated_credit) + ' kutoka kwa mmiliki)</div>' : '') +
+          '</span></div>' : '') +
+        ((s.debt_recovered_cash > 0 || s.debt_recovered_mpesa > 0) ? '<div class="shift-stat" title="Wateja waliolipa deni la zamani — hii NI fedha halisi, tofauti na Mikopo Mapya"><span class="s-label">Deni Zilizolipwa</span><span class="s-val">' + _fmt((s.debt_recovered_cash || 0) + (s.debt_recovered_mpesa || 0)) +
+          (((s.owner_facilitated_debt_recovered_cash || 0) + (s.owner_facilitated_debt_recovered_mpesa || 0)) > 0 ? '<div style="font-size:.68rem;color:#b0b0b0;font-weight:400;">(ikiwemo KES ' + _fmt((s.owner_facilitated_debt_recovered_cash || 0) + (s.owner_facilitated_debt_recovered_mpesa || 0)) + ' iliyopokelewa na mmiliki)</div>' : '') +
+          '</span></div>' : '') +
         '<div class="shift-stat"><span class="s-label">Jumla</span><span class="s-val">' + _fmt(s.total_sales) + '</span></div>' +
         (s.variance !== null && s.variance !== undefined
-          ? '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(s.expected_cash) + '</span></div>'
+          ? '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(s.expected_cash) +
+            ((s.owner_facilitated_expected_cash || 0) > 0 ? '<div style="font-size:.68rem;color:#b0b0b0;font-weight:400;">(ikiwemo KES ' + _fmt(s.owner_facilitated_expected_cash) + ' kutoka kwa mmiliki)</div>' : '') +
+            '</span></div>'
           : '') +
         varHtml +
       '</div>';
@@ -5697,12 +5707,26 @@
       .then(function (d) {
         if (!d.shift || !summEl) return;
         var s = d.shift;
+        // 2026-08-22, same-day follow-up ("oh and the same for mpesa" / "debt
+        // placement and recovery too" / "every transactional aspect") —
+        // mirrors bar_board.html's own pre-close summary exactly.
+        var ownerNotes = [];
+        if ((s.owner_facilitated_cash || 0) > 0) ownerNotes.push('Cash KES ' + _fmt(s.owner_facilitated_cash));
+        if ((s.owner_facilitated_mpesa || 0) > 0) ownerNotes.push('M-Pesa KES ' + _fmt(s.owner_facilitated_mpesa));
+        if ((s.owner_facilitated_credit || 0) > 0) ownerNotes.push('Mikopo Mapya KES ' + _fmt(s.owner_facilitated_credit));
+        var ownerDebtRec = (s.owner_facilitated_debt_recovered_cash || 0) + (s.owner_facilitated_debt_recovered_mpesa || 0);
+        if (ownerDebtRec > 0) ownerNotes.push('Deni Zilizolipwa KES ' + _fmt(ownerDebtRec));
         summEl.innerHTML =
           '<div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:.5rem;">' +
           '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(s.cash_sales) + '</span></div>' +
+          '<div class="shift-stat"><span class="s-label">M-Pesa</span><span class="s-val">' + _fmt(s.mpesa_sales) + '</span></div>' +
+          (s.credit_sales > 0 ? '<div class="shift-stat" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa"><span class="s-label">Mikopo Mapya</span><span class="s-val">' + _fmt(s.credit_sales) + '</span></div>' : '') +
+          ((s.debt_recovered_cash > 0 || s.debt_recovered_mpesa > 0) ? '<div class="shift-stat" title="Wateja waliolipa deni la zamani"><span class="s-label">Deni Zilizolipwa</span><span class="s-val">' + _fmt((s.debt_recovered_cash || 0) + (s.debt_recovered_mpesa || 0)) + '</span></div>' : '') +
           '<div class="shift-stat"><span class="s-label">Float</span><span class="s-val">' + _fmt(s.opening_float) + '</span></div>' +
           '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(s.expected_cash) + '</span></div>' +
-          '</div><p style="font-size:.78rem; color:#888;">Hesabu pesa zote zilizopo mkononi sasa hivi, kisha ingiza hapa chini.</p>';
+          '</div>' +
+          (ownerNotes.length > 0 ? '<p style="font-size:.72rem;color:#b0b0b0;" title="Tayari imejumuishwa kwenye hesabu hapo juu — si nyongeza tofauti">Ikiwemo kutoka kwa mmiliki: ' + ownerNotes.join(' · ') + '.</p>' : '') +
+          '<p style="font-size:.78rem; color:#888;">Hesabu pesa zote zilizopo mkononi sasa hivi, kisha ingiza hapa chini.</p>';
       });
 
     // Show manager-handover option when kitchen food tabs are open
@@ -5784,21 +5808,36 @@
             }
             var debtRecHtml = '';
             if (parseFloat(d.debt_recovered_cash) > 0 || parseFloat(d.debt_recovered_mpesa) > 0) {
+              var ownerDebtRecClose = (parseFloat(d.owner_facilitated_debt_recovered_cash) || 0) + (parseFloat(d.owner_facilitated_debt_recovered_mpesa) || 0);
               debtRecHtml =
                 '<div style="margin-top:.4rem; padding:.4rem .6rem; background:rgba(76,175,80,0.08); border:1px solid rgba(76,175,80,0.25); border-radius:6px;">' +
                 '<span style="color:#4caf50; font-size:.76rem;">💵 Deni zilizolipwa (si mauzo mapya): Cash KES ' + Math.round(d.debt_recovered_cash) +
-                ' · M-Pesa KES ' + Math.round(d.debt_recovered_mpesa) + ' — tayari zimeongezwa kwenye Inayotarajiwa.</span></div>';
+                ' · M-Pesa KES ' + Math.round(d.debt_recovered_mpesa) + ' — tayari zimeongezwa kwenye Inayotarajiwa.' +
+                (ownerDebtRecClose > 0 ? ' (ikiwemo KES ' + Math.round(ownerDebtRecClose) + ' iliyopokelewa na mmiliki)' : '') +
+                '</span></div>';
             }
             var creditHtml = (parseFloat(d.credit_sales) > 0
-              ? '<div class="shift-stat" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa"><span class="s-label">Mikopo Mapya</span><span class="s-val" style="color:#f87171;">' + _fmt(d.credit_sales) + '</span></div>'
+              ? '<div class="shift-stat" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa"><span class="s-label">Mikopo Mapya</span><span class="s-val" style="color:#f87171;">' + _fmt(d.credit_sales) +
+                ((parseFloat(d.owner_facilitated_credit) || 0) > 0 ? '<div style="font-size:.68rem;color:#b0b0b0;font-weight:400;">(ikiwemo KES ' + _fmt(d.owner_facilitated_credit) + ' kutoka kwa mmiliki)</div>' : '') +
+                '</span></div>'
               : '');
+            // 2026-08-22, same-day follow-up — mirrors bar_board.html's own
+            // close-shift RESULT panel exactly (M-Pesa stat box + owner-
+            // facilitated guide notes, previously only shown Cash Sales).
             resEl.innerHTML =
               '<div style="background:#111; border-radius:8px; padding:.75rem; margin-bottom:.75rem;">' +
               '<div style="display:flex; gap:1rem; flex-wrap:wrap;">' +
               '<div class="shift-stat"><span class="s-label">Mauzo Yaliyothibitishwa</span><span class="s-val" title="Cash + M-Pesa pekee — si Mikopo Mapya">' + _fmt(d.confirmed_sales) + '</span></div>' +
-              '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(d.cash_sales) + '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">Cash Sales</span><span class="s-val">' + _fmt(d.cash_sales) +
+                ((parseFloat(d.owner_facilitated_cash) || 0) > 0 ? '<div style="font-size:.68rem;color:#b0b0b0;font-weight:400;">(ikiwemo KES ' + _fmt(d.owner_facilitated_cash) + ' kutoka kwa mmiliki)</div>' : '') +
+                '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">M-Pesa</span><span class="s-val">' + _fmt(d.mpesa_sales) +
+                ((parseFloat(d.owner_facilitated_mpesa) || 0) > 0 ? '<div style="font-size:.68rem;color:#b0b0b0;font-weight:400;">(ikiwemo KES ' + _fmt(d.owner_facilitated_mpesa) + ' kutoka kwa mmiliki)</div>' : '') +
+                '</span></div>' +
               creditHtml +
-              '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(d.expected_cash) + '</span></div>' +
+              '<div class="shift-stat"><span class="s-label">Inayotarajiwa</span><span class="s-val">' + _fmt(d.expected_cash) +
+                ((parseFloat(d.owner_facilitated_expected_cash) || 0) > 0 ? '<div style="font-size:.68rem;color:#b0b0b0;font-weight:400;">(ikiwemo KES ' + _fmt(d.owner_facilitated_expected_cash) + ' kutoka kwa mmiliki)</div>' : '') +
+                '</span></div>' +
               '<div class="shift-stat"><span class="s-label">Tofauti</span><span class="s-val ' + vc + '">' + sign + 'KES ' + Math.round(parseFloat(d.variance)) + '</span></div>' +
               '</div>' +
               pettyHtml +

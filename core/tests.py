@@ -39810,3 +39810,256 @@ class TransactionDateBackfillCommandTest(TestCase):
         out2 = io.StringIO()
         call_command('backfill_transaction_date_from_created_at', stdout=out2)
         self.assertIn('Corrected 0 transaction', out2.getvalue())
+
+
+class OwnerFacilitatedSalesAttributionTest(TestCase):
+    """2026-08-22 (Roy Q&A + explicit confirmation, same-day): while a
+    staffer's shift is open, the owner may also sell on the same counter
+    (the owner never needs an open shift to sell at all) — those sales
+    correctly blend into cash_sales/mpesa_sales/credit_sales/expected_cash
+    (a real till doesn't care who rang it up). Roy's own precise framing
+    once he confirmed the direction: the owner's share must be a pure
+    attribution GUIDE ("of that KES 500, KES 200 was the owner") — already
+    included in the figures shown, NEVER a second number added on top
+    (his own worked example: cash 500 with owner 200 inside it, not 500 +
+    200 = 700). Same-day follow-ups widened this from cash/mpesa/credit to
+    also cover debt recovery ("debt placement and recovery too") and the
+    dashboard's own revenue tiles/till breakdown ("im short every
+    transactional aspect of the shift modal+revenue count on the
+    dashboard") — see _reconcile(), till_expected_cash(), and
+    station_revenue_window_info() in core/shift_views.py."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Owner Facilitated Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ofa_owner', password='x')
+        self.owner_profile = UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='ofa_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='OFA-01', unit='Bottle', selling_price=Decimal('200'),
+        )
+
+    def _open_shift(self, staff=None):
+        staff = staff or self.staff_user
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=staff,
+            opening_float=Decimal('0'), status='OPEN', station='bar',
+            started_at=timezone.now() - timedelta(minutes=30),
+        )
+        return shift
+
+    def _sale(self, amount, payment_method='cash', by=None, when=None, store=None):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal(str(amount)),
+            payment_method=payment_method, recorded_by=by,
+            created_at=when or timezone.now(),
+        )
+
+    def test_owner_sale_blends_into_totals_and_is_reported_as_a_guide(self):
+        from core.shift_views import _reconcile
+        shift = self._open_shift()
+        self._sale(300, 'cash', by=self.staff_user)
+        self._sale(200, 'cash', by=self.owner)
+        rec = _reconcile(shift)
+        # Blended total — the owner's sale is inside cash_sales, not beside it.
+        self.assertAlmostEqual(rec['cash_sales'], 500.0, places=1)
+        # Guide: exactly the owner's own share, never added a second time.
+        self.assertAlmostEqual(rec['owner_facilitated_cash'], 200.0, places=1)
+        self.assertAlmostEqual(rec['owner_facilitated_total'], 200.0, places=1)
+        # The literal invariant Roy's own example demands: 500 total, never 700.
+        self.assertLessEqual(rec['owner_facilitated_cash'], rec['cash_sales'])
+
+    def test_mpesa_and_credit_also_guided_not_additive(self):
+        from core.shift_views import _reconcile
+        shift = self._open_shift()
+        self._sale(150, 'mpesa', by=self.owner)
+        self._sale(400, 'mpesa', by=self.staff_user)
+        self._sale(90, 'credit', by=self.owner)
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['mpesa_sales'], 550.0, places=1)
+        self.assertAlmostEqual(rec['owner_facilitated_mpesa'], 150.0, places=1)
+        self.assertAlmostEqual(rec['credit_sales'], 90.0, places=1)
+        self.assertAlmostEqual(rec['owner_facilitated_credit'], 90.0, places=1)
+        self.assertAlmostEqual(
+            rec['owner_facilitated_total'],
+            rec['owner_facilitated_cash'] + rec['owner_facilitated_mpesa'] + rec['owner_facilitated_credit'],
+            places=1,
+        )
+
+    def test_owner_sale_before_shift_started_excluded(self):
+        from core.shift_views import _reconcile
+        shift = self._open_shift()
+        # Owner sold an hour before this staffer's shift even opened.
+        self._sale(500, 'cash', by=self.owner, when=shift.started_at - timedelta(hours=1))
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['cash_sales'], 0.0, places=1)
+        self.assertAlmostEqual(rec['owner_facilitated_cash'], 0.0, places=1)
+
+    def test_owners_own_shift_never_self_attributes(self):
+        from core.shift_views import _reconcile
+        owner_shift = self._open_shift(staff=self.owner)
+        self._sale(300, 'cash', by=self.owner)
+        rec = _reconcile(owner_shift)
+        self.assertAlmostEqual(rec['cash_sales'], 300.0, places=1)
+        self.assertAlmostEqual(rec['owner_facilitated_cash'], 0.0, places=1)
+        self.assertAlmostEqual(rec['owner_facilitated_total'], 0.0, places=1)
+
+    def test_multiple_owner_profiles_both_counted(self):
+        from core.shift_views import _reconcile
+        second_owner = User.objects.create_user(username='ofa_owner2', password='x')
+        UserProfile.objects.create(user=second_owner, business=self.biz, role='owner')
+        shift = self._open_shift()
+        self._sale(100, 'cash', by=self.owner)
+        self._sale(150, 'cash', by=second_owner)
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['owner_facilitated_cash'], 250.0, places=1)
+        self.assertAlmostEqual(rec['cash_sales'], 250.0, places=1)
+
+    def test_owner_sale_on_other_station_does_not_bleed_in(self):
+        from core.shift_views import _reconcile
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        kitchen_item = Item.objects.create(
+            business=self.biz, store=kitchen_store, description='Chipo',
+            material_no='OFA-02', unit='Plate', selling_price=Decimal('150'),
+        )
+        shift = self._open_shift()  # bar station
+        Transaction.objects.create(
+            business=self.biz, item=kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'),
+            payment_method='cash', recorded_by=self.owner,
+        )
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['cash_sales'], 0.0, places=1)
+        self.assertAlmostEqual(rec['owner_facilitated_cash'], 0.0, places=1)
+
+    def test_debt_recovered_by_owner_guided_not_additive(self):
+        from core.shift_views import _reconcile
+        from core.models import CustomerDebtPayment
+        shift = self._open_shift()
+        customer = Customer.objects.create(business=self.biz, name='Eugene')
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('120'),
+            payment_method='cash', source='bar', recorded_by=self.owner,
+        )
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('80'),
+            payment_method='cash', source='bar', recorded_by=self.staff_user,
+        )
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['debt_recovered_cash'], 200.0, places=1)
+        self.assertAlmostEqual(rec['owner_facilitated_debt_recovered_cash'], 120.0, places=1)
+        self.assertLessEqual(rec['owner_facilitated_debt_recovered_cash'], rec['debt_recovered_cash'])
+
+    def test_owner_facilitated_expected_cash_combines_sales_and_debt_recovery(self):
+        from core.shift_views import _reconcile
+        from core.models import CustomerDebtPayment
+        shift = self._open_shift()
+        self._sale(200, 'cash', by=self.owner)
+        customer = Customer.objects.create(business=self.biz, name='Roy Debtor')
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('50'),
+            payment_method='cash', source='bar', recorded_by=self.owner,
+        )
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['owner_facilitated_expected_cash'], 250.0, places=1)
+        self.assertLessEqual(rec['owner_facilitated_expected_cash'], rec['expected_cash'])
+
+    def test_active_shift_api_json_carries_new_fields_matching_reconcile(self):
+        from core.shift_views import _reconcile
+        shift = self._open_shift()
+        self._sale(300, 'cash', by=self.owner)
+        rec = _reconcile(shift)
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/bar/shift/active/')
+        d = resp.json()['shift']
+        self.assertEqual(d['owner_facilitated_cash'], rec['owner_facilitated_cash'])
+        self.assertEqual(d['owner_facilitated_total'], rec['owner_facilitated_total'])
+        self.assertEqual(d['owner_facilitated_debt_recovered_cash'], rec['owner_facilitated_debt_recovered_cash'])
+        self.assertEqual(d['owner_facilitated_expected_cash'], rec['owner_facilitated_expected_cash'])
+        # Blended, never doubled.
+        self.assertEqual(d['cash_sales'], 300.0)
+
+    def test_close_shift_response_carries_new_fields(self):
+        shift = self._open_shift()
+        self._sale(400, 'mpesa', by=self.owner)
+        self.client.force_login(self.staff_user)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {'closing_cash_counted': '0'})
+        d = resp.json()
+        self.assertTrue(d.get('ok'))
+        self.assertEqual(d['mpesa_sales'], 400.0)
+        self.assertEqual(d['owner_facilitated_mpesa'], 400.0)
+
+    def test_all_shifts_dashboard_data_carries_owner_facilitated_fields(self):
+        shift = self._open_shift()
+        self._sale(100, 'cash', by=self.owner)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/active/')
+        row = next(r for r in resp.json()['all_shifts'] if r['id'] == shift.id)
+        self.assertEqual(row['owner_facilitated_cash'], 100.0)
+
+    def test_station_revenue_window_info_owner_facilitated_revenue(self):
+        from core.shift_views import station_revenue_window_info
+        sale_time = timezone.now()
+        self._sale(300, 'cash', by=self.owner, when=sale_time)
+        self._sale(200, 'cash', by=self.staff_user, when=sale_time)
+        # _window_revenue() filters created_at__lt=now, so "now" must be
+        # strictly AFTER the sale timestamps, not equal to them.
+        now = sale_time + timedelta(seconds=1)
+        info = station_revenue_window_info(self.biz, is_kitchen=False, now=now)
+        self.assertAlmostEqual(info['total_revenue'], 500.0, places=1)
+        self.assertAlmostEqual(info['owner_facilitated_revenue'], 300.0, places=1)
+        self.assertLessEqual(info['owner_facilitated_revenue'], info['total_revenue'])
+
+    def test_shift_history_context_carries_owner_facilitated_via_rec(self):
+        shift = self._open_shift()
+        self._sale(250, 'cash', by=self.owner)
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/bar/shift/history/')
+        row = next(r for r in resp.context['rows'] if r['shift'].id == shift.id)
+        self.assertEqual(row['rec']['owner_facilitated_cash'], 250.0)
+        self.assertEqual(row['rec']['cash_sales'], 250.0)
+
+    def test_bar_z_report_row_and_day_level_owner_facilitated(self):
+        # Two DIFFERENT staff, non-overlapping shifts today, so the day-level
+        # dedup query and the simple per-shift sum agree (keeps this a
+        # focused check of the new fields, not a re-test of the existing
+        # overlap-dedup mechanism, which has its own dedicated coverage).
+        today_9am = timezone.localtime().replace(hour=9, minute=0, second=0, microsecond=0)
+        shift1 = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            opening_float=Decimal('0'), status='CLOSED', station='bar',
+            started_at=today_9am, ended_at=today_9am + timedelta(hours=2),
+            closing_cash_counted=Decimal('300'),
+        )
+        self._sale(300, 'cash', by=self.owner, when=today_9am + timedelta(minutes=10))
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/z-report/')
+        row = next(r for r in resp.context['shift_rows'] if r['shift'].id == shift1.id)
+        self.assertEqual(row['owner_facilitated_cash'], 300.0)
+        self.assertEqual(resp.context['day_owner_facilitated_cash'], 300.0)
+        self.assertEqual(resp.context['day_cash'], 300.0)
+        self.assertLessEqual(resp.context['day_owner_facilitated_cash'], resp.context['day_cash'])
+
+    def test_till_expected_cash_breakdown_owner_facilitated(self):
+        from core.shift_views import till_expected_cash
+        # Establish an anchor via a real closed shift with a physical count.
+        anchor_shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            opening_float=Decimal('0'), status='CLOSED', station='bar',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('0'),
+        )
+        self._sale(300, 'cash', by=self.owner, when=anchor_shift.ended_at + timedelta(minutes=5))
+        self._sale(150, 'cash', by=self.staff_user, when=anchor_shift.ended_at + timedelta(minutes=10))
+        result = till_expected_cash(self.biz, 'bar')
+        self.assertTrue(result['anchor_established'])
+        self.assertAlmostEqual(result['breakdown']['cash_sales'], 450.0, places=1)
+        self.assertAlmostEqual(result['breakdown']['owner_facilitated_cash_sales'], 300.0, places=1)
+        self.assertLessEqual(
+            result['breakdown']['owner_facilitated_cash_sales'],
+            result['breakdown']['cash_sales'],
+        )

@@ -178,14 +178,23 @@
         <div class="stat-box">
           <div class="label">Cash Sales</div>
           <div class="value">KES {{ r.cash_sales|floatformat:0 }}</div>
+          {% if r.owner_facilitated_cash %}
+          <div style="font-size:.65rem;color:#888;" title="Tayari imejumuishwa hapo juu — si nyongeza tofauti">(ikiwemo KES {{ r.owner_facilitated_cash|floatformat:0 }} kutoka kwa mmiliki)</div>
+          {% endif %}
         </div>
         <div class="stat-box">
           <div class="label">M-Pesa</div>
           <div class="value">KES {{ r.mpesa_sales|floatformat:0 }}</div>
+          {% if r.owner_facilitated_mpesa %}
+          <div style="font-size:.65rem;color:#888;" title="Tayari imejumuishwa hapo juu — si nyongeza tofauti">(ikiwemo KES {{ r.owner_facilitated_mpesa|floatformat:0 }} kutoka kwa mmiliki)</div>
+          {% endif %}
         </div>
         <div class="stat-box">
           <div class="label">Credit</div>
           <div class="value">KES {{ r.credit_sales|floatformat:0 }}</div>
+          {% if r.owner_facilitated_credit %}
+          <div style="font-size:.65rem;color:#888;" title="Tayari imejumuishwa hapo juu — si nyongeza tofauti">(ikiwemo KES {{ r.owner_facilitated_credit|floatformat:0 }} kutoka kwa mmiliki)</div>
+          {% endif %}
         </div>
         <div class="stat-box">
           <div class="label">Jumla Mauzo</div>
@@ -195,6 +204,9 @@
         <div class="stat-box">
           <div class="label">Inayotarajiwa</div>
           <div class="value">KES {{ r.expected_cash_after_expenses|floatformat:0 }}</div>
+          {% if r.owner_facilitated_expected_cash %}
+          <div style="font-size:.65rem;color:#888;" title="Tayari imejumuishwa hapo juu — si nyongeza tofauti">(ikiwemo KES {{ r.owner_facilitated_expected_cash|floatformat:0 }} kutoka kwa mmiliki)</div>
+          {% endif %}
         </div>
         <div class="stat-box">
           <div class="label">Ilihesabiwa</div>

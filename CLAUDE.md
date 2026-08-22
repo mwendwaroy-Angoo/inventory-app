@@ -7731,3 +7731,84 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   segment, a real design nuance the first draft of this test got wrong), and the live-
   panel/close-shift regression lock mirroring `AdHocExpenseDayReconciliationTest`'s own.
   No migrations (`PettyCash.date` already existed).
+- Owner-facilitated sales attribution guide, shift modal + dashboard revenue
+  (2026-08-22). Live Q&A, then a build request: Roy asked three precise
+  questions about what happens to a staffer's shift-modal Cash Sales/M-Pesa
+  figures when the owner (who never needs to open a shift to sell) is also
+  selling — concurrently with an open staff shift, before the staff arrives,
+  and both at once. Traced `_reconcile()` directly and confirmed all three
+  scenarios: owner sales during the window already correctly blend into
+  cash_sales/mpesa_sales/expected_cash (a real till doesn't care who rang it
+  up — `txns` has no `recorded_by` filter), a pre-arrival owner sale is
+  structurally excluded (`_shift_active_segments()` always starts at
+  `shift.started_at`), and the combined case is just the union of both.
+  Roy then confirmed he wants a distinct guide line, with an explicit,
+  precise constraint given as a worked example: "if the shift modal is
+  showing cash sales 500 and the owner's sales are 200 it should just mean
+  that in that 500... 200 is part of it not separate from it" — i.e. a pure
+  attribution ANNOTATION, never a second number added on top. **Backend**:
+  `_reconcile()` computes `owner_cash`/`owner_mpesa`/`owner_credit` from the
+  SAME `txns` queryset (same segments, same station scope) filtered to
+  `recorded_by_id` in the set of every owner-role `UserProfile.user_id` for
+  the business (a business can have more than one — Bosco is also
+  owner-role at Monsoon Inn, confirmed from earlier session history) —
+  guaranteeing it can never drift from cash_sales/mpesa_sales/credit_sales
+  themselves; left at 0 for the owner's own shift (self-attribution is
+  meaningless). Returned as `owner_facilitated_cash/mpesa/credit/total` —
+  additive display fields, the underlying totals are completely unchanged.
+  Wired into all three JSON response builders (`active_shift_api()`'s
+  `is_mine: True` and owner-proxy `is_mine: False` branches, `close_shift()`)
+  and into `all_shifts_data` (the owner dashboard's "Active Shifts" meter).
+  **Same-day widening** ("oh and the same for mpesa" / "and debt placement
+  and recovery too" / "im short every transactional aspect of the shift
+  modal+revenue count on the dashboard"): (1) M-Pesa's own guide note was
+  already computed but two display surfaces only ever showed a bare Cash
+  Sales stat with no M-Pesa box at all — fixed both. (2) "Debt placement" is
+  already `owner_facilitated_credit` (a credit sale IS placing debt); added
+  the missing "recovery" half — `owner_facilitated_debt_recovered_cash/mpesa`,
+  computed the identical way from `debt_qs` (CustomerDebtPayment) filtered
+  to the same owner-id set — plus `owner_facilitated_expected_cash` (=
+  owner_cash + owner_debt_recovered_cash), the owner's own share of the
+  Inayotarajiwa/Expected Drawer figure itself. (3) Extended to the
+  DASHBOARD's own revenue surfaces, not just the per-shift modal: new
+  `_window_revenue_owner_facilitated()` (mirrors `_window_revenue()`,
+  filtered the same way) feeds a new `owner_facilitated_revenue` field on
+  `station_revenue_window_info()` (the home dashboard's "🍺/🍗 Revenue — vipi
+  hesabu hii ilipatikana?" disclosure); `till_expected_cash()` (the
+  CONTINUOUS "what's in the till right now" figure — Roy's own 2026-08-12
+  instruction that "shifts and counter cash modals are very fine as they
+  are" was about not touching its anchor/window MATH, not about withholding
+  a pure display addition) gained `owner_facilitated_cash_sales`/
+  `owner_facilitated_debt_recovered` on its `breakdown` dict, surfaced in
+  the same disclosure. **Frontend**: `bar_board.html`'s `renderShiftPanel()`
+  (the live shift-status panel) gained small "(ikiwemo KES X kutoka kwa
+  mmiliki)" sub-notes under Cash Sales, M-Pesa, Mikopo Mapya, Deni
+  Zilizolipwa, and Inayotarajiwa — each only rendered when its own
+  owner-facilitated value is > 0, with a tooltip making the "already
+  included, not additive" contract explicit. The close-shift-open modal's
+  small pre-close summary box (previously Cash Sales/Float/Expected only)
+  and the close-shift RESULT panel (previously had NO M-Pesa stat box at
+  all, only Cash Sales) both rebuilt to show the full Cash/M-Pesa/Mikopo
+  Mapya/Deni Zilizolipwa/Float/Expected set with the same guide notes.
+  `home.html`'s Active Shifts meter row gained a compact "👤 mmiliki: KES X"
+  combined note (cash+mpesa+credit+debt-recovered summed into one figure,
+  to keep the already-dense per-shift row from needing 5 separate
+  tooltips) plus per-figure `title=` tooltips on the Cash/M-Pesa spans
+  themselves; both revenue-info and till-breakdown disclosure panels gained
+  their own non-additive note lines. `kitchen_board.html` mirrored
+  `bar_board.html`'s three changes verbatim, per this file's own
+  counter-parity rule. 15 new tests
+  (`OwnerFacilitatedSalesAttributionTest`) — blended-not-doubled invariants
+  for cash/mpesa/credit, pre-shift-start exclusion, owner's-own-shift
+  self-attribution exclusion, multi-owner-profile summing, station
+  isolation, debt-recovery attribution and its role in
+  owner_facilitated_expected_cash, direct end-to-end checks that
+  `active_shift_api`/`close_shift`/`all_shifts_data`/
+  `station_revenue_window_info`/`till_expected_cash` all carry and agree on
+  the new fields, and that `shift_history()`/`bar_z_report()` (per-row AND
+  the deduped day-level total) both surface it too. Also extended, same
+  pass: `shift_history.html`'s per-shift cards and `bar_z_report.html`'s
+  per-row table cells + day-summary tiles now show the identical
+  non-additive guide notes. No migrations (pure computation over existing
+  `Transaction.recorded_by`/`CustomerDebtPayment.recorded_by`, both
+  already-existing fields).

@@ -264,8 +264,8 @@
             <div style="font-size:.68rem; color:#999; margin-top:.35rem; line-height:1.6;">
                 Hesabu ya mwisho ya kimwili: <strong style="color:#ccc;">{{ till_bar_expected.anchor_label }}</strong><br>
                 Msingi (hesabu ya mwisho): KES {{ till_bar_expected.breakdown.base|floatformat:0 }}<br>
-                + Mauzo taslimu tangu hapo: KES {{ till_bar_expected.breakdown.cash_sales|floatformat:0 }}<br>
-                + Deni lililolipwa taslimu: KES {{ till_bar_expected.breakdown.debt_recovered|floatformat:0 }}<br>
+                + Mauzo taslimu tangu hapo: KES {{ till_bar_expected.breakdown.cash_sales|floatformat:0 }}{% if till_bar_expected.breakdown.owner_facilitated_cash_sales %} <span style="color:#777;">(ikiwemo KES {{ till_bar_expected.breakdown.owner_facilitated_cash_sales|floatformat:0 }} kutoka kwa mmiliki)</span>{% endif %}<br>
+                + Deni lililolipwa taslimu: KES {{ till_bar_expected.breakdown.debt_recovered|floatformat:0 }}{% if till_bar_expected.breakdown.owner_facilitated_debt_recovered %} <span style="color:#777;">(ikiwemo KES {{ till_bar_expected.breakdown.owner_facilitated_debt_recovered|floatformat:0 }} iliyopokelewa na mmiliki)</span>{% endif %}<br>
                 − Petty cash iliyokubaliwa: KES {{ till_bar_expected.breakdown.petty_cash|floatformat:0 }}<br>
                 − Kiasi kilichowekwa banked: KES {{ till_bar_expected.breakdown.banked|floatformat:0 }}<br>
                 <strong style="color:#c9a84c;">= Jumla: KES {{ till_bar_expected.expected_cash|floatformat:0 }}</strong>
@@ -278,8 +278,8 @@
             <div style="font-size:.68rem; color:#999; margin-top:.35rem; line-height:1.6;">
                 Hesabu ya mwisho ya kimwili: <strong style="color:#ccc;">{{ till_kitchen_expected.anchor_label }}</strong><br>
                 Msingi (hesabu ya mwisho): KES {{ till_kitchen_expected.breakdown.base|floatformat:0 }}<br>
-                + Mauzo taslimu tangu hapo: KES {{ till_kitchen_expected.breakdown.cash_sales|floatformat:0 }}<br>
-                + Deni lililolipwa taslimu: KES {{ till_kitchen_expected.breakdown.debt_recovered|floatformat:0 }}<br>
+                + Mauzo taslimu tangu hapo: KES {{ till_kitchen_expected.breakdown.cash_sales|floatformat:0 }}{% if till_kitchen_expected.breakdown.owner_facilitated_cash_sales %} <span style="color:#777;">(ikiwemo KES {{ till_kitchen_expected.breakdown.owner_facilitated_cash_sales|floatformat:0 }} kutoka kwa mmiliki)</span>{% endif %}<br>
+                + Deni lililolipwa taslimu: KES {{ till_kitchen_expected.breakdown.debt_recovered|floatformat:0 }}{% if till_kitchen_expected.breakdown.owner_facilitated_debt_recovered %} <span style="color:#777;">(ikiwemo KES {{ till_kitchen_expected.breakdown.owner_facilitated_debt_recovered|floatformat:0 }} iliyopokelewa na mmiliki)</span>{% endif %}<br>
                 − Petty cash iliyokubaliwa: KES {{ till_kitchen_expected.breakdown.petty_cash|floatformat:0 }}<br>
                 − Kiasi kilichowekwa banked: KES {{ till_kitchen_expected.breakdown.banked|floatformat:0 }}<br>
                 <strong style="color:#ff9800;">= Jumla: KES {{ till_kitchen_expected.expected_cash|floatformat:0 }}</strong>
@@ -599,6 +599,9 @@
                     {% endif %}
                 </ul>
                 <div style="margin-top:.3rem; color:#666;">Jumla: KES {{ bar_revenue_info.total_revenue|floatformat:0 }}</div>
+                {% if bar_revenue_info.owner_facilitated_revenue %}
+                <div style="margin-top:.15rem; color:#888;">Ikiwemo KES {{ bar_revenue_info.owner_facilitated_revenue|floatformat:0 }} yaliyouzwa na mmiliki — tayari yamejumuishwa hapo juu, si nyongeza.</div>
+                {% endif %}
                 {% endif %}
             </div>
         </details>
@@ -618,6 +621,9 @@
                     {% endif %}
                 </ul>
                 <div style="margin-top:.3rem; color:#666;">Jumla: KES {{ kitchen_revenue_info.total_revenue|floatformat:0 }}</div>
+                {% if kitchen_revenue_info.owner_facilitated_revenue %}
+                <div style="margin-top:.15rem; color:#888;">Ikiwemo KES {{ kitchen_revenue_info.owner_facilitated_revenue|floatformat:0 }} yaliyouzwa na mmiliki — tayari yamejumuishwa hapo juu, si nyongeza.</div>
+                {% endif %}
                 {% endif %}
             </div>
         </details>
@@ -1266,10 +1272,18 @@ function homeForceCloseShift(shiftId, staffName) {
                         '<span style="color:#888; font-size:.75rem;">· ' + s.started_at + ' (' + timeLabel + ')</span>' +
                     '</div>' +
                     '<div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:center;">' +
-                        '<span style="font-size:.75rem; color:#b0b0b0;">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong></span>' +
-                        '<span style="font-size:.75rem; color:#b0b0b0;">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong></span>' +
+                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + ((s.owner_facilitated_cash || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_cash) + ' kutoka kwa mmiliki — si nyongeza' : '') + '">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong></span>' +
+                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + ((s.owner_facilitated_mpesa || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_mpesa) + ' kutoka kwa mmiliki — si nyongeza' : '') + '">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong></span>' +
                         (s.credit_sales > 0 ? '<span style="font-size:.75rem; color:#f87171;" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa">Deni <strong>KES ' + Math.round(s.credit_sales) + '</strong></span>' : '') +
                         '<span style="font-size:.75rem; color:#c9a84c; font-weight:700;" title="Confirmed cash + M-Pesa only">KES ' + Math.round(s.confirmed_sales) + '</span>' +
+                        // 2026-08-22 same-day follow-up ("every transactional aspect of
+                        // the shift modal+revenue count on the dashboard") — owner
+                        // GUIDE for this row, non-additive (already inside the figures
+                        // above). Combines sales + debt-recovery attribution into one
+                        // small note so the compact dashboard row doesn't need 4 tooltips.
+                        (((s.owner_facilitated_cash || 0) + (s.owner_facilitated_mpesa || 0) + (s.owner_facilitated_credit || 0) + (s.owner_facilitated_debt_recovered_cash || 0) + (s.owner_facilitated_debt_recovered_mpesa || 0)) > 0
+                            ? '<span style="font-size:.68rem; color:#888;">👤 mmiliki: KES ' + Math.round((s.owner_facilitated_cash || 0) + (s.owner_facilitated_mpesa || 0) + (s.owner_facilitated_credit || 0) + (s.owner_facilitated_debt_recovered_cash || 0) + (s.owner_facilitated_debt_recovered_mpesa || 0)) + '</span>'
+                            : '') +
                         '<a href="' + link + '" style="font-size:.72rem; color:#888; text-decoration:none;">' + linkTxt + '</a>' +
                         closeBtn +
                     '</div>' +

@@ -379,6 +379,29 @@ def _window_revenue(business, is_kitchen, start, end):
     return sum(t.revenue() for t in txns)
 
 
+def _window_revenue_owner_facilitated(business, is_kitchen, start, end):
+    """Same as _window_revenue() but narrowed to transactions Transaction.
+    recorded_by attributes to an owner-role UserProfile — the dashboard
+    revenue tile's own sibling to _reconcile()'s owner_facilitated_cash/
+    mpesa (2026-08-22, same-day follow-up: "im short every transactional
+    aspect of the shift modal+revenue count on the dashboard"). A pure
+    GUIDE subset of _window_revenue()'s own total — never added on top."""
+    from accounts.models import UserProfile as _UP
+    owner_ids = list(
+        _UP.objects.filter(business=business, role='owner').values_list('user_id', flat=True)
+    )
+    if not owner_ids:
+        return 0
+    txns = Transaction.objects.filter(
+        business=business, type='Issue',
+        created_at__gte=start, created_at__lt=end,
+        payment_method__in=['cash', 'mpesa'],
+        item__store__is_kitchen=is_kitchen,
+        recorded_by_id__in=owner_ids,
+    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
+    return sum(t.revenue() for t in txns)
+
+
 def station_revenue_window_info(business, is_kitchen, now=None):
     """Explains *why* a station's live revenue tile on the home dashboard
     shows what it shows — the human-facing sibling to
@@ -416,6 +439,7 @@ def station_revenue_window_info(business, is_kitchen, now=None):
     )
 
     total_revenue = _window_revenue(business, is_kitchen, window_start, now)
+    owner_facilitated_revenue = _window_revenue_owner_facilitated(business, is_kitchen, window_start, now)
 
     pending_shifts = []
     shifts_revenue_sum = 0
@@ -440,6 +464,7 @@ def station_revenue_window_info(business, is_kitchen, now=None):
         'anchor_label': anchor_label,
         'total_revenue': total_revenue,
         'other_revenue': other_revenue,
+        'owner_facilitated_revenue': owner_facilitated_revenue,
         'pending_shifts': pending_shifts,
     }
 
@@ -546,6 +571,32 @@ def _reconcile(shift):
     cash_sales   = float(txns.filter(payment_method='cash'  ).aggregate(t=Sum(_rev))['t'] or 0)
     mpesa_sales  = float(txns.filter(payment_method='mpesa' ).aggregate(t=Sum(_rev))['t'] or 0)
     credit_sales = float(txns.filter(payment_method='credit').aggregate(t=Sum(_rev))['t'] or 0)
+
+    # 2026-08-22 live Q&A (Roy): the owner never needs an open shift to
+    # sell, so when the owner sells on the SAME station while a staffer's
+    # shift is open, those sales fall inside this same time+station window
+    # and correctly blend into cash_sales/mpesa_sales/credit_sales above —
+    # "Expected Drawer" needs the true total regardless of who rang it up.
+    # Roy's own explicit framing after confirming this is intentional: the
+    # owner's portion must stay INSIDE the existing totals, never a
+    # separate additional figure — this is purely an attribution GUIDE
+    # ("of that KES 500, KES 200 was the owner"), not a second number that
+    # would double the total if added back on top. Computed from the exact
+    # same `txns` queryset (same segments, same station scope) so it can
+    # never drift from cash_sales/mpesa_sales/credit_sales themselves.
+    # Meaningless (and left at 0) for the owner's own shift, if the owner
+    # ever opens one — that would just be 100% self-attribution.
+    owner_cash = owner_mpesa = owner_credit = 0.0
+    if staff_role != 'owner':
+        from accounts.models import UserProfile as _UP
+        _owner_ids = list(
+            _UP.objects.filter(business=shift.business, role='owner').values_list('user_id', flat=True)
+        )
+        if _owner_ids:
+            _owner_txns = txns.filter(recorded_by_id__in=_owner_ids)
+            owner_cash   = float(_owner_txns.filter(payment_method='cash'  ).aggregate(t=Sum(_rev))['t'] or 0)
+            owner_mpesa  = float(_owner_txns.filter(payment_method='mpesa' ).aggregate(t=Sum(_rev))['t'] or 0)
+            owner_credit = float(_owner_txns.filter(payment_method='credit').aggregate(t=Sum(_rev))['t'] or 0)
     # 2026-07-31 live report — "cash sales and mpesa ... should not include
     # confirmed unpaid bills and debts, only what was confirmed". credit_sales
     # is stock given out on a tab/deni that hasn't been collected yet — it's a
@@ -608,6 +659,20 @@ def _reconcile(shift):
     debt_recovered_cash  = float(debt_qs.filter(payment_method='cash' ).aggregate(t=Sum('amount_paid'))['t'] or 0)
     debt_recovered_mpesa = float(debt_qs.filter(payment_method='mpesa').aggregate(t=Sum('amount_paid'))['t'] or 0)
 
+    # 2026-08-22, same-day follow-up (Roy: "and debt placement and recovery
+    # too") — the owner-facilitated GUIDE from above extended to debt: how
+    # much of debt_recovered_cash/mpesa was collected by the OWNER (e.g. the
+    # owner personally took a customer's debt payment during this shift's
+    # window) — same non-additive, "already included" contract as
+    # owner_cash/owner_mpesa/owner_credit above. "Debt PLACEMENT" is already
+    # covered by owner_facilitated_credit (a credit sale IS placing new
+    # debt) — this only adds the RECOVERY half.
+    owner_debt_recovered_cash = owner_debt_recovered_mpesa = 0.0
+    if staff_role != 'owner' and _owner_ids:
+        _owner_debt_qs = debt_qs.filter(recorded_by_id__in=_owner_ids)
+        owner_debt_recovered_cash  = float(_owner_debt_qs.filter(payment_method='cash' ).aggregate(t=Sum('amount_paid'))['t'] or 0)
+        owner_debt_recovered_mpesa = float(_owner_debt_qs.filter(payment_method='mpesa').aggregate(t=Sum('amount_paid'))['t'] or 0)
+
     # expected_cash includes any offline cash that staff declared but didn't enter in the
     # system, plus debt recovered in cash, net of approved petty cash paid out during
     # the shift. Petty cash still PENDING owner review is deliberately NOT subtracted
@@ -630,6 +695,20 @@ def _reconcile(shift):
         'credit_sales':  round(credit_sales, 2),
         'confirmed_sales': round(confirmed_sales, 2),
         'total_sales':   round(total_sales, 2),
+        # 2026-08-22 — attribution GUIDE only, already included inside the
+        # figures above, never added on top. See the comment where these
+        # are computed for the full reasoning.
+        'owner_facilitated_cash':   round(owner_cash, 2),
+        'owner_facilitated_mpesa':  round(owner_mpesa, 2),
+        'owner_facilitated_credit': round(owner_credit, 2),
+        'owner_facilitated_total':  round(owner_cash + owner_mpesa + owner_credit, 2),
+        'owner_facilitated_debt_recovered_cash':  round(owner_debt_recovered_cash, 2),
+        'owner_facilitated_debt_recovered_mpesa': round(owner_debt_recovered_mpesa, 2),
+        # Owner's own share of expected_cash itself (opening_float excluded —
+        # that's a physical starting count, never attributable to "who sold
+        # what"). Same guide contract: already inside expected_cash, never
+        # added on top of it.
+        'owner_facilitated_expected_cash': round(owner_cash + owner_debt_recovered_cash, 2),
         'petty_cash':    round(petty_total, 2),
         'petty_cash_pending':  round(petty_pending, 2),
         'petty_cash_rejected': round(petty_rejected, 2),
@@ -878,6 +957,19 @@ def till_expected_cash(business, station, as_of=None):
         txns = txns.filter(created_at__gt=window_start)
     cash_sales = float(txns.aggregate(t=Sum(_rev))['t'] or 0)
 
+    # 2026-08-22, same-day follow-up ("every transactional aspect of the
+    # shift modal+revenue count on the dashboard") — same non-additive
+    # owner-facilitated GUIDE as _reconcile()'s own cash_sales, applied to
+    # this continuous till figure's own cash_sales breakdown line. Purely a
+    # display addition — the anchor/window/expected_cash math itself is
+    # completely untouched (Roy's own 2026-08-12 instruction: "shifts and
+    # counter cash modals are very fine as they are").
+    from accounts.models import UserProfile as _UP
+    owner_ids = list(
+        _UP.objects.filter(business=business, role='owner').values_list('user_id', flat=True)
+    )
+    owner_cash_sales = float(txns.filter(recorded_by_id__in=owner_ids).aggregate(t=Sum(_rev))['t'] or 0) if owner_ids else 0.0
+
     from .models import CustomerDebtPayment
     debt_qs = CustomerDebtPayment.objects.filter(
         business=business, payment_method='cash',
@@ -886,6 +978,7 @@ def till_expected_cash(business, station, as_of=None):
     if window_start:
         debt_qs = debt_qs.filter(paid_at__gt=window_start)
     debt_recovered = float(debt_qs.aggregate(t=Sum('amount_paid'))['t'] or 0)
+    owner_debt_recovered = float(debt_qs.filter(recorded_by_id__in=owner_ids).aggregate(t=Sum('amount_paid'))['t'] or 0) if owner_ids else 0.0
 
     petty_qs = PettyCash.objects.filter(
         business=business, status='approved',
@@ -914,6 +1007,8 @@ def till_expected_cash(business, station, as_of=None):
             'debt_recovered': round(debt_recovered, 2),
             'petty_cash':     round(petty_approved, 2),
             'banked':         round(banked, 2),
+            'owner_facilitated_cash_sales':     round(owner_cash_sales, 2),
+            'owner_facilitated_debt_recovered': round(owner_debt_recovered, 2),
         },
     }
 
@@ -1423,6 +1518,11 @@ def active_shift_api(request):
             'credit_sales': rec['credit_sales'],
             'debt_recovered_cash':  rec['debt_recovered_cash'],
             'debt_recovered_mpesa': rec['debt_recovered_mpesa'],
+            'owner_facilitated_cash':   rec['owner_facilitated_cash'],
+            'owner_facilitated_mpesa':  rec['owner_facilitated_mpesa'],
+            'owner_facilitated_credit': rec['owner_facilitated_credit'],
+            'owner_facilitated_debt_recovered_cash':  rec['owner_facilitated_debt_recovered_cash'],
+            'owner_facilitated_debt_recovered_mpesa': rec['owner_facilitated_debt_recovered_mpesa'],
         })
 
     # MY shift — for the bar board's own shift panel
@@ -1458,6 +1558,13 @@ def active_shift_api(request):
                         'credit_sales':  proxy_rec['credit_sales'],
                         'confirmed_sales': proxy_rec['confirmed_sales'],
                         'total_sales':   proxy_rec['total_sales'],
+                        'owner_facilitated_cash':   proxy_rec['owner_facilitated_cash'],
+                        'owner_facilitated_mpesa':  proxy_rec['owner_facilitated_mpesa'],
+                        'owner_facilitated_credit': proxy_rec['owner_facilitated_credit'],
+                        'owner_facilitated_total':  proxy_rec['owner_facilitated_total'],
+                        'owner_facilitated_debt_recovered_cash':  proxy_rec['owner_facilitated_debt_recovered_cash'],
+                        'owner_facilitated_debt_recovered_mpesa': proxy_rec['owner_facilitated_debt_recovered_mpesa'],
+                        'owner_facilitated_expected_cash':        proxy_rec['owner_facilitated_expected_cash'],
                         'expected_cash': proxy_rec['expected_cash'],
                         'expected_cash_if_pending_approved': proxy_rec['expected_cash_if_pending_approved'],
                         'petty_cash':    proxy_rec['petty_cash'],
@@ -1529,6 +1636,13 @@ def active_shift_api(request):
             'credit_sales':   rec['credit_sales'],
             'confirmed_sales': rec['confirmed_sales'],
             'total_sales':    rec['total_sales'],
+            'owner_facilitated_cash':   rec['owner_facilitated_cash'],
+            'owner_facilitated_mpesa':  rec['owner_facilitated_mpesa'],
+            'owner_facilitated_credit': rec['owner_facilitated_credit'],
+            'owner_facilitated_total':  rec['owner_facilitated_total'],
+            'owner_facilitated_debt_recovered_cash':  rec['owner_facilitated_debt_recovered_cash'],
+            'owner_facilitated_debt_recovered_mpesa': rec['owner_facilitated_debt_recovered_mpesa'],
+            'owner_facilitated_expected_cash':        rec['owner_facilitated_expected_cash'],
             'expected_cash':  rec['expected_cash'],
             'expected_cash_if_pending_approved': rec['expected_cash_if_pending_approved'],
             'petty_cash':     rec['petty_cash'],
@@ -2092,6 +2206,13 @@ def close_shift(request, shift_id):
         'cash_sales':           rec['cash_sales'],
         'mpesa_sales':          rec['mpesa_sales'],
         'credit_sales':         rec['credit_sales'],
+        'owner_facilitated_cash':   rec['owner_facilitated_cash'],
+        'owner_facilitated_mpesa':  rec['owner_facilitated_mpesa'],
+        'owner_facilitated_credit': rec['owner_facilitated_credit'],
+        'owner_facilitated_total':  rec['owner_facilitated_total'],
+        'owner_facilitated_debt_recovered_cash':  rec['owner_facilitated_debt_recovered_cash'],
+        'owner_facilitated_debt_recovered_mpesa': rec['owner_facilitated_debt_recovered_mpesa'],
+        'owner_facilitated_expected_cash':        rec['owner_facilitated_expected_cash'],
         # 2026-07-25 live report (Monsoon Inn): _reconcile() has correctly netted
         # approved petty cash out of expected_cash since the previous session's
         # fix, but the amount itself was never sent to the frontend — staff saw

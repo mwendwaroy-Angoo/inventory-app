@@ -5047,6 +5047,7 @@ def bar_z_report(request):
     # Build per-shift rows, excluding kitchen-staff shifts from the bar report
     shift_rows = []
     day_cash = day_mpesa = day_credit = day_total = 0.0
+    day_owner_cash = day_owner_mpesa = day_owner_credit = 0.0
     day_opening_float = 0.0
     day_expected_cash = 0.0
     day_petty_cash = 0.0
@@ -5091,6 +5092,16 @@ def bar_z_report(request):
             'mpesa_sales':    rec['mpesa_sales'],
             'credit_sales':   rec['credit_sales'],
             'total_sales':    rec['total_sales'],
+            # 2026-08-22 — attribution GUIDE only (already included in the
+            # figures above), see _reconcile()'s own comment for the full
+            # "same for mpesa / debt placement and recovery too / every
+            # transactional aspect" reasoning.
+            'owner_facilitated_cash':   rec['owner_facilitated_cash'],
+            'owner_facilitated_mpesa':  rec['owner_facilitated_mpesa'],
+            'owner_facilitated_credit': rec['owner_facilitated_credit'],
+            'owner_facilitated_debt_recovered_cash':  rec['owner_facilitated_debt_recovered_cash'],
+            'owner_facilitated_debt_recovered_mpesa': rec['owner_facilitated_debt_recovered_mpesa'],
+            'owner_facilitated_expected_cash':        rec['owner_facilitated_expected_cash'],
             'opening_float':  float(shift.opening_float),
             'offline_adj':    rec['offline_adj'],
             'petty_cash':     petty_total,
@@ -5141,6 +5152,18 @@ def bar_z_report(request):
         day_mpesa  = sum(t.revenue() for t in _day_txns if t.payment_method == 'mpesa')
         day_credit = sum(t.revenue() for t in _day_txns if t.payment_method == 'credit')
         day_total  = day_cash + day_mpesa + day_credit
+
+        # 2026-08-22 — day-level owner-facilitated GUIDE, deduped the same way
+        # as day_cash/mpesa/credit above (reuses the already-materialized
+        # _day_txns list — no extra query). Never additive, purely a note on
+        # what's already inside the totals above.
+        from accounts.models import UserProfile as _UP
+        _owner_ids_day = list(
+            _UP.objects.filter(business=business, role='owner').values_list('user_id', flat=True)
+        )
+        day_owner_cash   = sum(t.revenue() for t in _day_txns if t.payment_method == 'cash' and t.recorded_by_id in _owner_ids_day)
+        day_owner_mpesa  = sum(t.revenue() for t in _day_txns if t.payment_method == 'mpesa' and t.recorded_by_id in _owner_ids_day)
+        day_owner_credit = sum(t.revenue() for t in _day_txns if t.payment_method == 'credit' and t.recorded_by_id in _owner_ids_day)
 
         day_petty_cash = float(PettyCash.objects.filter(
             business=business, status='approved',
@@ -5270,6 +5293,11 @@ def bar_z_report(request):
         'day_mpesa':           round(day_mpesa, 2),
         'day_credit':          round(day_credit, 2),
         'day_total':           round(day_total, 2),
+        # 2026-08-22 — day-level owner-facilitated GUIDE (already included
+        # in day_cash/day_mpesa/day_credit above, never additive).
+        'day_owner_facilitated_cash':   round(day_owner_cash, 2),
+        'day_owner_facilitated_mpesa':  round(day_owner_mpesa, 2),
+        'day_owner_facilitated_credit': round(day_owner_credit, 2),
         'day_opening_float':   round(day_opening_float, 2),
         'day_expected_cash':   round(day_expected_cash, 2),
         'day_petty_cash':      round(day_petty_cash, 2),
