@@ -7950,3 +7950,82 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   named by Roy as needing its own separate study before building the same
   treatment there — deliberately NOT touched this pass. One migration
   (0172, additive).
+- Composite staff recognition tiers (2026-08-22, same-day follow-up). Roy,
+  after the gap-accountability sprint above shipped: "what are the merits
+  set that determine an outstanding employee?" Traced the existing
+  recognition mechanism and answered plainly — 4 independent milestone
+  badges (`_check_and_fire_recognition()`: 30+ shifts, KES 50k+ revenue/
+  month, KES 10k+ debts recovered, clean keg handling) with no combined
+  score and, until this same week's own fix, no negative side at all.
+  Recommended combining the positive milestones with the newly-corrected
+  negative ledger (dismissed variances, unaffirmed variance loss, wastage,
+  rejected petty cash) into one composite tier rather than separate
+  disconnected nudges, and asked Roy for the tradeoff rule. Roy: "no need
+  to add more raw metrics, things are already good as is... one or two
+  dismissed variances should not knock the staff out, lowering the tier is
+  just enough... I am not sure what the disqualifying/weighting rule should
+  be, maybe you guide me on that so long as it is sensible, logical and
+  fair" — explicitly authorizing the design, with the one hard constraint
+  that 1-2 minor incidents must only ever lower the tier, never disqualify.
+
+  New `compute_staff_recognition(contrib)` (`core/haki_views.py`) — a pure
+  function over an already-computed `_staff_contribution()` dict, so it
+  needed no new queries or migration. Points (positive side, capped at 100
+  before deductions): consistency (shift count, full marks at the existing
+  30-shift milestone threshold, up to 30 pts), revenue (full marks at the
+  existing KES 50k threshold, up to 40 pts — the single biggest factor,
+  since it's the most direct measure of contribution), debt recovery (full
+  marks at the existing KES 10k threshold, up to 20 pts), clean keg
+  handling (flat 10-pt bonus, 0 for a non-keg business). Deductions are
+  GRADUATED, not linear, directly implementing Roy's own rule: for both
+  dismissed stock variances and rejected petty cash entries, the first two
+  incidents cost only 3 points each (a real but small ding — matching "one
+  or two should not knock the staff out"), while the third and beyond cost
+  8 points each — a genuine repeated pattern is treated as materially
+  worse than an isolated mistake, not just added up. Unaffirmed variance
+  loss and wastage are deliberately scored as a PERCENTAGE OF THE STAFFER'S
+  OWN REVENUE, never a flat KES figure — the same KES 500 gap is a much
+  bigger red flag against a slow KES 5,000 month than a busy KES 100,000
+  one, and a flat-KES rule would unfairly penalize a business's highest
+  performers simply for handling the most stock. A separate "pattern cap"
+  — 3+ dismissed variances, OR 3+ rejected petty cash, OR unaffirmed
+  variance loss exceeding 5% of revenue — bars ONLY the top (gold) tier
+  regardless of point score, and is drawn precisely at PATTERN, never at a
+  single incident, so it can never fire from 1-2 alone; it does not
+  disqualify from a tier entirely, satisfying Roy's constraint exactly.
+  Returns `{'tier', 'tier_label', 'score', 'capped', 'breakdown'}` — five
+  tiers (unrated below a 5-shift minimum — "simply not enough data to rate
+  fairly" — then gold/silver/bronze/developing by score) — `breakdown` is a
+  list of `(label, points, is_deduction)` tuples so the score is always
+  explainable to both the owner and the staffer, never just asserted,
+  matching this app's own accountability-and-transparency standard
+  established throughout the gap-accountability sprint just above.
+
+  Wired into all four `_staff_contribution()` call sites: owner's staff
+  ledger (`staff_contribution_report()`), Kazi Yangu self-service
+  (`my_work_and_pay()`), the H4 shareable/printable recognition statement
+  (`haki_recognition_statement()`), and the owner's full-tenure report
+  (`staff_journey()`) — each attaches `contrib['recognition'] =
+  compute_staff_recognition(contrib)` right after the underlying
+  `_staff_contribution()` call. Template display added to all four:
+  `haki_contribution.html` shows a colour-coded tier badge (gold/silver/
+  bronze/red for developing) next to the existing milestone badges on each
+  staffer's card, plus a `<details>` disclosure of the full points
+  breakdown (and a "imezuiliwa kufikia dhahabu" note when the pattern cap
+  is active); `haki_kazi_yangu.html` shows the same badge + breakdown to
+  the staffer themselves, right where the existing unaffirmed-variance
+  transparency card already lives; `haki_statement.html` shows the tier
+  prominently at the top of the printable/shareable statement itself, since
+  this is literally the artifact meant to recognize good performance;
+  `staff_journey.html` shows the badge in the owner's tenure summary. 17
+  new tests (`StaffRecognitionTierTest` — unrated below minimum, gold for a
+  clean strong record, the direct regression lock for Roy's own 1-2-never-
+  disqualifies rule, the pattern cap firing at 3+ dismissed/3+ rejected/
+  >5% variance and NOT firing at 2, the same-KES-hits-low-revenue-harder
+  proportional-scoring proof, score bounded to [0,100] under extreme
+  inputs, and breakdown explainability; `StaffRecognitionWiringTest` —
+  confirms `recognition` genuinely reaches all four real pages via a live
+  HTTP round-trip each, not just the scoring function in isolation). No
+  migrations (pure computation over existing `contrib` dict fields — no new
+  model fields). Full core+accounts suite (2270 tests) re-run and confirmed
+  passing.

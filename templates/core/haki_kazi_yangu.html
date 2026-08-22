@@ -146,6 +146,27 @@
         {% endif %}
     </div>
 
+    {% if recognition.tier and recognition.tier != 'unrated' %}
+    <div class="mt-3">
+        <span style="font-size:0.85rem; font-weight:700; padding:0.25rem 0.75rem; border-radius:20px; {% if recognition.tier == 'gold' %}background:rgba(251,191,36,0.15); color:#fbbf24;{% elif recognition.tier == 'silver' %}background:rgba(203,213,225,0.15); color:#cbd5e1;{% elif recognition.tier == 'bronze' %}background:rgba(217,119,6,0.15); color:#d97706;{% else %}background:rgba(248,113,113,0.12); color:#f87171;{% endif %}">
+            {{ recognition.tier_label }} ({{ recognition.score }}/100)
+        </span>
+        {% if recognition.breakdown %}
+        <details class="mt-2">
+            <summary style="cursor:pointer; font-size:0.75rem; color:#888;">vipi alama hii ilipatikana?</summary>
+            <div style="margin-top:0.4rem; font-size:0.78rem;">
+                {% for label, pts, is_ded in recognition.breakdown %}
+                <div class="d-flex justify-content-between" style="padding:0.15rem 0;">
+                    <span style="color:#b0b0b0;">{{ label }}</span>
+                    <span style="color:{% if is_ded %}#f87171{% else %}#6ee7b7{% endif %}; font-weight:600;">{% if not is_ded %}+{% endif %}{{ pts }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </details>
+        {% endif %}
+    </div>
+    {% endif %}
+
     {% if milestones %}
     <div class="mt-3 d-flex gap-2 flex-wrap">
         {% for badge in milestones %}

@@ -134,6 +134,11 @@
                     {% if row.profile.phone %} · {{ row.profile.phone }}{% endif %}
                 </div>
             </div>
+            {% if row.recognition.tier != 'unrated' %}
+            <span class="badge-pill" style="{% if row.recognition.tier == 'gold' %}background:rgba(251,191,36,0.15); color:#fbbf24;{% elif row.recognition.tier == 'silver' %}background:rgba(203,213,225,0.15); color:#cbd5e1;{% elif row.recognition.tier == 'bronze' %}background:rgba(217,119,6,0.15); color:#d97706;{% else %}background:rgba(248,113,113,0.12); color:#f87171;{% endif %}">
+                {{ row.recognition.tier_label }} ({{ row.recognition.score }}/100)
+            </span>
+            {% endif %}
             {% for badge in row.milestones %}
             <span class="badge-pill">{{ badge }}</span>
             {% endfor %}
@@ -193,6 +198,23 @@
             </div>
             {% endif %}
         </div>
+
+        {% if row.recognition.breakdown %}
+        <details style="margin-bottom:0.8rem;">
+            <summary style="cursor:pointer; font-size:0.75rem; color:#888;">
+                {{ row.recognition.tier_label }} — vipi alama hii ilipatikana?
+                {% if row.recognition.capped %}<span style="color:#fbbf24;"> · imezuiliwa kufikia dhahabu kwa sasa</span>{% endif %}
+            </summary>
+            <div style="margin-top:0.5rem; font-size:0.78rem;">
+                {% for label, pts, is_ded in row.recognition.breakdown %}
+                <div class="d-flex justify-content-between" style="padding:0.15rem 0;">
+                    <span style="color:#b0b0b0;">{{ label }}</span>
+                    <span style="color:{% if is_ded %}#f87171{% else %}#6ee7b7{% endif %}; font-weight:600;">{% if not is_ded %}+{% endif %}{{ pts }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </details>
+        {% endif %}
 
         <!-- Salary deductions -->
         {% if row.deductions %}

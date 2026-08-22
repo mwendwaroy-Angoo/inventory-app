@@ -266,6 +266,142 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
     }
 
 
+# ── Recognition tier (2026-08-22, Roy) ──────────────────────────────────────
+#
+# "What are the merits set that determine an outstanding employee?" — the
+# app already fires four separate positive milestone nudges (30+ shifts,
+# KES 50k+ revenue, KES 10k+ debts recovered, clean keg record) plus a
+# growing negative-side ledger (wastage, unaffirmed stock variance, rejected
+# petty cash, dismissed variances) — but never COMBINES them into one
+# answer. This does, as a plain points score with graduated deductions —
+# Roy's own explicit rule: "one or two dismissed variances should not knock
+# the staff out, lowering the tier is just enough."
+#
+# Deliberately a transparent points formula, not a black-box weighting — the
+# breakdown returned alongside the score/tier is shown to BOTH the owner and
+# the staffer themselves (same transparency principle as the payroll
+# suggestion above), so a tier is always explainable, never just asserted.
+
+RECOGNITION_MIN_SHIFTS = 5  # below this, there's simply not enough data to rate fairly.
+
+
+def compute_staff_recognition(contrib):
+    """Combine an already-computed _staff_contribution() dict into one
+    recognition tier — 'gold' | 'silver' | 'bronze' | 'developing' | 'unrated'.
+
+    Points (positive side, capped at 100 total before deductions):
+      - Consistency: shift_count, full marks at 30+ shifts (the existing
+        milestone's own threshold) — up to 30 points.
+      - Revenue: full marks at KES 50,000+ this period (the existing
+        milestone's own threshold) — up to 40 points, the single biggest
+        factor since it's the most direct measure of contribution.
+      - Debt recovery: full marks at KES 10,000+ recovered (the existing
+        milestone's own threshold) — up to 20 points.
+      - Clean keg handling: a flat 10-point bonus when clean_keg_record is
+        True (only meaningful for keg businesses; simply 0 otherwise).
+
+    Deductions (graduated — Roy's own explicit rule: 1-2 of anything minor
+    must only ever lower the tier, never disqualify outright):
+      - Dismissed stock variances and rejected petty cash entries: the
+        first two cost 3 points each (a real but small ding); the third
+        and beyond cost 8 points each — a genuine PATTERN, not an isolated
+        mistake, is treated as materially more serious than the count alone
+        would suggest linearly.
+      - Unaffirmed stock-variance loss and wastage: scored as a PERCENTAGE
+        of the staffer's own revenue, never a flat KES figure — KES 500
+        unexplained against a slow KES 5,000 month is a much bigger red
+        flag than the same KES 500 against a busy KES 100,000 month, and a
+        flat-KES rule would be unfair to a business's highest performers
+        simply for handling the most stock.
+
+    Pattern cap: even a high point score can never reach the top (gold)
+    tier while a genuine PATTERN is still live — 3+ dismissed variances,
+    3+ rejected petty cash entries, or unaffirmed variance loss exceeding
+    5% of revenue. This is the one place a "you can't be Outstanding right
+    now" line is drawn, and it's drawn at PATTERN, never at a single
+    mistake — matching Roy's own explicit instruction.
+
+    Returns a dict with 'tier', 'tier_label', 'score', 'capped', and
+    'breakdown' (list of (label, points, is_deduction) tuples) so the tier
+    is always explainable to both the owner and the staffer, never just
+    asserted.
+    """
+    shift_count = contrib.get('shift_count', 0)
+    if shift_count < RECOGNITION_MIN_SHIFTS:
+        return {
+            'tier': 'unrated', 'tier_label': 'Bado Hakuna Data ya Kutosha',
+            'score': None, 'capped': False, 'breakdown': [],
+        }
+
+    revenue = float(contrib.get('total_revenue', 0) or 0)
+    debts = float(contrib.get('debts_recovered_kes', 0) or 0)
+    clean_keg = bool(contrib.get('clean_keg_record'))
+    dismissed = int(contrib.get('dismissed_variances', 0) or 0)
+    variance_loss = float(contrib.get('variance_loss_kes', 0) or 0)
+    wastage = float(contrib.get('wastage_kes', 0) or 0)
+    petty_rejected = len(contrib.get('petty_cash_rejected') or [])
+
+    breakdown = []
+
+    consistency_pts = min(30, round(30 * shift_count / 30))
+    breakdown.append(('Uthabiti (zamu)', consistency_pts, False))
+
+    revenue_pts = min(40, round(40 * revenue / 50000)) if revenue > 0 else 0
+    breakdown.append(('Mapato', revenue_pts, False))
+
+    debt_pts = min(20, round(20 * debts / 10000)) if debts > 0 else 0
+    breakdown.append(('Madeni Yaliyorudishwa', debt_pts, False))
+
+    keg_pts = 10 if clean_keg else 0
+    if contrib.get('keg_loss_kes') is not None:
+        breakdown.append(('Ushughulikiaji wa Keg Safi', keg_pts, False))
+
+    raw_score = consistency_pts + revenue_pts + debt_pts + keg_pts
+
+    def _graduated(count, label_singular):
+        if count <= 0:
+            return 0
+        if count <= 2:
+            pts = count * 3
+        else:
+            pts = 6 + (count - 2) * 8
+        breakdown.append((f'{count} {label_singular}', -pts, True))
+        return pts
+
+    dismissed_ded = _graduated(dismissed, 'tofauti za stock zilizokataliwa')
+    petty_ded = _graduated(petty_rejected, 'petty cash iliyokataliwa')
+
+    variance_pct = (variance_loss / revenue) if revenue > 0 else 0
+    wastage_pct = (wastage / revenue) if revenue > 0 else 0
+    variance_ded = min(20, round(variance_pct * 100 * 4))
+    if variance_ded:
+        breakdown.append((f'Tofauti ya stock isiyoelezwa ({variance_pct * 100:.1f}% ya mapato)', -variance_ded, True))
+    wastage_ded = min(15, round(wastage_pct * 100 * 3))
+    if wastage_ded:
+        breakdown.append((f'Upotevu ({wastage_pct * 100:.1f}% ya mapato)', -wastage_ded, True))
+
+    total_deductions = dismissed_ded + petty_ded + variance_ded + wastage_ded
+    score = max(0, min(100, raw_score - total_deductions))
+
+    # A live PATTERN — never a single mistake — bars the top tier regardless
+    # of how high the point score otherwise is.
+    capped = dismissed >= 3 or petty_rejected >= 3 or variance_pct > 0.05
+
+    if score >= 80 and not capped:
+        tier, tier_label = 'gold', '🥇 Bora Kabisa'
+    elif score >= 55:
+        tier, tier_label = 'silver', '🥈 Mzuri'
+    elif score >= 30:
+        tier, tier_label = 'bronze', '🥉 Anaendelea Vizuri'
+    else:
+        tier, tier_label = 'developing', 'Anahitaji Kuboresha'
+
+    return {
+        'tier': tier, 'tier_label': tier_label, 'score': score,
+        'capped': capped, 'breakdown': breakdown,
+    }
+
+
 def _salary_status(staff_profile, business):
     """Return salary due / paid status for the current month."""
     today = timezone.localdate()
@@ -341,6 +477,7 @@ def staff_contribution_report(request):
     for sp in staff_profiles:
         contrib = _staff_contribution(sp, business, date_from, date_to)
         contrib['salary'] = _salary_status(sp, business)
+        contrib['recognition'] = compute_staff_recognition(contrib)
         _check_and_fire_recognition(sp, business, contrib)
 
         # 2026-08-22 (Roy — shift-change accountability): a SUGGESTED payroll
@@ -780,6 +917,7 @@ def my_work_and_pay(request):
     date_from = today.replace(day=1)  # Current month
     current_period = today.strftime('%Y-%m')
     contrib = _staff_contribution(user_profile, business, date_from, today)
+    contrib['recognition'] = compute_staff_recognition(contrib)
     salary  = _salary_status(user_profile, business)
 
     # Payment history: last 6 months (all individual payment rows, newest first)
@@ -899,6 +1037,7 @@ def haki_recognition_statement(request, profile_id):
     date_from = today.replace(day=1)
 
     contrib = _staff_contribution(staff_profile, business, date_from, today)
+    contrib['recognition'] = compute_staff_recognition(contrib)
     salary  = _salary_status(staff_profile, business)
 
     pay_history = SalaryPayment.objects.filter(
@@ -1110,6 +1249,7 @@ def staff_journey(request, profile_id):
                   if staff_profile.departed_at else timezone.localdate())
 
     contrib = _staff_contribution(staff_profile, business, tenure_start, tenure_end)
+    contrib['recognition'] = compute_staff_recognition(contrib)
 
     # ── Full keg-handling detail (contrib only keeps a collapsed loss figure) ──
     keg_detail = None

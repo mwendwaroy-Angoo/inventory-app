@@ -127,6 +127,14 @@
             &nbsp;·&nbsp; 📱 M-Pesa: KES {{ contrib.mpesa_revenue|floatformat:0 }}
             &nbsp;·&nbsp; 📒 Deni: KES {{ contrib.credit_revenue|floatformat:0 }}
         </div>
+        {% if contrib.recognition.tier and contrib.recognition.tier != 'unrated' %}
+        <div style="margin-top:.6rem;">
+            <span style="font-size:0.85rem; font-weight:700; padding:0.25rem 0.75rem; border-radius:20px; {% if contrib.recognition.tier == 'gold' %}background:rgba(251,191,36,0.15); color:#fbbf24;{% elif contrib.recognition.tier == 'silver' %}background:rgba(203,213,225,0.15); color:#cbd5e1;{% elif contrib.recognition.tier == 'bronze' %}background:rgba(217,119,6,0.15); color:#d97706;{% else %}background:rgba(248,113,113,0.12); color:#f87171;{% endif %}">
+                {{ contrib.recognition.tier_label }} ({{ contrib.recognition.score }}/100)
+                {% if contrib.recognition.capped %} · imezuiliwa kufikia dhahabu{% endif %}
+            </span>
+        </div>
+        {% endif %}
         {% if contrib.milestones %}
         <div style="margin-top:.6rem;">
             {% for m in contrib.milestones %}<span class="sj-badge badge-milestone">{{ m }}</span>{% endfor %}

@@ -40647,3 +40647,190 @@ class PayrollVarianceSuggestionTest(TestCase):
         self.assertContains(resp, 'Psug Item')
         self.assertEqual(len(resp.context['unaffirmed_variances']), 2)
         self.assertEqual(resp.context['variance_loss_kes'], 1200)
+
+
+class StaffRecognitionTierTest(TestCase):
+    """2026-08-22 (Roy — "no need to add more raw metrics... regarding the
+    tradeoff: one or two dismissed variances should not knock the staff
+    out, lowering the tier is just enough... maybe you guide me on that so
+    long as it is sensible, logical and fair"): compute_staff_recognition()
+    is a pure function over an already-computed _staff_contribution() dict,
+    so these tests build that dict directly rather than round-tripping
+    through real Shift/Transaction fixtures — the scoring RULE is what's
+    under test here, not the underlying data aggregation (already covered
+    by _staff_contribution()'s own tests elsewhere)."""
+
+    def _contrib(self, **overrides):
+        base = {
+            'shift_count': 30, 'hours': 200,
+            'total_revenue': 50000, 'debts_recovered_kes': 10000,
+            'clean_keg_record': True, 'keg_loss_kes': 0,
+            'dismissed_variances': 0, 'variance_loss_kes': 0,
+            'wastage_kes': 0, 'petty_cash_rejected': [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_unrated_below_minimum_shifts(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(shift_count=2))
+        self.assertEqual(result['tier'], 'unrated')
+        self.assertIsNone(result['score'])
+        self.assertEqual(result['breakdown'], [])
+
+    def test_gold_tier_for_strong_clean_performance(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib())
+        self.assertEqual(result['tier'], 'gold')
+        self.assertEqual(result['score'], 100)
+        self.assertFalse(result['capped'])
+
+    def test_one_or_two_dismissed_variances_lowers_tier_never_disqualifies(self):
+        """Roy's own explicit, hard-constraint rule."""
+        from core.haki_views import compute_staff_recognition
+        one = compute_staff_recognition(self._contrib(dismissed_variances=1))
+        two = compute_staff_recognition(self._contrib(dismissed_variances=2))
+        # Never knocked out of a real tier and into 'unrated' or 'developing'
+        # by 1-2 alone — still a respectable, non-disqualified tier.
+        self.assertIn(one['tier'], ('gold', 'silver'))
+        self.assertIn(two['tier'], ('gold', 'silver'))
+        self.assertFalse(one['capped'])
+        self.assertFalse(two['capped'])
+        # But it DOES lower the score relative to a perfectly clean record.
+        clean = compute_staff_recognition(self._contrib())
+        self.assertLess(one['score'], clean['score'])
+        self.assertLessEqual(two['score'], one['score'])
+
+    def test_pattern_of_three_plus_dismissed_variances_caps_below_gold(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(dismissed_variances=3))
+        self.assertTrue(result['capped'])
+        self.assertNotEqual(result['tier'], 'gold')
+
+    def test_pattern_of_three_plus_rejected_petty_cash_caps_below_gold(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(
+            petty_cash_rejected=[{'x': 1}, {'x': 2}, {'x': 3}],
+        ))
+        self.assertTrue(result['capped'])
+        self.assertNotEqual(result['tier'], 'gold')
+
+    def test_two_rejected_petty_cash_does_not_cap(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(
+            petty_cash_rejected=[{'x': 1}, {'x': 2}],
+        ))
+        self.assertFalse(result['capped'])
+
+    def test_variance_loss_over_5pct_of_revenue_caps_below_gold(self):
+        from core.haki_views import compute_staff_recognition
+        # 3000 / 50000 = 6% > 5% threshold.
+        result = compute_staff_recognition(self._contrib(variance_loss_kes=3000))
+        self.assertTrue(result['capped'])
+        self.assertNotEqual(result['tier'], 'gold')
+
+    def test_same_kes_variance_hits_low_revenue_harder_than_high_revenue(self):
+        """A flat KES figure must never be scored the same regardless of
+        how much business the staffer actually handled — the whole point
+        of scoring variance/wastage as a PERCENTAGE of revenue."""
+        from core.haki_views import compute_staff_recognition
+        low_revenue = compute_staff_recognition(self._contrib(
+            total_revenue=5000, debts_recovered_kes=0, clean_keg_record=False,
+            variance_loss_kes=500,
+        ))
+        high_revenue = compute_staff_recognition(self._contrib(
+            total_revenue=100000, debts_recovered_kes=0, clean_keg_record=False,
+            variance_loss_kes=500,
+        ))
+        self.assertLess(low_revenue['score'], high_revenue['score'])
+
+    def test_wastage_deduction_scales_with_revenue_too(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(wastage_kes=2500))  # 5% of 50000
+        deduction_labels = [b[0] for b in result['breakdown'] if b[2]]
+        self.assertTrue(any('Upotevu' in label for label in deduction_labels))
+
+    def test_breakdown_is_explainable_positive_and_negative(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(dismissed_variances=1))
+        positive = [b for b in result['breakdown'] if not b[2]]
+        negative = [b for b in result['breakdown'] if b[2]]
+        self.assertTrue(len(positive) >= 3)  # consistency, revenue, debts (+ keg)
+        self.assertTrue(len(negative) >= 1)
+        for label, pts, is_ded in result['breakdown']:
+            self.assertIsInstance(label, str)
+            if is_ded:
+                self.assertLess(pts, 0)
+            else:
+                self.assertGreaterEqual(pts, 0)
+
+    def test_zero_activity_still_rates_if_shift_count_meets_minimum(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(
+            shift_count=5, total_revenue=0, debts_recovered_kes=0, clean_keg_record=False,
+        ))
+        self.assertIn(result['tier'], ('gold', 'silver', 'bronze', 'developing'))
+        self.assertIsNotNone(result['score'])
+
+    def test_developing_tier_for_weak_record_with_real_deductions(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(
+            shift_count=5, total_revenue=1000, debts_recovered_kes=0,
+            clean_keg_record=False, dismissed_variances=4,
+        ))
+        self.assertIn(result['tier'], ('developing', 'bronze'))
+
+    def test_score_never_negative_or_over_100(self):
+        from core.haki_views import compute_staff_recognition
+        worst = compute_staff_recognition(self._contrib(
+            shift_count=5, total_revenue=100, debts_recovered_kes=0,
+            clean_keg_record=False, dismissed_variances=10,
+            petty_cash_rejected=[{}] * 10, variance_loss_kes=10000, wastage_kes=10000,
+        ))
+        self.assertGreaterEqual(worst['score'], 0)
+        best = compute_staff_recognition(self._contrib(
+            shift_count=1000, total_revenue=10000000, debts_recovered_kes=10000000,
+        ))
+        self.assertLessEqual(best['score'], 100)
+
+
+class StaffRecognitionWiringTest(TestCase):
+    """Confirms contrib['recognition'] actually reaches every real page
+    that displays staff performance — not just that the scoring function
+    itself works in isolation."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Recognition Wiring Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.biz.haki_enabled = True
+        self.biz.save(update_fields=['haki_enabled'])
+        self.owner = User.objects.create_user(username='rwire_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='rwire_staff', password='x', first_name='Nia')
+        self.staff_profile = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_recognition_appears_on_owner_contribution_report(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/staff/contribution/')
+        self.assertEqual(resp.status_code, 200)
+        row = next(r for r in resp.context['rows'] if r['profile'].id == self.staff_profile.id)
+        self.assertIn('recognition', row)
+        self.assertIn(row['recognition']['tier'], ('unrated', 'gold', 'silver', 'bronze', 'developing'))
+
+    def test_recognition_appears_on_kazi_yangu(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('recognition', resp.context)
+
+    def test_recognition_appears_on_recognition_statement(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/staff/{self.staff_profile.id}/statement/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('recognition', resp.context)
+
+    def test_recognition_appears_on_staff_journey(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/staff/{self.staff_profile.id}/journey/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('recognition', resp.context['contrib'])
