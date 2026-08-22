@@ -157,6 +157,42 @@
     {% endif %}
 </div>
 
+<!-- 2026-08-22 (Roy — shift-change accountability): staff must be able to
+     see their own unaffirmed stock-variance record — "so that they do not
+     claim that they were paid unfairly." Only rows still counting AGAINST
+     them (owner hasn't affirmed the explanation yet) ever appear here; the
+     moment the owner accepts one, it drops off on its own. -->
+{% if unaffirmed_variances %}
+<div class="kazi-card" style="border-color:rgba(248,113,113,0.25);">
+    <div class="kazi-card-title" style="color:#f87171;">📊 {% trans 'Tofauti za Stock Ambazo Hazijaidhinishwa' %}</div>
+    <p style="color:#b0b0b0; font-size:0.8rem; margin-bottom:0.75rem;">
+        {% trans 'These stock-count differences are currently attributed to your shift and have not yet been explained AND affirmed by the owner. The owner may use this total as a suggestion when deciding your salary — it is never automatic. Respond in the app to explain any of these.' %}
+    </p>
+    {% for v in unaffirmed_variances %}
+    <div class="ded-row" style="align-items:flex-start;">
+        <span style="color:#f0ece4; flex:1;">
+            {{ v.item_name_cache }}
+            <span style="color:#888; font-size:0.72rem;">— {{ v.stock_take.taken_at|date:"d M Y" }}</span>
+            {% if v.kind == 'gap' %}
+            <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(251,191,36,0.12); color:#fbbf24; margin-left:0.35rem;">{% trans 'gap between shifts' %}</span>
+            {% endif %}
+            <br>
+            <span style="font-size:0.72rem; color:{% if v.status == 'pending' %}#f87171{% elif v.status == 'responded' %}#fbbf24{% else %}#e87090{% endif %};">
+                {% if v.status == 'pending' %}⏳ {% trans 'Bado hujaeleza — nenda kwenye Variances kujibu.' %}
+                {% elif v.status == 'responded' %}🔄 {% trans 'Umejibu, unasubiri uamuzi wa mmiliki.' %}
+                {% else %}⚠️ {% trans 'Mmiliki hakukubali maelezo yako.' %}{% if v.owner_note %} — {{ v.owner_note }}{% endif %}
+                {% endif %}
+            </span>
+        </span>
+        <span style="color:#f87171; font-weight:600; white-space:nowrap;">KES {{ v.estimated_revenue|default:0|floatformat:0 }}</span>
+    </div>
+    {% endfor %}
+    <div style="font-size:0.82rem; color:#f87171; font-weight:700; margin-top:0.6rem; border-top:1px solid rgba(248,113,113,0.18); padding-top:0.5rem;">
+        {% trans 'Jumla' %}: KES {{ variance_loss_kes|floatformat:0 }}
+    </div>
+</div>
+{% endif %}
+
 <!-- Salary deductions (shown so staff understands why pay may differ) -->
 {% if deductions %}
 <div class="kazi-card" style="border-color:rgba(192,57,90,0.25);">

@@ -57,6 +57,16 @@ def _salary_period_balance(business, staff_profile, period):
     return expected, paid, remaining
 
 
+def _period_date_range(period_str):
+    """'2026-08' -> (date(2026,8,1), date(2026,8,31)) — the calendar span a
+    salary `period` string covers, for pulling a staffer's own contribution
+    figures (which are computed over a real date_from/date_to range, not a
+    period label) for that SAME payroll period specifically."""
+    year, month = map(int, period_str.split('-'))
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, 1), date(year, month, last_day)
+
+
 # ── Contribution helper ───────────────────────────────────────────────────────
 
 def _staff_contribution(staff_profile, business, date_from, date_to):
@@ -203,12 +213,29 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
         )
     )
 
-    variance_loss_kes = float(StockVarianceQuery.objects.filter(
+    # 2026-08-22 fix (Roy — shift-change accountability): this used to sum
+    # EVERY decrease-direction variance attributed to this staff's shift
+    # regardless of resolution — including one the owner already ACCEPTED
+    # (owner_accepted=True), which means the staff's own explanation was
+    # believed and a corrective transaction created reflecting the real,
+    # legitimate cause (an unrecorded sale, say) — not a real loss at all,
+    # just a paperwork catch-up. Overcounting every accepted-and-explained
+    # row as "loss" against a staffer since this figure was first built
+    # (2026-07-26). Roy's own explicit rule: only a variance with "no
+    # explanation nor affirmation from the required parties" should ever
+    # count toward a staffer's own track record — i.e. exclude only the
+    # AFFIRMED (owner_accepted=True) rows; still-pending, staff-responded-
+    # but-not-yet-reviewed, and dismissed (owner_accepted=False) rows all
+    # correctly still count until a genuine affirmation clears them.
+    unaffirmed_variances_qs = StockVarianceQuery.objects.filter(
         attributed_shift__staff=user, attributed_shift__business=business,
         direction='decrease',
         stock_take__taken_at__date__gte=date_from,
         stock_take__taken_at__date__lte=date_to,
-    ).aggregate(t=Sum('estimated_revenue'))['t'] or 0)
+    ).exclude(owner_accepted=True).select_related('item', 'stock_take').order_by('-created_at')
+    variance_loss_kes = float(
+        unaffirmed_variances_qs.aggregate(t=Sum('estimated_revenue'))['t'] or 0
+    )
 
     return {
         'profile': staff_profile,
@@ -230,6 +257,12 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
         'petty_cash_pending_kes': petty_cash_pending_kes,
         'wastage_kes': wastage_kes,
         'variance_loss_kes': variance_loss_kes,
+        # 2026-08-22 — the actual rows behind variance_loss_kes, so a
+        # staffer (Kazi Yangu) or the owner (payroll suggestion) can see
+        # EXACTLY which item/date each contribution came from, not just a
+        # bare total — Roy: "the staff should have a view of their own
+        # journey so that they do not claim that they were paid unfairly."
+        'unaffirmed_variances': list(unaffirmed_variances_qs[:20]),
     }
 
 
@@ -302,11 +335,36 @@ def staff_contribution_report(request):
 
     current_period = today.strftime('%Y-%m')
 
+    period_date_from, period_date_to = _period_date_range(current_period)
+
     rows = []
     for sp in staff_profiles:
         contrib = _staff_contribution(sp, business, date_from, date_to)
         contrib['salary'] = _salary_status(sp, business)
         _check_and_fire_recognition(sp, business, contrib)
+
+        # 2026-08-22 (Roy — shift-change accountability): a SUGGESTED payroll
+        # deduction, computed over the actual PAYROLL PERIOD specifically
+        # (never the report's own adjustable date_from/date_to filter above,
+        # which the owner may have widened/narrowed for a completely
+        # different reason) — "this would just be a suggestion from the
+        # system based on the staff's performance, not a permanent
+        # declaration." Never applied automatically; the owner still types
+        # whatever amount they actually pay. Only meaningful when a real
+        # configured salary line exists to suggest a deduction FROM.
+        if date_from == period_date_from and date_to == period_date_to:
+            period_contrib = contrib
+        else:
+            period_contrib = _staff_contribution(sp, business, period_date_from, period_date_to)
+        contrib['period_variance_loss_kes'] = period_contrib['variance_loss_kes']
+        contrib['period_unaffirmed_variances'] = period_contrib['unaffirmed_variances']
+        if contrib['salary'] and period_contrib['variance_loss_kes'] > 0:
+            contrib['suggested_salary'] = max(
+                Decimal('0'),
+                contrib['salary']['amount'] - Decimal(str(period_contrib['variance_loss_kes'])),
+            )
+        else:
+            contrib['suggested_salary'] = None
 
         # Deductions this period (from rejected write-off requests)
         deductions = list(SalaryDeduction.objects.filter(

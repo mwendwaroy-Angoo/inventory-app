@@ -15,6 +15,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import Sum
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -57,6 +58,402 @@ def item_has_pending_variance(item_id):
     return StockVarianceQuery.objects.filter(
         item_id=item_id,
     ).exclude(status=StockVarianceQuery.RESOLVED).exists()
+
+
+# ── Shift-change accountability (2026-08-22, Roy) ──────────────────────────────
+#
+# Q: "staff A closes shift after 12 hours, takes stock take, goes home... staff
+# B reports and opens shift then takes stock take but then the system shows an
+# imbalance... to whom does the variance attribution fall on to?"
+#
+# attribute_variance_shift() (shift_views.py) already answers "A or B" fairly —
+# it walks back to A's shift when B's own shift shows no activity yet. What it
+# CANNOT tell apart is "A's count was sloppy" from "the loss happened during the
+# unattended gap itself" — both land on the same coarse "ask A" outcome. Worse,
+# a single legitimate owner sale (the owner never needs a shift to sell) landing
+# after B's shift technically started can fool that coarse check into blaming
+# B instead, for a loss that predates her entirely.
+#
+# The functions below add a SHARPER, trail-aware check specifically for an
+# OPENING-phase count: instead of inferring who's accountable from "did this
+# shift touch the item," they directly compare A's own verified physical
+# CLOSING count to B's OPENING count, netted against every real Transaction
+# recorded in between (sales by the owner included) — Roy's own framing:
+# "so long as there is a trail of the sales, the system should make the gap
+# make sense... all parties concerned should be aware of the same." A residual
+# that survives netting the real trail is the genuine, still-unexplained gap.
+
+def _immediately_preceding_shift(business, current_shift, is_kitchen):
+    """The one shift that closed right before `current_shift` opened, on the
+    SAME station — the literal "who had custody right before this gap"
+    shift. Deliberately distinct from attribute_variance_shift()'s own walk-
+    back, which can skip PAST this shift to an even earlier one if it shows
+    zero activity on the specific item in question — correct for ordinary
+    attribution, but gap-reconciliation specifically needs THIS shift's own
+    physical closing count as its anchor, not whichever shift the coarse
+    mechanism happens to land on."""
+    from .models import Shift
+    from .shift_views import _station_q
+    return Shift.objects.filter(
+        business=business, started_at__lt=current_shift.started_at,
+    ).filter(_station_q(is_kitchen)).order_by('-started_at').first()
+
+
+def _gap_reconciled_variance(business, item, prior_shift):
+    """If `prior_shift` physically counted this item at its own close
+    (ShiftStockCount phase='closing'), compute what the item's balance
+    SHOULD be right now using that real count as the anchor plus every real
+    Transaction recorded on this item since — regardless of whether the
+    coarse "has the new shift touched this item" check would have credited
+    that activity to the old shift or the new one. Returns None when no such
+    closing count exists (nothing to reconcile against — caller falls back
+    to ordinary book-balance attribution), otherwise a dict with the anchor
+    count, the net movement since, and the resulting expected balance."""
+    if not prior_shift:
+        return None
+    closing = ShiftStockCount.objects.filter(
+        shift=prior_shift, item=item, phase='closing',
+    ).first()
+    if not closing:
+        return None
+    anchor_at = closing.recorded_at
+    net_movement = Transaction.objects.filter(
+        business=business, item=item, created_at__gt=anchor_at,
+    ).aggregate(t=Sum('qty'))['t'] or 0
+    net_movement = Decimal(str(net_movement))
+    return {
+        'closing':       closing,
+        'anchor_at':     anchor_at,
+        'net_movement':  net_movement,
+        'expected_now':  closing.actual_count + net_movement,
+    }
+
+
+def _process_variance_row(business, item, actual_count, linked_shift, stock_take, conducted_by, phase=None):
+    """Evaluate one item's physical count against its book balance, decide
+    attribution, and create the StockVarianceQuery row if warranted.
+
+    For phase='opening' with a linked shift, first tries the sharper gap-
+    reconciliation check (see _gap_reconciled_variance()) against the
+    immediately-preceding same-station shift's own closing count. A
+    residual fully explained by the real trail is auto-resolved — kind=
+    'gap', owner_accepted=True, status=RESOLVED, no one asked to respond,
+    but the row still exists and is notified so "all parties concerned" can
+    see the reconciliation (Roy's own words). A genuine leftover residual
+    after netting the trail becomes a real, still-pending 'gap' row,
+    attributed to the prior shift specifically (not the coarse walk-back's
+    answer, which a legitimate owner sale after the new shift's own
+    started_at could otherwise mislead). Falls back to ordinary
+    attribute_variance_shift()-based 'shift' attribution whenever the prior
+    shift never physically counted this item at all.
+
+    Returns (svq_or_None, redirected_bool, auto_resolved_bool). svq is None
+    only when there was nothing to flag at all (variance is exactly zero).
+    """
+    from accounts.models import UserProfile
+    from .shift_views import attribute_variance_shift
+
+    book_balance = Decimal(str(item.current_balance()))
+    variance = actual_count - book_balance
+    if variance == 0:
+        return None, False, False
+
+    kind = StockVarianceQuery.KIND_SHIFT
+    gap_note = ''
+    auto_resolved = False
+    attributed_shift = attribute_variance_shift(business, linked_shift, item=item)
+
+    if phase == 'opening' and linked_shift and item.store_id:
+        is_kitchen = bool(item.store.is_kitchen)
+        prior_shift = _immediately_preceding_shift(business, linked_shift, is_kitchen)
+        gap = _gap_reconciled_variance(business, item, prior_shift)
+        if gap:
+            residual = actual_count - gap['expected_now']
+            when_label = timezone.localtime(gap['anchor_at']).strftime('%d %b, %H:%M')
+            net_sign = '+' if gap['net_movement'] >= 0 else ''
+            trail_note = (
+                f"Zamu ya awali ilihesabu {gap['closing'].actual_count:.2g} tarehe {when_label}. "
+                f"Tangu wakati huo, mienendo halisi ya hisa (mauzo/mapokezi) = "
+                f"{net_sign}{gap['net_movement']:.2g}. Ilitegemewa iwe {gap['expected_now']:.2g}, "
+                f"imehesabiwa {actual_count:.2g}."
+            )
+            kind = StockVarianceQuery.KIND_GAP
+            attributed_shift = prior_shift
+            book_balance = gap['expected_now']
+            variance = residual
+            if residual == 0:
+                auto_resolved = True
+                gap_note = trail_note + " Imelinganishwa kiotomatiki na mfumo — hakuna hatua inayohitajika."
+            else:
+                gap_note = trail_note + " Tofauti hii bado haijaelezwa."
+
+    direction = StockVarianceQuery.DECREASE if variance < 0 else StockVarianceQuery.INCREASE
+    estimated_revenue = None
+    if direction == StockVarianceQuery.DECREASE and item.selling_price:
+        estimated_revenue = abs(variance) * Decimal(str(item.selling_price))
+
+    queried_staff = None
+    if attributed_shift and attributed_shift.staff:
+        queried_staff = UserProfile.objects.filter(
+            user=attributed_shift.staff, business=business
+        ).first()
+
+    svq = StockVarianceQuery.objects.create(
+        stock_take=stock_take,
+        item=item,
+        item_name_cache=item.description,
+        book_balance=book_balance,
+        actual_count=actual_count,
+        direction=direction,
+        estimated_revenue=estimated_revenue,
+        queried_staff=queried_staff,
+        attributed_shift=attributed_shift,
+        kind=kind,
+        gap_note=gap_note,
+    )
+
+    if auto_resolved:
+        svq.owner_accepted = True
+        svq.status = StockVarianceQuery.RESOLVED
+        svq.owner_note = 'Imelinganishwa kiotomatiki na mfumo — tazama maelezo hapo juu.'
+        svq.save(update_fields=['owner_accepted', 'status', 'owner_note'])
+
+    redirected = bool(
+        linked_shift and attributed_shift and attributed_shift.id != linked_shift.id
+    )
+    return svq, redirected, auto_resolved
+
+
+def _send_variance_notifications(
+    business, conducted_by, variances_created, variance_items,
+    by_queried_staff, redirected_for_current, current_staff_profile,
+    auto_reconciled_count, auto_reconciled_items, auto_reconciled_by_staff,
+):
+    """Notification batching shared by run_accountability_stock_take()'s two
+    callers — split out purely so the function itself doesn't run too long."""
+    if variances_created:
+        items_summary = ', '.join(variance_items[:5])
+        if len(variance_items) > 5:
+            items_summary += f' ... (+{len(variance_items) - 5} zaidi)'
+
+        conductor_name = conducted_by.get_full_name() or conducted_by.username
+        owner_msg = (
+            f"Hesabu ya stok na {conductor_name}: tofauti {variances_created} "
+            f"imepatikana ({items_summary}). Angalia: /stock/variances/"
+        )
+        if redirected_for_current:
+            owner_msg += (
+                f" Baadhi ya vitu ({len(redirected_for_current)}) vimehusishwa na "
+                f"zamu iliyopita, si zamu ya sasa — angalia ukurasa wa Variances kwa maelezo."
+            )
+        if auto_reconciled_count:
+            owner_msg += (
+                f" (Vitu {auto_reconciled_count} zaidi vilikuwa na tofauti lakini "
+                f"vimeelezwa kiotomatiki na mfumo — hakuna hatua inayohitajika.)"
+            )
+        _notify_owner(business, f"📊 Tofauti za Stok ({variances_created})", owner_msg)
+
+        for bucket in by_queried_staff.values():
+            qs_profile = bucket['staff']
+            if not qs_profile:
+                continue
+            qs_items = ', '.join(bucket['items'][:5])
+            if len(bucket['items']) > 5:
+                qs_items += f' ... (+{len(bucket["items"]) - 5} zaidi)'
+            if bucket['redirected']:
+                staff_msg = (
+                    f"Kuna tofauti {len(bucket['items'])} za stok zinazohusishwa na zamu yako "
+                    f"iliyopita ({qs_items}) — hazikutokea leo, zilikuwepo kabla ya zamu ya sasa "
+                    f"kuanza. Tafadhali eleza: jaribu ukurasa wa 'Variances' katika app."
+                )
+            else:
+                staff_msg = (
+                    f"Kuna tofauti {len(bucket['items'])} za stok wakati wa zamu yako "
+                    f"({qs_items}). Tafadhali eleza: jaribu ukurasa wa 'Variances' katika app."
+                )
+            create_in_app_notification(
+                qs_profile.user,
+                f"📊 Tofauti {len(bucket['items'])} za Stok",
+                staff_msg,
+                notification_type='warning',
+                link_url='/stock/variances/',
+            )
+            if qs_profile.phone:
+                send_sms_notification_async(staff_msg, normalize_ke_phone(qs_profile.phone))
+
+        if redirected_for_current and current_staff_profile:
+            clear_items = ', '.join(redirected_for_current[:5])
+            if len(redirected_for_current) > 5:
+                clear_items += f' ... (+{len(redirected_for_current) - 5} zaidi)'
+            clear_msg = (
+                f"Hesabu ya stock imepata tofauti kwa vitu ({clear_items}) ambavyo "
+                f"hujauza bado kwenye zamu yako ya sasa — vimehusishwa na zamu iliyopita "
+                f"badala yako. Hakuna hatua inayohitajika kwako kwa sasa."
+            )
+            create_in_app_notification(
+                current_staff_profile.user,
+                "ℹ️ Tofauti za Stock — Si Zamu Yako",
+                clear_msg,
+                notification_type='info',
+                link_url='/stock/variances/',
+            )
+
+    # 2026-08-22 — transparency for gap variances the system already
+    # explained via the recorded sales trail (e.g. the owner selling with no
+    # shift open) — Roy: "all parties concerned should be aware of the
+    # same." Purely informational; never asks anyone to respond.
+    if auto_reconciled_count:
+        if not variances_created:
+            items_summary = ', '.join(auto_reconciled_items[:5])
+            if len(auto_reconciled_items) > 5:
+                items_summary += f' ... (+{len(auto_reconciled_items) - 5} zaidi)'
+            owner_msg = (
+                f"Tofauti {auto_reconciled_count} zilizoonekana kwenye hesabu ya stock "
+                f"({items_summary}) zimeelezwa kiotomatiki na mfumo — mauzo/mapokezi "
+                f"halisi wakati wa mapumziko yanahesabu tofauti hiyo. Hakuna hatua "
+                f"inayohitajika."
+            )
+            _notify_owner(business, f"ℹ️ Tofauti Zilizolinganishwa Kiotomatiki ({auto_reconciled_count})", owner_msg)
+
+        for bucket in auto_reconciled_by_staff.values():
+            qs_profile = bucket['staff']
+            if not qs_profile:
+                continue
+            qs_items = ', '.join(bucket['items'][:5])
+            if len(bucket['items']) > 5:
+                qs_items += f' ... (+{len(bucket["items"]) - 5} zaidi)'
+            staff_msg = (
+                f"Tofauti ya stock ya zamu yako iliyopita kwa vitu ({qs_items}) "
+                f"imeelezwa kiotomatiki na mfumo — mauzo halisi wakati wa mapumziko "
+                f"yanahesabu tofauti hiyo. Hakuna hatua inayohitajika kwako."
+            )
+            create_in_app_notification(
+                qs_profile.user,
+                "ℹ️ Tofauti Imeelezwa Kiotomatiki",
+                staff_msg,
+                notification_type='info',
+                link_url='/stock/variances/',
+            )
+
+        if current_staff_profile and auto_reconciled_items:
+            clear_items = ', '.join(auto_reconciled_items[:5])
+            if len(auto_reconciled_items) > 5:
+                clear_items += f' ... (+{len(auto_reconciled_items) - 5} zaidi)'
+            clear_msg = (
+                f"Ulipata tofauti ukifungua shift kwa vitu ({clear_items}) lakini mfumo "
+                f"umeelewa kiotomatiki kwa kutumia mauzo halisi wakati wa mapumziko. "
+                f"Hakuna unachohitaji kufanya."
+            )
+            create_in_app_notification(
+                current_staff_profile.user,
+                "ℹ️ Tofauti Imeelewa Kiotomatiki",
+                clear_msg,
+                notification_type='info',
+                link_url='/stock/variances/',
+            )
+
+
+def run_accountability_stock_take(business, conducted_by, linked_shift, counts, store=None, phase=None, write_shift_stock_count=True):
+    """The real accountability engine behind BOTH surfaces that let staff log
+    a physical stock count against the app's own book balance:
+    (1) the dedicated guided page (start_stock_take — owner/manager only, no
+        phase context, preserves its exact pre-2026-08-22 behaviour), and
+    (2) the quick "Hesabu Stock" modal on Bar/Kitchen Board's shift open/
+        close flow (stock_take_api — any staff, phase='opening'|'closing')
+        — 2026-08-22 (Roy): the real accountability tool needs to be
+        symmetric, offered at both ends of a shift, not just close. That
+        modal previously only ever wrote an informational ShiftStockCount
+        row with no attribution, no notification, and no request for an
+        explanation at all — every count taken there now feeds this same
+        engine.
+
+    counts: [{'item_id':, 'actual_count':}, ...].
+    write_shift_stock_count: set False when the caller already wrote its own
+    ShiftStockCount snapshot for this exact (shift, item, phase) moments
+    earlier in the same request (stock_take_api()'s own loop) — avoids a
+    redundant duplicate write; still fully idempotent either way via the
+    model's own unique_together.
+
+    Returns (stock_take, variances_created, auto_reconciled_count).
+    """
+    stock_take = StockTake.objects.create(
+        business=business, store=store, conducted_by=conducted_by, shift=linked_shift,
+    )
+
+    from accounts.models import UserProfile
+
+    variances_created = 0
+    auto_reconciled_count = 0
+    variance_items = []
+    auto_reconciled_items = []
+    by_queried_staff = {}
+    auto_reconciled_by_staff = {}
+    current_staff_profile = None
+    if linked_shift and linked_shift.staff:
+        current_staff_profile = UserProfile.objects.filter(
+            user=linked_shift.staff, business=business,
+        ).first()
+    redirected_for_current = []
+
+    for row in counts:
+        try:
+            item_id      = int(row.get('item_id', 0))
+            actual_count = Decimal(str(row.get('actual_count', 0)))
+        except (TypeError, ValueError, InvalidOperation):
+            continue
+
+        item = Item.objects.filter(id=item_id, store__business=business).first()
+        if item is None:
+            continue
+
+        if write_shift_stock_count and linked_shift:
+            ShiftStockCount.objects.update_or_create(
+                shift=linked_shift, item=item, phase=(phase or 'closing'),
+                defaults={
+                    'book_balance': Decimal(str(item.current_balance())),
+                    'actual_count': actual_count,
+                    'recorded_by':  conducted_by,
+                },
+            )
+
+        svq, redirected, auto_resolved = _process_variance_row(
+            business, item, actual_count, linked_shift, stock_take, conducted_by, phase=phase,
+        )
+        if svq is None:
+            continue
+
+        item_line = (
+            f"{item.description}: {'−' if svq.variance < 0 else '+'}"
+            f"{abs(svq.variance):.2g} {item.unit}"
+        )
+
+        if auto_resolved:
+            auto_reconciled_count += 1
+            auto_reconciled_items.append(item_line)
+            if svq.queried_staff:
+                bucket = auto_reconciled_by_staff.setdefault(svq.queried_staff.id, {
+                    'staff': svq.queried_staff, 'items': [],
+                })
+                bucket['items'].append(item_line)
+            continue
+
+        variances_created += 1
+        variance_items.append(item_line)
+        if svq.queried_staff:
+            bucket = by_queried_staff.setdefault(svq.queried_staff.id, {
+                'staff': svq.queried_staff, 'items': [], 'redirected': redirected,
+            })
+            bucket['items'].append(item_line)
+        if redirected and current_staff_profile:
+            redirected_for_current.append(item_line)
+
+    _send_variance_notifications(
+        business, conducted_by, variances_created, variance_items,
+        by_queried_staff, redirected_for_current, current_staff_profile,
+        auto_reconciled_count, auto_reconciled_items, auto_reconciled_by_staff,
+    )
+
+    return stock_take, variances_created, auto_reconciled_count
 
 
 # ── View 1: Start / submit a stock take ───────────────────────────────────────
@@ -104,182 +501,23 @@ def start_stock_take(request):
             return JsonResponse({'ok': False, 'error': 'Hesabu hii tayari imewasilishwa.', 'duplicate': True}, status=409)
 
         try:
-            # Create the header
-            stock_take = StockTake.objects.create(
-                business=business,
-                store=scoped_store,
-                conducted_by=request.user,
-                shift=linked_shift,
+            # 2026-08-22 — the dedicated guided page passes phase=None,
+            # preserving its exact pre-existing behaviour (ordinary
+            # attribute_variance_shift()-based attribution only, no gap-
+            # reconciliation) — that check is deliberately opt-in via an
+            # explicit phase='opening', which only the quick shift-open
+            # modal (stock_take_api) sends.
+            stock_take, variances_created, auto_reconciled_count = run_accountability_stock_take(
+                business, request.user, linked_shift, counts, store=scoped_store,
             )
-
-            from accounts.models import UserProfile
-            from core.shift_views import attribute_variance_shift
-
-            variances_created = 0
-            variance_items = []
-            # Per-queried-staff bucket so a single stock take can correctly split
-            # blame across TWO different people (last night's closer vs this
-            # morning's opener) instead of always querying whoever happens to be
-            # on duty when the count is taken. 'redirected' marks items whose
-            # attribution moved AWAY from linked_shift to an earlier one.
-            by_queried_staff = {}
-            # The shift actually on duty right now, if any — used to send them a
-            # separate "this isn't on you" notice for any redirected item, so both
-            # people in the story hear from the app, not just the one being asked
-            # to explain.
-            current_staff_profile = None
-            if linked_shift and linked_shift.staff:
-                current_staff_profile = UserProfile.objects.filter(
-                    user=linked_shift.staff, business=business
-                ).first()
-            redirected_for_current = []
-
-            for row in counts:
-                try:
-                    item_id      = int(row.get('item_id', 0))
-                    actual_count = Decimal(str(row.get('actual_count', 0)))
-                except (TypeError, ValueError, InvalidOperation):
-                    continue
-
-                item = Item.objects.filter(id=item_id, store__business=business).first()
-                if item is None:
-                    continue
-
-                book_balance = Decimal(str(item.current_balance()))
-
-                # Write backward-compat ShiftStockCount when shift is linked
-                if linked_shift:
-                    ShiftStockCount.objects.update_or_create(
-                        shift=linked_shift,
-                        item=item,
-                        defaults={
-                            'book_balance': book_balance,
-                            'actual_count': actual_count,
-                            'recorded_by':  request.user,
-                        },
-                    )
-
-                variance = actual_count - book_balance
-                if variance == 0:
-                    continue
-
-                direction = StockVarianceQuery.DECREASE if variance < 0 else StockVarianceQuery.INCREASE
-                estimated_revenue = None
-                if direction == StockVarianceQuery.DECREASE and item.selling_price:
-                    estimated_revenue = abs(variance) * Decimal(str(item.selling_price))
-
-                # Per-ITEM attribution — different items in the same stock take can
-                # correctly land on different shifts (e.g. the beer she's already
-                # sold from today vs the cooking oil nobody has touched yet).
-                attributed_shift = attribute_variance_shift(business, linked_shift, item=item)
-                queried_staff = None
-                if attributed_shift and attributed_shift.staff:
-                    queried_staff = UserProfile.objects.filter(
-                        user=attributed_shift.staff, business=business
-                    ).first()
-
-                StockVarianceQuery.objects.create(
-                    stock_take=stock_take,
-                    item=item,
-                    item_name_cache=item.description,
-                    book_balance=book_balance,
-                    actual_count=actual_count,
-                    direction=direction,
-                    estimated_revenue=estimated_revenue,
-                    queried_staff=queried_staff,
-                    attributed_shift=attributed_shift,
-                )
-                variances_created += 1
-                item_line = f"{item.description}: {'−' if variance < 0 else '+'}{abs(variance):.2g} {item.unit}"
-                variance_items.append(item_line)
-
-                redirected = bool(
-                    linked_shift and attributed_shift and attributed_shift.id != linked_shift.id
-                )
-                if queried_staff:
-                    bucket = by_queried_staff.setdefault(queried_staff.id, {
-                        'staff': queried_staff, 'items': [], 'redirected': redirected,
-                    })
-                    bucket['items'].append(item_line)
-                if redirected and current_staff_profile:
-                    redirected_for_current.append(item_line)
-
-            # Notifications
-            if variances_created:
-                items_summary = ', '.join(variance_items[:5])
-                if len(variance_items) > 5:
-                    items_summary += f' ... (+{len(variance_items) - 5} zaidi)'
-
-                conductor_name = (
-                    request.user.get_full_name() or request.user.username
-                )
-                owner_msg = (
-                    f"Hesabu ya stok na {conductor_name}: tofauti {variances_created} "
-                    f"imepatikana ({items_summary}). Angalia: /stock/variances/"
-                )
-                if redirected_for_current:
-                    owner_msg += (
-                        f" Baadhi ya vitu ({len(redirected_for_current)}) vimehusishwa na "
-                        f"zamu iliyopita, si zamu ya sasa — angalia ukurasa wa Variances kwa maelezo."
-                    )
-                _notify_owner(business, f"📊 Tofauti za Stok ({variances_created})", owner_msg)
-
-                # Notify each queried staff member — only about the items actually
-                # attributed to THEM, worded differently depending on whether the
-                # discrepancy is on their current shift or one that already ended.
-                for bucket in by_queried_staff.values():
-                    qs_profile = bucket['staff']
-                    if not qs_profile:
-                        continue
-                    qs_items = ', '.join(bucket['items'][:5])
-                    if len(bucket['items']) > 5:
-                        qs_items += f' ... (+{len(bucket["items"]) - 5} zaidi)'
-                    if bucket['redirected']:
-                        staff_msg = (
-                            f"Kuna tofauti {len(bucket['items'])} za stok zinazohusishwa na zamu yako "
-                            f"iliyopita ({qs_items}) — hazikutokea leo, zilikuwepo kabla ya zamu ya sasa "
-                            f"kuanza. Tafadhali eleza: jaribu ukurasa wa 'Variances' katika app."
-                        )
-                    else:
-                        staff_msg = (
-                            f"Kuna tofauti {len(bucket['items'])} za stok wakati wa zamu yako "
-                            f"({qs_items}). Tafadhali eleza: jaribu ukurasa wa 'Variances' katika app."
-                        )
-                    create_in_app_notification(
-                        qs_profile.user,
-                        f"📊 Tofauti {len(bucket['items'])} za Stok",
-                        staff_msg,
-                        notification_type='warning',
-                        link_url='/stock/variances/',
-                    )
-                    if qs_profile.phone:
-                        send_sms_notification_async(staff_msg, normalize_ke_phone(qs_profile.phone))
-
-                # Clear the current on-duty staff by name for anything redirected away
-                # from them — otherwise a stock take that flags nothing about their own
-                # shift still leaves them wondering, since the app went quiet on them.
-                if redirected_for_current and current_staff_profile:
-                    clear_items = ', '.join(redirected_for_current[:5])
-                    if len(redirected_for_current) > 5:
-                        clear_items += f' ... (+{len(redirected_for_current) - 5} zaidi)'
-                    clear_msg = (
-                        f"Hesabu ya stock imepata tofauti kwa vitu ({clear_items}) ambavyo "
-                        f"hujauza bado kwenye zamu yako ya sasa — vimehusishwa na zamu iliyopita "
-                        f"badala yako. Hakuna hatua inayohitajika kwako kwa sasa."
-                    )
-                    create_in_app_notification(
-                        current_staff_profile.user,
-                        "ℹ️ Tofauti za Stock — Si Zamu Yako",
-                        clear_msg,
-                        notification_type='info',
-                        link_url='/stock/variances/',
-                    )
-
         except Exception as exc:
             logger.exception("Stock take POST failed: %s", exc)
             return JsonResponse({'ok': False, 'error': f'Hitilafu ya seva: {exc}'}, status=500)
 
-        return JsonResponse({'ok': True, 'take_id': stock_take.id, 'variance_count': variances_created})
+        return JsonResponse({
+            'ok': True, 'take_id': stock_take.id, 'variance_count': variances_created,
+            'auto_reconciled_count': auto_reconciled_count,
+        })
 
     # ── GET ──────────────────────────────────────────────────────────────────
     # Build item list scoped to the right store(s)

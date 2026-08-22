@@ -181,6 +181,12 @@
                 ⚠️ {{ row.dismissed_variances }} stock variance{{ row.dismissed_variances|pluralize }} dismissed
             </div>
             {% endif %}
+            {% if row.variance_loss_kes > 0 %}
+            <div class="metric-chip" style="background:rgba(248,113,113,0.08); border-color:rgba(248,113,113,0.2); color:#f87171;"
+                 title="{% trans 'Stock variances attributed to this shift, not yet explained AND affirmed by the owner' %}">
+                📊 {% trans 'Unaffirmed stock variance' %}: <strong>KES {{ row.variance_loss_kes|floatformat:0 }}</strong>
+            </div>
+            {% endif %}
             {% if row.deduction_total > 0 %}
             <div class="metric-chip" style="background:rgba(192,57,90,0.08); border-color:rgba(192,57,90,0.22); color:#e87090;">
                 📉 Deductions: <strong style="color:#f87171;">-KES {{ row.deduction_total|floatformat:0 }}</strong>
@@ -288,11 +294,32 @@
                             <label class="btn btn-sm btn-outline-warning" for="pt_partial_{{ row.profile.id }}">🔄 {% trans 'Partial Payment' %}</label>
                         </div>
                     </div>
+                    {% if row.suggested_salary is not None %}
+                    <!-- 2026-08-22 (Roy — shift-change accountability): a SUGGESTION only,
+                         never applied automatically — the owner still types whatever amount
+                         they decide. Shows the reasoning plainly so it's never a silent number. -->
+                    <div class="mb-3" style="background:rgba(251,191,36,0.06); border:1px solid rgba(251,191,36,0.2); border-radius:8px; padding:0.6rem 0.85rem;">
+                        <div style="color:#fbbf24; font-size:0.78rem;">
+                            📊 {% trans 'Suggestion only' %} — {{ row.period_unaffirmed_variances|length }} {% trans 'unaffirmed stock variance' %}{{ row.period_unaffirmed_variances|length|pluralize }}
+                            {% trans 'for' %} {{ current_period }} {% trans 'total' %} <strong>KES {{ row.period_variance_loss_kes|floatformat:0 }}</strong>.
+                        </div>
+                        <div style="color:#b0b0b0; font-size:0.76rem; margin-top:0.25rem;">
+                            {% trans 'Suggested amount' %}: <strong style="color:#e0e0e0;">KES {{ row.suggested_salary|floatformat:0 }}</strong>
+                            <span style="color:#777;">({{ row.salary.amount|floatformat:0 }} − {{ row.period_variance_loss_kes|floatformat:0 }})</span>
+                            — {% trans 'not a permanent declaration; the staffer will see exactly why on their own Kazi Yangu page.' %}
+                        </div>
+                        <button type="button" class="btn btn-sm mt-2"
+                                style="background:rgba(251,191,36,.12); border:1px solid rgba(251,191,36,.35); color:#fbbf24;"
+                                onclick="document.getElementById('salary_amount_{{ row.profile.id }}').value='{{ row.suggested_salary|floatformat:2 }}';">
+                            {% trans 'Use suggested amount' %}
+                        </button>
+                    </div>
+                    {% endif %}
                     <div class="mb-3">
                         <label style="color:#c0c0c0; font-size:0.85rem; display:block; margin-bottom:0.3rem;">
                             {% trans 'Amount (KES)' %} *
                         </label>
-                        <input type="number" name="amount" class="form-control"
+                        <input type="number" name="amount" id="salary_amount_{{ row.profile.id }}" class="form-control"
                                step="0.01" min="1" value="{% if row.salary %}{{ row.salary.amount|floatformat:2 }}{% endif %}" required>
                     </div>
                     <div class="mb-3">

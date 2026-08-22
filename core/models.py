@@ -8261,6 +8261,31 @@ class StockVarianceQuery(models.Model):
                                           null=True, blank=True, related_name='attributed_variance_queries')
     status            = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
 
+    KIND_SHIFT = 'shift'
+    KIND_GAP   = 'gap'
+    KIND_CHOICES = [('shift', 'Shift-Attributed'), ('gap', 'Unattended-Gap')]
+    # 2026-08-22 (Roy — shift-change stock-imbalance accountability): 'shift'
+    # is the ordinary case, attributed purely via attribute_variance_shift()'s
+    # book-balance walk-back. 'gap' means this row was found specifically by
+    # comparing the PRIOR shift's own physical CLOSING count against the
+    # CURRENT shift's OPENING count, netted against every real Transaction
+    # recorded in between (including a legitimate owner sale with no shift
+    # open at all) — a sharper, trail-aware check than the coarse "has this
+    # shift touched the item" test, which a mere owner sale landing after the
+    # new shift's started_at could otherwise fool. See
+    # stock_take_views._gap_reconciled_variance()'s own docstring for the
+    # full mechanism. A 'gap' row that the trail FULLY explains is created
+    # already status=RESOLVED/owner_accepted=True (see gap_note) — nothing
+    # for anyone to explain; only a genuine, still-unexplained RESIDUAL after
+    # netting the trail becomes a real 'gap' row needing a response.
+    kind              = models.CharField(max_length=10, choices=KIND_CHOICES, default='shift')
+    # System-generated (never human-typed) explanation of the gap-reconciliation
+    # math for a kind='gap' row — kept permanently and separately from
+    # owner_note/response_note (which are human-entered at review/response
+    # time) so the trail this row was actually computed from is never lost or
+    # overwritten by a later human note.
+    gap_note          = models.TextField(blank=True, default='')
+
     response_type     = models.CharField(max_length=20, choices=RESPONSE_CHOICES, blank=True)
     response_customer = models.CharField(max_length=100, blank=True)
     response_note     = models.CharField(max_length=300, blank=True)

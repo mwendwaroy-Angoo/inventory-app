@@ -6082,6 +6082,11 @@
     fd.append('counts', JSON.stringify(counts));
     fd.append('phase', _stockTakePhase);
     fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    // 2026-08-22 — opening/closing counts now feed the real accountability
+    // engine (StockVarianceQuery + notify), so this needs the same
+    // double-submit backstop every other checkout-shaped endpoint has.
+    fd.append('idempotency_token',
+      (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
     fetch('/kitchen/shift/' + _stockTakeShiftId + '/stock-take/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -6107,6 +6112,18 @@
             sign + r.variance + '</div>';
         });
         html += '</div>';
+        // 2026-08-22 — accountability follow-up: unlike before, a real
+        // variance here is no longer forgotten the moment this modal
+        // closes — say so plainly so staff know something actually
+        // happened, not just a number shown once.
+        if (d.variance_count > 0) {
+          html += '<div style="margin-top:0.6rem; font-size:0.76rem; color:#fbbf24;">📊 Tofauti ' + d.variance_count +
+            ' zimetumwa kwa uthibitisho — angalia "Variances" katika app.</div>';
+        }
+        if (d.auto_reconciled_count > 0) {
+          html += '<div style="margin-top:0.4rem; font-size:0.76rem; color:#6ee7b7;">ℹ️ Tofauti ' + d.auto_reconciled_count +
+            ' zimeelezwa kiotomatiki na mfumo (mauzo halisi wakati wa mapumziko) — hakuna hatua inayohitajika.</div>';
+        }
         resEl.innerHTML = html;
         resEl.style.display = 'block';
       })

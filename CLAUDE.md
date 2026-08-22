@@ -7812,3 +7812,141 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   non-additive guide notes. No migrations (pure computation over existing
   `Transaction.recorded_by`/`CustomerDebtPayment.recorded_by`, both
   already-existing fields).
+- Shift-change stock-imbalance accountability — gap-aware attribution,
+  symmetric accountability engine, and a non-binding payroll suggestion
+  (2026-08-22). Live Q&A: Roy described the exact scenario — staff A closes
+  a 12h shift and counts stock, the business sits empty for a few hours,
+  staff B opens and counts again, and a variance appears. Who explains it?
+  Traced `attribute_variance_shift()` (already correctly answers "A or B" by
+  walking back to whichever shift last touched the item) and found it can't
+  tell "A's count was sloppy" apart from "the loss happened during the
+  unattended gap itself" — both land on the same "ask A" outcome — and, worse,
+  a single legitimate OWNER sale (the owner never needs a shift to sell)
+  landing after B's shift technically started could fool the coarse "has
+  this shift touched the item" check into blaming B for a loss that predates
+  her entirely. Roy's own framing on the fix, and the two things to build:
+  "so long as there is a trail of the sales, the system should make the gap
+  make sense... all parties concerned should be aware of the same," and "the
+  real accountability tool needs to be symmetric... offered at both open and
+  close, not just close." Then, once explanation/affirmation is genuinely
+  absent: "attribute the gap to the staff's own track record for the period
+  ... this would just be a suggestion from the system... not a permanent
+  declaration."
+
+  **Gap-aware reconciliation** (`core/stock_take_views.py`): new
+  `_immediately_preceding_shift()` (the literal "who had custody right
+  before this gap" shift on the SAME station — deliberately distinct from
+  `attribute_variance_shift()`'s own walk-back, which can skip past this
+  shift to an even earlier one) and `_gap_reconciled_variance()` — for an
+  OPENING-phase count specifically, compares the prior shift's own physical
+  CLOSING count (`ShiftStockCount`, anchored on its real `recorded_at`, not
+  the shift's `ended_at`) to every real Transaction recorded since (sales by
+  the owner included, regardless of whether they landed before or after the
+  new shift's own `started_at`) to compute an `expected_now` figure — a
+  sharper, trail-aware anchor than the coarse book-balance check, since it's
+  anchored to A's own MOST RECENT VERIFIED physical truth rather than the
+  item's full lifetime transactional history (which can carry its own,
+  unrelated, older drift). A residual that survives netting the real trail
+  is the genuine, still-unexplained gap; one that nets to exactly zero is
+  auto-resolved right there — `StockVarianceQuery.kind='gap'`,
+  `status=RESOLVED`, `owner_accepted=True`, a system-generated `gap_note`
+  (new field, permanent — never overwritten by a later human note) — nobody
+  asked to respond, but the row still exists and is notified to owner + both
+  staff so "all parties concerned" see the reconciliation, per Roy's own
+  words, instead of the gap being silently dropped. A live regression test
+  (`test_owner_sale_after_shift_b_started_does_not_wrongly_blame_b`) proves
+  the exact failure mode described above: a transaction timed after B's own
+  `started_at` DOES satisfy `attribute_variance_shift()`'s coarse check in
+  isolation (confirmed directly), but gap-reconciliation still correctly
+  attributes the residual to A. Falls back to ordinary `kind='shift'`
+  attribution whenever the prior shift never physically counted the item at
+  all — nothing to reconcile against. New `StockVarianceQuery.kind`/
+  `gap_note` fields (migration 0172, additive). Also fixed in the same pass:
+  `attribute_variance_shift()`'s walk-back fallback had NO station filter at
+  all — on a combo bar+kitchen business it could attribute a bar item's
+  variance to whichever counter's shift happened to be chronologically most
+  recent, regardless of station; now scoped via the item's own store (a
+  `keg_barrel` is always bar) through the existing `_station_q()` helper.
+
+  **Symmetric accountability engine**: the quick "📦 Hesabu Stock" modal on
+  Bar/Kitchen Board's shift open/close flow (`stock_take_api()`,
+  `core/shift_views.py`) used to be purely informational for a plain item —
+  a variance shown once on screen and then forgotten, nobody notified,
+  nobody asked to explain; only the SEPARATE dedicated guided page
+  (`start_stock_take()`, owner/manager only) fed the real `StockVarianceQuery`
+  accountability engine, and that page was only ever linked from the
+  CLOSE-shift modal, never the open one — so Roy's exact described sequence
+  (A closes+counts via the quick modal, gap, B opens+counts via the quick
+  modal) produced ZERO accountability record under the pre-existing code.
+  Extracted the guided page's per-item attribution + StockVarianceQuery-
+  creation + notification-batching logic (previously ~180 lines inline in
+  `start_stock_take()`'s POST body) into one shared, reusable engine —
+  `run_accountability_stock_take()` plus its helpers `_process_variance_row()`
+  and `_send_variance_notifications()` — now called by BOTH surfaces:
+  `start_stock_take()` (unchanged `phase=None`, preserving its exact
+  pre-existing behaviour byte-for-byte) and `stock_take_api()` (new,
+  `phase='opening'`/`'closing'` — gap-aware reconciliation only ever applies
+  for `'opening'`; `'midshift'` stays purely voluntary/informational,
+  matching its own already-documented design intent, per this file's own
+  "excluded by construction" convention). `stock_take_api()`'s POST gained
+  the same `claim_checkout_token` double-submit guard every other real
+  accountability-creating endpoint in this app has (a duplicate submission
+  would otherwise double-notify both staff and owner for one physical
+  count); `submitStockTake()`'s JS in both boards gained a matching
+  idempotency token per this app's own established convention. The modal's
+  own result panel now says plainly when a variance was sent for
+  explanation vs auto-reconciled, instead of showing a number and moving on.
+
+  **Non-binding payroll suggestion + staff transparency**: found and fixed a
+  real pre-existing bug while building this — `_staff_contribution()`'s
+  `variance_loss_kes` (Haki's staff-accountability tally, built 2026-07-26)
+  summed EVERY decrease-direction variance attributed to a staffer's shift
+  regardless of resolution, including a row the owner had already ACCEPTED
+  (`owner_accepted=True` — a believed, legitimate explanation with a real
+  corrective transaction created, e.g. an unrecorded cash sale — not a real
+  loss at all, just a paperwork catch-up) — overcounting every affirmed row
+  as "loss" against a staffer since the figure was first built. Roy's own
+  explicit rule for this session's feature applies retroactively to the
+  existing figure too: only "no explanation nor affirmation from the
+  required parties" should count — fixed to `.exclude(owner_accepted=True)`,
+  so a still-pending, staff-responded-but-not-yet-reviewed, or dismissed row
+  all correctly still count, and only a genuine owner affirmation clears one.
+  `_staff_contribution()` now also returns `unaffirmed_variances` (the
+  actual underlying rows, not just the total) so every consumer can show
+  exactly which item/date each contribution came from. New per-payroll-
+  period computation in `staff_contribution_report()` (`core/haki_views.py`,
+  new `_period_date_range()` helper converting a `'2026-08'` period string
+  to real dates) — `suggested_salary` = configured salary amount minus that
+  SPECIFIC period's own unaffirmed variance total (never the report's own
+  adjustable date-range filter, which the owner may have widened for an
+  unrelated reason) — surfaced in the salary-payment modal
+  (`haki_contribution.html`) as a clearly-labeled, non-binding note with a
+  "Use suggested amount" button that only pre-fills the amount field; the
+  owner can still type any amount at all, confirmed by a dedicated test that
+  posts the FULL, non-discounted amount successfully even with an active
+  suggestion on record. Staff-side transparency ("so that they do not claim
+  that they were paid unfairly"): `haki_kazi_yangu.html` (Kazi Yangu, self-
+  service) previously showed NONE of `wastage_kes`/`variance_loss_kes` at
+  all despite both already being computed into that page's own context —
+  new "📊 Tofauti za Stock Ambazo Hazijaidhinishwa" card lists every one of
+  the staffer's own still-unaffirmed rows (item, date, status, and — for a
+  `kind='gap'` row — a "gap between shifts" tag) with the same total the
+  owner's payroll suggestion is built from, so a staffer can always trace
+  exactly why. `staff_journey.html` (owner-facing tenure report, which
+  already showed the — now corrected — total) gained the same per-row
+  itemised list. `stock_variance_respond.html`/`stock_variances_pending.html`
+  both show a "🔀 pengo baina ya zamu" badge and the system-generated
+  `gap_note` for a `kind='gap'` row, at every lifecycle stage (pending,
+  responded, resolved). 28 new tests across 6 test classes
+  (`AttributeVarianceShiftStationScopingTest`, `GapReconciledVarianceTest`,
+  `RunAccountabilityStockTakeGapTest`, `StockTakeApiAccountabilityTest`,
+  `VarianceLossKesAffirmationTest`, `PayrollVarianceSuggestionTest`) —
+  including the exact "owner sale technically inside the new shift's own
+  window must not fool attribution" regression lock, the fully-explained-
+  auto-resolve vs genuine-residual split, idempotent double-submit
+  rejection, `midshift` never creating an accountability record, the
+  accepted/pending/dismissed affirmation matrix, and the suggestion's own
+  non-binding guarantee. Keg barrel weighing at shift changes explicitly
+  named by Roy as needing its own separate study before building the same
+  treatment there — deliberately NOT touched this pass. One migration
+  (0172, additive).

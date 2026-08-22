@@ -90,6 +90,9 @@
     <div class="var-card-header">
         <div>
             <span style="color:var(--pearl); font-weight:600;">{{ v.item_name_cache }}</span>
+            {% if v.kind == 'gap' %}
+            <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(251,191,36,0.12); color:#fbbf24; margin-left:0.35rem;">🔀 {% trans 'pengo baina ya zamu' %}</span>
+            {% endif %}
             {% if v.direction == 'decrease' %}
             <span style="font-size:0.78rem; color:#f87171; margin-left:0.4rem;">
                 ↓ {{ v.variance|floatformat:"-2" }}
@@ -218,6 +221,9 @@
     <div class="var-card-header">
         <div>
             <span style="color:var(--pearl); font-weight:600;">{{ v.item_name_cache }}</span>
+            {% if v.kind == 'gap' %}
+            <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(251,191,36,0.12); color:#fbbf24; margin-left:0.35rem;">🔀 {% trans 'pengo baina ya zamu' %}</span>
+            {% endif %}
             {% if v.direction == 'decrease' %}
             <span style="font-size:0.78rem; color:#f87171; margin-left:0.4rem;">↓ {{ v.variance|floatformat:"-2" }}</span>
             {% else %}
@@ -286,6 +292,9 @@
 <div class="var-card" style="opacity:0.7;">
     <div class="var-card-header">
         <span style="font-size:0.88rem; color:var(--pearl);">{{ v.item_name_cache }}</span>
+        {% if v.kind == 'gap' %}
+        <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(251,191,36,0.12); color:#fbbf24; margin-left:0.35rem;">🔀 {% trans 'pengo baina ya zamu' %}</span>
+        {% endif %}
         {% if v.owner_accepted %}
         <span class="var-badge badge-resolved">✅ Imekubaliwa</span>
         {% else %}
@@ -296,6 +305,9 @@
         {% if v.corrective_txn %}Transaction #{{ v.corrective_txn.id }} imeundwa · {% endif %}
         {{ v.owner_acted_at|date:"d M Y, H:i" }}
         {% if v.owner_action_by %}· Na {{ v.owner_action_by.get_full_name|default:v.owner_action_by.username }}{% endif %}
+        {% if v.kind == 'gap' and v.gap_note %}
+        <div style="margin-top:0.4rem; font-size:0.76rem; color:#888;">🔍 {{ v.gap_note }}</div>
+        {% endif %}
     </div>
     {% if v.owner_note %}
     <div style="font-size:0.8rem; color:#b0b0b0; padding:0 0.9rem 0.65rem; font-style:italic;">"{{ v.owner_note }}"</div>

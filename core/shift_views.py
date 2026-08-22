@@ -514,9 +514,24 @@ def attribute_variance_shift(business, current_shift, item=None, keg_barrel=None
     if qs.exists():
         return current_shift
 
-    return Shift.objects.filter(
+    # 2026-08-22 fix — station-scoped fallback. The walk-back used to search
+    # EVERY shift business-wide regardless of counter, so on a combo bar+
+    # kitchen business it could attribute a bar item's variance to whoever's
+    # kitchen shift happened to be the most recently started one, purely
+    # because it ran chronologically later. Derives the station the same way
+    # this app always does — from the item's own store (a keg_barrel is
+    # always the bar counter, since kegs don't exist on the kitchen side).
+    is_kitchen = None
+    if item is not None and item.store_id:
+        is_kitchen = bool(item.store.is_kitchen)
+    elif keg_barrel is not None:
+        is_kitchen = False
+    fallback_qs = Shift.objects.filter(
         business=business, started_at__lt=current_shift.started_at,
-    ).order_by('-started_at').first()
+    )
+    if is_kitchen is not None:
+        fallback_qs = fallback_qs.filter(_station_q(is_kitchen))
+    return fallback_qs.order_by('-started_at').first()
 
 
 # ── Reconciliation helper ─────────────────────────────────────────────────────
@@ -3159,4 +3174,35 @@ def stock_take_api(request, shift_id):
             except Exception:
                 continue
 
-        return JsonResponse({'ok': True, 'results': results})
+        # 2026-08-22 (Roy — shift-change stock-imbalance accountability):
+        # this quick modal used to be purely informational — a variance
+        # shown once above and then forgotten, nobody notified, nobody
+        # asked to explain. It now feeds the SAME real accountability
+        # engine the dedicated guided page uses (StockVarianceQuery +
+        # attribution + notify), for opening/closing counts specifically —
+        # 'midshift' stays voluntary/informational-only, matching its own
+        # documented design intent (ShiftStockCount's own docstring).
+        # write_shift_stock_count=False: the loop above already wrote this
+        # exact (shift, item, phase) snapshot moments ago.
+        variance_count = 0
+        auto_reconciled_count = 0
+        if phase in ('opening', 'closing'):
+            from core.idempotency import claim_checkout_token
+            idem_token = (request.POST.get('idempotency_token') or '').strip()
+            if not claim_checkout_token(up.business_id, idem_token):
+                return JsonResponse({
+                    'ok': False, 'error': 'Hesabu hii tayari imewasilishwa.', 'duplicate': True,
+                }, status=409)
+            from core.stock_take_views import run_accountability_stock_take
+            try:
+                _, variance_count, auto_reconciled_count = run_accountability_stock_take(
+                    up.business, request.user, shift, counts, phase=phase,
+                    write_shift_stock_count=False,
+                )
+            except Exception:
+                logger.exception("Accountability stock take failed for shift %s", shift_id)
+
+        return JsonResponse({
+            'ok': True, 'results': results,
+            'variance_count': variance_count, 'auto_reconciled_count': auto_reconciled_count,
+        })

@@ -40063,3 +40063,587 @@ class OwnerFacilitatedSalesAttributionTest(TestCase):
             result['breakdown']['owner_facilitated_cash_sales'],
             result['breakdown']['cash_sales'],
         )
+
+
+from core.models import StockVarianceQuery, StockTake, ShiftStockCount, RecurringExpense
+
+
+class AttributeVarianceShiftStationScopingTest(TestCase):
+    """2026-08-22 fix — attribute_variance_shift()'s walk-back fallback used
+    to search EVERY prior shift business-wide with no station filter, so on
+    a combo bar+kitchen business it could attribute a bar item's variance to
+    whichever counter's shift happened to be chronologically most recent,
+    regardless of which counter the item actually belongs to."""
+
+    def setUp(self):
+        from core.models import Shift
+        self.biz = Business.objects.create(name='Station Scope Attr Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.bar_staff = User.objects.create_user(username='sattr_bar', password='x')
+        UserProfile.objects.create(user=self.bar_staff, business=self.biz, role='staff')
+        self.kitchen_staff = User.objects.create_user(username='sattr_kitchen', password='x')
+        UserProfile.objects.create(user=self.kitchen_staff, business=self.biz, role='kitchen')
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Bar Item',
+            material_no='SATTR-01', unit='pcs', selling_price=Decimal('50'),
+        )
+
+        now = timezone.now()
+        # Bar shift closed 2 days ago — the CORRECT answer for a bar item's walk-back.
+        self.bar_shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff, station='bar',
+            started_at=now - timedelta(days=2), ended_at=now - timedelta(days=2, hours=-8),
+            status='CLOSED',
+        )
+        # Kitchen shift closed more RECENTLY (1 day ago) — chronologically newer,
+        # but the WRONG station for a bar item; must never be picked instead.
+        self.kitchen_shift = Shift.objects.create(
+            business=self.biz, store=self.kitchen_store, staff=self.kitchen_staff, station='kitchen',
+            started_at=now - timedelta(days=1), ended_at=now - timedelta(days=1, hours=-8),
+            status='CLOSED',
+        )
+        self.current_shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.bar_staff, station='bar',
+            started_at=now, status='OPEN',
+        )
+
+    def test_walk_back_stays_on_the_same_station(self):
+        from core.shift_views import attribute_variance_shift
+        result = attribute_variance_shift(self.biz, self.current_shift, item=self.bar_item)
+        self.assertEqual(result.id, self.bar_shift.id)
+
+    def test_keg_barrel_fallback_defaults_to_bar_station(self):
+        from core.shift_views import attribute_variance_shift
+        from core.models import KegBarrel
+        keg_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Keg Item',
+            material_no='SATTR-02', unit='L', is_keg=True, selling_price=Decimal('200'),
+        )
+        barrel = KegBarrel.objects.create(
+            business=self.biz, item=keg_item, status='TAPPED',
+            cost_price=Decimal('3000'), target_revenue=Decimal('5000'),
+        )
+        result = attribute_variance_shift(self.biz, self.current_shift, keg_barrel=barrel)
+        self.assertEqual(result.id, self.bar_shift.id)
+
+
+class GapReconciledVarianceTest(TestCase):
+    """2026-08-22 (Roy — shift-change stock-imbalance accountability): direct
+    unit coverage for _gap_reconciled_variance()/_immediately_preceding_shift(),
+    the sharper trail-aware check that compares a shift's own verified
+    physical closing count against the very next shift's opening count,
+    netted against every real Transaction recorded in between — including a
+    legitimate owner sale with no shift open at all."""
+
+    def setUp(self):
+        from core.models import Shift
+        self.biz = Business.objects.create(name='Gap Recon Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='gap_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_a = User.objects.create_user(username='gap_staffa', password='x')
+        UserProfile.objects.create(user=self.staff_a, business=self.biz, role='staff')
+        self.staff_b = User.objects.create_user(username='gap_staffb', password='x')
+        UserProfile.objects.create(user=self.staff_b, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Gap Item',
+            material_no='GAP-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        # Opening stock, no sales during A's own shift — current_balance() = 20
+        # the whole way through her shift.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+            created_at=timezone.now() - timedelta(days=2),
+        )
+        now = timezone.now()
+        self.shift_a = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_a, station='bar',
+            started_at=now - timedelta(hours=14), ended_at=now - timedelta(hours=2),
+            status='CLOSED',
+        )
+        self.shift_b = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_b, station='bar',
+            started_at=now, status='OPEN',
+        )
+
+    def _make_closing_count(self, actual_count, recorded_at=None):
+        from core.models import ShiftStockCount
+        row = ShiftStockCount.objects.create(
+            shift=self.shift_a, item=self.item, phase='closing',
+            book_balance=Decimal('20'), actual_count=Decimal(str(actual_count)),
+            recorded_by=self.staff_a,
+        )
+        if recorded_at:
+            ShiftStockCount.objects.filter(id=row.id).update(recorded_at=recorded_at)
+            row.refresh_from_db()
+        return row
+
+    def test_immediately_preceding_shift_finds_shift_a(self):
+        from core.stock_take_views import _immediately_preceding_shift
+        result = _immediately_preceding_shift(self.biz, self.shift_b, is_kitchen=False)
+        self.assertEqual(result.id, self.shift_a.id)
+
+    def test_none_when_prior_shift_never_counted_the_item(self):
+        from core.stock_take_views import _gap_reconciled_variance
+        result = _gap_reconciled_variance(self.biz, self.item, self.shift_a)
+        self.assertIsNone(result)
+
+    def test_expected_now_nets_real_transactions_since_the_closing_count(self):
+        from core.stock_take_views import _gap_reconciled_variance
+        closing = self._make_closing_count(17, recorded_at=self.shift_a.ended_at)
+        # Owner sells 4 units during the gap — no shift open at all.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-4'),
+            sale_amount=Decimal('400'), payment_method='cash', recorded_by=self.owner,
+            created_at=self.shift_a.ended_at + timedelta(minutes=30),
+        )
+        result = _gap_reconciled_variance(self.biz, self.item, self.shift_a)
+        self.assertIsNotNone(result)
+        self.assertEqual(result['net_movement'], Decimal('-4'))
+        self.assertEqual(result['expected_now'], Decimal('13'))  # 17 - 4
+
+    def test_transaction_before_the_closing_count_is_not_counted(self):
+        from core.stock_take_views import _gap_reconciled_variance
+        # A sale recorded BEFORE A's own closing count was taken must not be
+        # double-counted into the gap's own net movement — it's already
+        # baked into her physical count.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('200'), payment_method='cash',
+            created_at=self.shift_a.started_at + timedelta(hours=1),
+        )
+        closing = self._make_closing_count(18, recorded_at=self.shift_a.ended_at)
+        result = _gap_reconciled_variance(self.biz, self.item, self.shift_a)
+        self.assertEqual(result['net_movement'], Decimal('0'))
+        self.assertEqual(result['expected_now'], Decimal('18'))
+
+
+class RunAccountabilityStockTakeGapTest(TestCase):
+    """2026-08-22 — end-to-end coverage of run_accountability_stock_take()'s
+    new gap-aware attribution for an OPENING-phase count, exercising the
+    exact scenario Roy described: staff A closes + counts, the business
+    sits empty for a gap (or the owner sells directly with no shift open),
+    staff B opens + counts, and a raw variance appears."""
+
+    def setUp(self):
+        from core.models import Shift
+        self.biz = Business.objects.create(name='Run Accountability Gap Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='rag_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_a = User.objects.create_user(username='rag_staffa', password='x', first_name='Aisha')
+        UserProfile.objects.create(user=self.staff_a, business=self.biz, role='staff', phone='0711111111')
+        self.staff_b = User.objects.create_user(username='rag_staffb', password='x', first_name='Bosco')
+        UserProfile.objects.create(user=self.staff_b, business=self.biz, role='staff', phone='0722222222')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Run Gap Item',
+            material_no='RAG-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+            created_at=timezone.now() - timedelta(days=2),
+        )
+        now = timezone.now()
+        self.shift_a = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_a, station='bar',
+            started_at=now - timedelta(hours=14), ended_at=now - timedelta(hours=2),
+            status='CLOSED',
+        )
+        self.shift_b = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_b, station='bar',
+            started_at=now, status='OPEN',
+        )
+
+    def _make_closing_count(self, actual_count):
+        from core.models import ShiftStockCount
+        row = ShiftStockCount.objects.create(
+            shift=self.shift_a, item=self.item, phase='closing',
+            book_balance=Decimal('20'), actual_count=Decimal(str(actual_count)),
+            recorded_by=self.staff_a,
+        )
+        ShiftStockCount.objects.filter(id=row.id).update(recorded_at=self.shift_a.ended_at)
+        row.refresh_from_db()
+        return row
+
+    def test_fully_explained_by_trail_auto_resolves_no_response_needed(self):
+        from core.stock_take_views import run_accountability_stock_take
+        from core.models import StockVarianceQuery
+        # A's own closing count already differed from lifetime book_balance
+        # (20) by 3 units — a pre-existing, already-known state, not a NEW
+        # mystery for this gap to explain.
+        self._make_closing_count(17)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-4'),
+            sale_amount=Decimal('400'), payment_method='cash', recorded_by=self.owner,
+            created_at=self.shift_a.ended_at + timedelta(minutes=30),
+        )
+        # B counts exactly what the trail predicts (17 - 4 = 13), NOT the raw
+        # lifetime book_balance (20 - 4 = 16) — the whole point of the check.
+        stock_take, variances_created, auto_reconciled_count = run_accountability_stock_take(
+            self.biz, self.staff_b, self.shift_b,
+            [{'item_id': self.item.id, 'actual_count': 13}],
+            phase='opening',
+        )
+        self.assertEqual(variances_created, 0)
+        self.assertEqual(auto_reconciled_count, 1)
+        svq = StockVarianceQuery.objects.get(stock_take=stock_take)
+        self.assertEqual(svq.kind, 'gap')
+        self.assertEqual(svq.status, StockVarianceQuery.RESOLVED)
+        self.assertTrue(svq.owner_accepted)
+        self.assertTrue(svq.gap_note)
+        self.assertEqual(svq.attributed_shift_id, self.shift_a.id)
+
+    def test_genuine_residual_after_trail_stays_pending_attributed_to_prior_shift(self):
+        from core.stock_take_views import run_accountability_stock_take
+        from core.models import StockVarianceQuery
+        self._make_closing_count(17)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-4'),
+            sale_amount=Decimal('400'), payment_method='cash', recorded_by=self.owner,
+            created_at=self.shift_a.ended_at + timedelta(minutes=30),
+        )
+        # Trail predicts 13; B actually counts 10 — a real, unexplained 3-unit gap.
+        stock_take, variances_created, auto_reconciled_count = run_accountability_stock_take(
+            self.biz, self.staff_b, self.shift_b,
+            [{'item_id': self.item.id, 'actual_count': 10}],
+            phase='opening',
+        )
+        self.assertEqual(variances_created, 1)
+        self.assertEqual(auto_reconciled_count, 0)
+        svq = StockVarianceQuery.objects.get(stock_take=stock_take)
+        self.assertEqual(svq.kind, 'gap')
+        self.assertEqual(svq.status, StockVarianceQuery.PENDING)
+        self.assertIsNone(svq.owner_accepted)
+        self.assertEqual(svq.attributed_shift_id, self.shift_a.id)
+        self.assertEqual(svq.queried_staff.user_id, self.staff_a.id)
+        # The residual, not the raw lifetime-book-balance diff, drives the
+        # figure everyone sees.
+        self.assertEqual(svq.variance, Decimal('-3'))
+
+    def test_owner_sale_after_shift_b_started_does_not_wrongly_blame_b(self):
+        """The exact failure mode Roy flagged: a legitimate owner sale
+        landing AFTER shift_b's own started_at would satisfy attribute_
+        variance_shift()'s coarse "has this shift touched the item" check
+        and wrongly credit/blame shift_b — gap-reconciliation must override
+        that and still correctly point at shift_a."""
+        from core.stock_take_views import run_accountability_stock_take
+        from core.models import StockVarianceQuery
+        self._make_closing_count(20)  # matches lifetime book exactly at A's close
+        # Owner sale timed AFTER shift_b.started_at (not before) — this is
+        # precisely what would fool the coarse mechanism.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('200'), payment_method='cash', recorded_by=self.owner,
+            created_at=self.shift_b.started_at + timedelta(minutes=1),
+        )
+        # Confirm the coarse mechanism WOULD have blamed shift_b in isolation.
+        from core.shift_views import attribute_variance_shift
+        coarse = attribute_variance_shift(self.biz, self.shift_b, item=self.item)
+        self.assertEqual(coarse.id, self.shift_b.id)
+
+        # A genuine, unexplained residual (B counts 15, not the trail-expected 18).
+        stock_take, variances_created, auto_reconciled_count = run_accountability_stock_take(
+            self.biz, self.staff_b, self.shift_b,
+            [{'item_id': self.item.id, 'actual_count': 15}],
+            phase='opening',
+        )
+        svq = StockVarianceQuery.objects.get(stock_take=stock_take)
+        # Gap-reconciliation correctly still attributes to A, not B.
+        self.assertEqual(svq.attributed_shift_id, self.shift_a.id)
+        self.assertNotEqual(svq.attributed_shift_id, self.shift_b.id)
+
+    def test_falls_back_to_ordinary_shift_attribution_with_no_prior_closing_count(self):
+        from core.stock_take_views import run_accountability_stock_take
+        from core.models import StockVarianceQuery
+        # No ShiftStockCount closing row for shift_a at all.
+        stock_take, variances_created, auto_reconciled_count = run_accountability_stock_take(
+            self.biz, self.staff_b, self.shift_b,
+            [{'item_id': self.item.id, 'actual_count': 15}],
+            phase='opening',
+        )
+        self.assertEqual(variances_created, 1)
+        svq = StockVarianceQuery.objects.get(stock_take=stock_take)
+        self.assertEqual(svq.kind, 'shift')
+        self.assertFalse(svq.gap_note)
+        # Ordinary walk-back still correctly lands on shift_a (zero activity
+        # on shift_b for this item).
+        self.assertEqual(svq.attributed_shift_id, self.shift_a.id)
+
+    def test_non_opening_phase_never_applies_gap_logic(self):
+        from core.stock_take_views import run_accountability_stock_take
+        from core.models import StockVarianceQuery
+        self._make_closing_count(17)
+        stock_take, variances_created, auto_reconciled_count = run_accountability_stock_take(
+            self.biz, self.staff_a, self.shift_a,
+            [{'item_id': self.item.id, 'actual_count': 15}],
+            phase='closing',
+        )
+        svq = StockVarianceQuery.objects.get(stock_take=stock_take)
+        self.assertEqual(svq.kind, 'shift')
+
+    def test_auto_reconciled_notifies_but_never_asks_for_a_response(self):
+        from core.stock_take_views import run_accountability_stock_take
+        self._make_closing_count(17)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-4'),
+            sale_amount=Decimal('400'), payment_method='cash', recorded_by=self.owner,
+            created_at=self.shift_a.ended_at + timedelta(minutes=30),
+        )
+        run_accountability_stock_take(
+            self.biz, self.staff_b, self.shift_b,
+            [{'item_id': self.item.id, 'actual_count': 13}],
+            phase='opening',
+        )
+        notif_a = Notification.objects.filter(user=self.staff_a).order_by('-id').first()
+        self.assertIsNotNone(notif_a)
+        self.assertIn('kiotomatiki', notif_a.message)
+        notif_b = Notification.objects.filter(user=self.staff_b).order_by('-id').first()
+        self.assertIsNotNone(notif_b)
+        self.assertIn('kiotomatiki', notif_b.message)
+
+
+class StockTakeApiAccountabilityTest(TestCase):
+    """2026-08-22 — the quick "Hesabu Stock" modal (open/close on Bar/Kitchen
+    Board) now feeds the real accountability engine for opening/closing
+    counts specifically; 'midshift' stays purely informational, matching its
+    own documented design. Any staff member (not just owner/manager) can
+    trigger this — the same population that already uses this modal."""
+
+    def setUp(self):
+        from core.models import Shift
+        self.biz = Business.objects.create(name='STA API Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='staapi_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='staapi_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='STA API Item',
+            material_no='STAAPI-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('10'),
+            created_at=timezone.now() - timedelta(days=1),
+        )
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff, station='bar',
+            started_at=timezone.now(), status='OPEN',
+        )
+
+    def _post(self, phase, actual_count, token=None):
+        import json, uuid
+        self.client.force_login(self.staff)
+        counts = json.dumps([{'item_id': self.item.id, 'actual_count': actual_count}])
+        return self.client.post(f'/bar/shift/{self.shift.id}/stock-take/', {
+            'counts': counts, 'phase': phase,
+            'idempotency_token': token or str(uuid.uuid4()),
+        })
+
+    def test_opening_variance_creates_real_accountability_record(self):
+        from core.models import StockVarianceQuery
+        resp = self._post('opening', 6)  # book=10, actual=6 -> variance
+        d = resp.json()
+        self.assertTrue(d['ok'])
+        self.assertEqual(d['variance_count'], 1)
+        self.assertEqual(StockVarianceQuery.objects.filter(stock_take__business=self.biz).count(), 1)
+
+    def test_closing_variance_creates_real_accountability_record(self):
+        from core.models import StockVarianceQuery
+        resp = self._post('closing', 6)
+        d = resp.json()
+        self.assertEqual(d['variance_count'], 1)
+        self.assertEqual(StockVarianceQuery.objects.filter(stock_take__business=self.biz).count(), 1)
+
+    def test_midshift_never_creates_a_variance_query(self):
+        from core.models import StockVarianceQuery
+        resp = self._post('midshift', 6)
+        d = resp.json()
+        self.assertTrue(d['ok'])
+        self.assertEqual(StockVarianceQuery.objects.filter(stock_take__business=self.biz).count(), 0)
+
+    def test_matching_count_creates_no_variance(self):
+        from core.models import StockVarianceQuery
+        resp = self._post('opening', 10)
+        self.assertEqual(StockVarianceQuery.objects.filter(stock_take__business=self.biz).count(), 0)
+
+    def test_duplicate_token_blocked(self):
+        from core.models import StockVarianceQuery
+        token = 'sta-dup-token'
+        r1 = self._post('opening', 6, token=token)
+        self.assertTrue(r1.json()['ok'])
+        r2 = self._post('opening', 6, token=token)
+        self.assertFalse(r2.json()['ok'])
+        self.assertTrue(r2.json().get('duplicate'))
+        self.assertEqual(StockVarianceQuery.objects.filter(stock_take__business=self.biz).count(), 1)
+
+    def test_ordinary_staff_can_trigger_it_not_just_owner_manager(self):
+        # No @owner_or_manager_required on this endpoint — the fixture's
+        # self.staff (plain 'staff' role) already performs every request
+        # above successfully; this test locks that in explicitly.
+        resp = self._post('opening', 6)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+
+class VarianceLossKesAffirmationTest(TestCase):
+    """2026-08-22 fix — _staff_contribution()'s variance_loss_kes used to sum
+    EVERY decrease-direction variance attributed to a staffer's shift
+    regardless of resolution, including rows the owner already ACCEPTED
+    (a believed, legitimate explanation — not a real loss). Roy's own rule:
+    only a variance with no explanation AND no affirmation should count."""
+
+    def setUp(self):
+        from core.models import Shift, StockTake, StockVarianceQuery
+        self.StockVarianceQuery = StockVarianceQuery
+        self.biz = Business.objects.create(name='VL Affirm Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.staff_user = User.objects.create_user(username='vlaff_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='VL Item',
+            material_no='VLAFF-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            started_at=timezone.now() - timedelta(hours=2), status='OPEN',
+        )
+        self.stock_take = StockTake.objects.create(business=self.biz, shift=self.shift, conducted_by=self.staff_user)
+
+    def _make_variance(self, estimated_revenue, owner_accepted, status='pending'):
+        from core.models import StockVarianceQuery
+        return StockVarianceQuery.objects.create(
+            stock_take=self.stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('10'), actual_count=Decimal('8'), direction='decrease',
+            estimated_revenue=Decimal(str(estimated_revenue)),
+            queried_staff=self.staff_profile, attributed_shift=self.shift,
+            owner_accepted=owner_accepted, status=status,
+        )
+
+    def test_accepted_row_excluded_from_variance_loss(self):
+        self._make_variance(500, owner_accepted=True, status='resolved')
+        contrib = _staff_contribution_helper(self.staff_profile, self.biz)
+        self.assertEqual(contrib['variance_loss_kes'], 0)
+        self.assertEqual(len(contrib['unaffirmed_variances']), 0)
+
+    def test_pending_row_counts(self):
+        self._make_variance(300, owner_accepted=None, status='pending')
+        contrib = _staff_contribution_helper(self.staff_profile, self.biz)
+        self.assertEqual(contrib['variance_loss_kes'], 300)
+        self.assertEqual(len(contrib['unaffirmed_variances']), 1)
+
+    def test_responded_but_unreviewed_row_counts(self):
+        self._make_variance(300, owner_accepted=None, status='responded')
+        contrib = _staff_contribution_helper(self.staff_profile, self.biz)
+        self.assertEqual(contrib['variance_loss_kes'], 300)
+
+    def test_dismissed_row_counts(self):
+        self._make_variance(400, owner_accepted=False, status='resolved')
+        contrib = _staff_contribution_helper(self.staff_profile, self.biz)
+        self.assertEqual(contrib['variance_loss_kes'], 400)
+
+    def test_mixed_rows_sum_only_unaffirmed(self):
+        self._make_variance(500, owner_accepted=True, status='resolved')   # excluded
+        self._make_variance(300, owner_accepted=None, status='pending')    # counts
+        self._make_variance(400, owner_accepted=False, status='resolved') # counts
+        contrib = _staff_contribution_helper(self.staff_profile, self.biz)
+        self.assertEqual(contrib['variance_loss_kes'], 700)
+        self.assertEqual(len(contrib['unaffirmed_variances']), 2)
+
+
+def _staff_contribution_helper(staff_profile, business):
+    from core.haki_views import _staff_contribution
+    today = timezone.localdate()
+    return _staff_contribution(staff_profile, business, today - timedelta(days=1), today + timedelta(days=1))
+
+
+class PayrollVarianceSuggestionTest(TestCase):
+    """2026-08-22 (Roy — shift-change accountability): a SUGGESTED payroll
+    deduction based on a staffer's own unaffirmed stock-variance record for
+    the current payroll period, shown to the owner at record-payment time —
+    never applied automatically, and always visible to the staffer
+    themselves on Kazi Yangu so they can see exactly why."""
+
+    def setUp(self):
+        from core.models import Shift, StockTake, StockVarianceQuery
+        self.biz = Business.objects.create(name='Payroll Suggestion Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.biz.haki_enabled = True
+        self.biz.save(update_fields=['haki_enabled'])
+        self.owner = User.objects.create_user(username='psug_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='psug_staff', password='x', first_name='Zena')
+        self.staff_profile = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Psug Item',
+            material_no='PSUG-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        RecurringExpense.objects.create(
+            business=self.biz, description='Staff salary', category='labor',
+            amount=Decimal('10000'), period='MONTHLY', staff_profile=self.staff_profile, is_active=True,
+        )
+        today = timezone.localdate()
+        self.current_period = today.strftime('%Y-%m')
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            started_at=timezone.now() - timedelta(hours=2), status='OPEN',
+        )
+        stock_take = StockTake.objects.create(business=self.biz, shift=self.shift, conducted_by=self.staff_user)
+        # Unaffirmed variances for THIS period totalling 1200, matching
+        # Roy's own worked example (10000 salary, 1200 gap -> 8800 suggested).
+        StockVarianceQuery.objects.create(
+            stock_take=stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('10'), actual_count=Decimal('8'), direction='decrease',
+            estimated_revenue=Decimal('700'), queried_staff=self.staff_profile,
+            attributed_shift=self.shift, status='pending',
+        )
+        StockVarianceQuery.objects.create(
+            stock_take=stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('5'), actual_count=Decimal('4'), direction='decrease',
+            estimated_revenue=Decimal('500'), queried_staff=self.staff_profile,
+            attributed_shift=self.shift, status='pending',
+        )
+
+    def test_report_shows_period_variance_loss_and_suggested_amount(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/staff/contribution/')
+        row = next(r for r in resp.context['rows'] if r['profile'].id == self.staff_profile.id)
+        self.assertEqual(row['period_variance_loss_kes'], 1200)
+        self.assertEqual(row['suggested_salary'], Decimal('8800'))
+        self.assertEqual(len(row['period_unaffirmed_variances']), 2)
+
+    def test_suggestion_is_never_binding_owner_can_pay_full_amount(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff/{self.staff_profile.id}/salary/', {
+            'period': self.current_period, 'amount': '10000', 'method': 'cash',
+            'payment_type': 'full',
+        })
+        self.assertEqual(resp.status_code, 302)
+        payment = SalaryPayment.objects.get(business=self.biz, staff=self.staff_profile, period=self.current_period)
+        self.assertEqual(payment.amount, Decimal('10000.00'))
+
+    def test_owner_can_also_pay_the_suggested_lower_amount(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/staff/{self.staff_profile.id}/salary/', {
+            'period': self.current_period, 'amount': '8800', 'method': 'cash',
+            'payment_type': 'full', 'staff_note': 'Deni la stock lililoshindwa kuelezwa',
+        })
+        self.assertEqual(resp.status_code, 302)
+        payment = SalaryPayment.objects.get(business=self.biz, staff=self.staff_profile, period=self.current_period)
+        self.assertEqual(payment.amount, Decimal('8800.00'))
+
+    def test_no_suggestion_when_nothing_unaffirmed(self):
+        StockVarianceQuery.objects.filter(attributed_shift=self.shift).update(owner_accepted=True, status='resolved')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/staff/contribution/')
+        row = next(r for r in resp.context['rows'] if r['profile'].id == self.staff_profile.id)
+        self.assertEqual(row['period_variance_loss_kes'], 0)
+        self.assertIsNone(row['suggested_salary'])
+
+    def test_staff_sees_their_own_unaffirmed_variances_on_kazi_yangu(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Psug Item')
+        self.assertEqual(len(resp.context['unaffirmed_variances']), 2)
+        self.assertEqual(resp.context['variance_loss_kes'], 1200)

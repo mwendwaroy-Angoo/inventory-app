@@ -163,6 +163,22 @@
             </div>
             {% endif %}
         </div>
+        {% if contrib.unaffirmed_variances %}
+        <div style="margin-top:.6rem; font-size:.8rem; color:#e2a8a8;">
+            <strong>Tofauti za Hesabu Ambazo Hazijaidhinishwa:</strong>
+            {% for v in contrib.unaffirmed_variances %}
+            <div style="margin-top:.3rem; padding:.4rem .5rem; background:rgba(192,57,90,0.08); border-radius:6px;">
+                {{ v.item_name_cache }} — KES {{ v.estimated_revenue|default:0|floatformat:0 }}
+                ({{ v.stock_take.taken_at|date:"d M Y" }})
+                {% if v.kind == 'gap' %}<span style="color:#fbbf24;">— tofauti ya mapumziko baina ya zamu</span>{% endif %}
+                {% if v.status == 'pending' %}— bado haujajibu.
+                {% elif v.status == 'responded' %}— umejibu, unasubiri uamuzi wa mmiliki.
+                {% elif v.owner_accepted == False %}— mmiliki hakukubali maelezo yako.
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
         {% if contrib.petty_cash_rejected %}
         <div style="margin-top:.6rem; font-size:.8rem; color:#e2a8a8;">
             <strong>Petty Cash Iliyokataliwa:</strong>
