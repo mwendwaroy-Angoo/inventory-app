@@ -99,6 +99,24 @@ def _shift_active_segments(shift, uncapped_end):
     simple one-handover case. Owner shifts are left fully unsegmented — an
     owner's shift isn't tied to one station the same way (see
     _reconcile()'s own "owner shift stays unscoped" exception).
+
+    2026-08-23 live report (Roy, Monsoon Inn) — the identical failure
+    shape recurred for a MANAGER: bartender Susan had an open bar shift
+    and was actively selling; manager Dush Master opened his own bar
+    shift (required to sell, per the manager-must-have-a-shift-to-sell
+    gate) purely to be present/supervise — he had not rung up anything
+    himself — and his shift modal immediately showed real cash/mpesa/
+    deni figures that were actually Susan's ongoing sales, mis-
+    attributed the moment his later shift-open capped hers. A manager
+    opening a shift while a real staff custodian is already active on
+    the same counter is the same "concurrent helper, not a handover"
+    case as a waitress — extended the identical exemption to 'manager'
+    below, both directions: never caps someone else's window, and their
+    OWN window nets to zero for any stretch a real custodian overlaps
+    it (see the custodian-overlap subtraction further down). If a
+    manager is ever the SOLE open shift on a station, they correctly
+    become the real custodian and accrue attribution normally, same as
+    ordinary staff.
     """
     try:
         staff_role = shift.staff.userprofile.role
@@ -106,6 +124,8 @@ def _shift_active_segments(shift, uncapped_end):
         staff_role = 'staff'
     if staff_role == 'owner':
         return [(shift.started_at, uncapped_end)]
+
+    NON_CUSTODIAN_ROLES = ('waitress', 'manager')
 
     stn = _shift_station(shift)
     later_shifts = list(
@@ -115,17 +135,10 @@ def _shift_active_segments(shift, uncapped_end):
         )
         .exclude(id=shift.id)
         .filter(_station_q(stn == 'kitchen'))
-        # 2026-08-08 live report (Roy) — "waitress shift opening when the
-        # bartender was already there is resetting the bar revenue...
-        # revenue should reset during a bar-to-bar STAFF shift change, the
-        # waitress should not have an effect." A waitress with cross-
-        # station access joining an already-open counter is a concurrent
-        # HELPER sharing the same till, never a replacement/handover the
-        # way one bartender relieving another is — so her shift-open must
-        # never cap anyone else's already-open attribution on that
-        # station. Only a genuine counter handover (any non-waitress role)
-        # still caps as before.
-        .exclude(staff__userprofile__role='waitress')
+        # A waitress or manager opening a shift is a concurrent HELPER
+        # sharing an already-active till, never a replacement/handover —
+        # see the docstring above for both incidents this covers.
+        .exclude(staff__userprofile__role__in=NON_CUSTODIAN_ROLES)
         .order_by('started_at')
     )
     if not later_shifts:
@@ -146,7 +159,7 @@ def _shift_active_segments(shift, uncapped_end):
     # from capping anyone ELSE's attribution, but a real cash-accountability
     # bug would reopen the moment her OWN segment is computed: nothing yet
     # stops her from ALSO claiming the same sales a concurrently-open real
-    # till custodian (bar/kitchen staff, manager, owner) on her station is
+    # till custodian (bar/kitchen staff, owner) on her station is
     # independently accruing — the same physical cash would then be
     # "expected" twice over, once from each of them, at whichever of the two
     # shifts closes and gets asked to explain a variance. A waitress is a
@@ -155,11 +168,17 @@ def _shift_active_segments(shift, uncapped_end):
     # subtract out any stretch a non-waitress shift on her own station
     # overlaps, leaving her with real accountability only for genuine gaps
     # where she is the sole person on the counter.
-    if staff_role == 'waitress':
+    #
+    # 2026-08-23 — same subtraction now applies to a manager's own segment
+    # too (see the docstring's live-report writeup above): a manager is
+    # only ever a real till custodian while no OTHER genuine staff shift
+    # is concurrently open on the same station; the moment one is, his own
+    # attribution nets to zero for that overlap, same as a waitress's.
+    if staff_role in NON_CUSTODIAN_ROLES:
         custodian_shifts = (
             Shift.objects.filter(business=shift.business, started_at__lt=uncapped_end)
             .exclude(id=shift.id)
-            .exclude(staff__userprofile__role='waitress')
+            .exclude(staff__userprofile__role__in=NON_CUSTODIAN_ROLES)
             .filter(_station_q(stn == 'kitchen'))
         )
         custodian_spans = [
@@ -173,8 +192,8 @@ def _shift_active_segments(shift, uncapped_end):
 def _subtract_intervals(base_segments, remove_segments):
     """Interval set-difference: base_segments minus every interval in
     remove_segments. Used by _shift_active_segments() to strip any period a
-    waitress's own segment overlaps a concurrently-open non-waitress ("real"
-    till custodian) shift on the same station."""
+    waitress's or manager's own segment overlaps a concurrently-open real
+    till custodian's shift on the same station."""
     if not remove_segments:
         return base_segments
     result = []
@@ -1811,6 +1830,7 @@ def open_shift(request):
     # Shift.station and _shift_station().
     my_station = 'kitchen' if request.path.startswith('/kitchen/') else 'bar'
     overlap_warning = None
+    joining_real_custodian = False
     if getattr(up, 'role', '') != 'owner':
         same_station_open = Shift.objects.filter(
             business=up.business, status='OPEN',
@@ -1818,14 +1838,27 @@ def open_shift(request):
         for other in same_station_open:
             other_station = _shift_station(other)
             if other_station == my_station:
-                other_name = other.staff.get_full_name() or other.staff.username
-                started = timezone.localtime(other.started_at).strftime('%H:%M')
-                overlap_warning = (
-                    f"⚠️ {other_name} ana shift ya {('kitchen' if my_station == 'kitchen' else 'bar')} "
-                    f"iliyo wazi tangu {started}. Mkishirikiana till moja, mauzo yenu mawili "
-                    f"yataonekana kwa wote wawili — hii si tatizo mradi mfahamu."
-                )
-                break
+                if overlap_warning is None:
+                    other_name = other.staff.get_full_name() or other.staff.username
+                    started = timezone.localtime(other.started_at).strftime('%H:%M')
+                    overlap_warning = (
+                        f"⚠️ {other_name} ana shift ya {('kitchen' if my_station == 'kitchen' else 'bar')} "
+                        f"iliyo wazi tangu {started}. Mkishirikiana till moja, mauzo yenu mawili "
+                        f"yataonekana kwa wote wawili — hii si tatizo mradi mfahamu."
+                    )
+                # 2026-08-23 (Roy — manager joining an already-active bar):
+                # a manager (or waitress) opening a shift while a REAL till
+                # custodian is already open on this station is the same
+                # "concurrent helper" case _shift_active_segments() now
+                # exempts from attribution — remembered here so the
+                # opening-variance comparison below can skip it too,
+                # exactly like it already does for a waitress unconditionally.
+                # Keep scanning (don't break) so a real custodian later in
+                # the queryset is still found even if an earlier overlapping
+                # shift happened to be another waitress/manager.
+                other_role = getattr(other.staff.userprofile, 'role', '')
+                if other_role not in ('waitress', 'manager'):
+                    joining_real_custodian = True
 
     # 2026-07-27 — continuous till accountability: compute what the system
     # expects this station's cash to be RIGHT NOW (before this shift exists,
@@ -1857,8 +1890,15 @@ def open_shift(request):
     # her opening_float is still recorded (for her own record), but never
     # compared or flagged. Same reasoning as the till['anchor_established']
     # False case just above: nothing trustworthy to compare against.
+    # 2026-08-23 (Roy) — extended to a manager, but only when they are
+    # actually JOINING an already-open real custodian on this station
+    # (joining_real_custodian above) — unlike a waitress, a manager who is
+    # genuinely the sole person opening the counter IS the real custodian
+    # and should be compared normally, same as ordinary staff.
+    is_waitress = getattr(up, 'role', '') == 'waitress'
+    is_manager_joining = getattr(up, 'role', '') == 'manager' and joining_real_custodian
     till = till_expected_cash(up.business, my_station)
-    if till['anchor_established'] and getattr(up, 'role', '') != 'waitress':
+    if till['anchor_established'] and not is_waitress and not is_manager_joining:
         expected_opening_cash = Decimal(str(till['expected_cash'])) - banked
         opening_variance = opening_float - expected_opening_cash
     else:

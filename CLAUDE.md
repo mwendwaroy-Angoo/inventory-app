@@ -8029,3 +8029,45 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   migrations (pure computation over existing `contrib` dict fields — no new
   model fields). Full core+accounts suite (2270 tests) re-run and confirmed
   passing.
+- Fix: manager shift-open capping a bartender's own sales attribution
+  (2026-08-23), live report with a Monsoon Inn screenshot: manager Dush
+  Master opened his own bar shift (required to sell, per the existing
+  manager-must-have-a-shift-to-sell gate) purely to be present/supervise
+  while bartender Susan was already actively selling on the same till —
+  his shift modal immediately showed real Cash/M-Pesa/Deni figures
+  (KES 310/450/480) that were actually Susan's ongoing sales, mis-
+  attributed the moment his later shift-open capped hers. Root cause:
+  `_shift_active_segments()`'s "the most-recently-opened shift on a
+  station owns every moment since it opened" rule is correct for a
+  genuine handover (one bartender relieving another) but was only ever
+  exempted for `role == 'waitress'` (2026-08-08) — a manager opening a
+  shift on an already-staffed counter hit the exact same failure shape
+  the waitress fix was built for, just never extended to cover him.
+  Fixed by widening BOTH existing waitress exemptions to a shared
+  `NON_CUSTODIAN_ROLES = ('waitress', 'manager')`: (1) a manager's
+  shift-open never caps another shift's already-open attribution on the
+  same station (the literal reported bug), and (2) his OWN attribution
+  correctly nets to zero for any stretch a real custodian (any role
+  outside this set) is concurrently open on that station — same
+  "Muda: 0h 00m" pattern already shown for a waitress. Unlike a
+  waitress (always exempted), a manager who is genuinely the SOLE open
+  shift on a station IS the real custodian and accrues normally, same
+  as ordinary staff — the exemption only fires while he's actually
+  joining someone already there. Extended the identical reasoning to
+  `open_shift()`'s opening-float variance alert: a manager JOINING an
+  already-active real custodian is counting cash that's already
+  mid-session (not an independent till), so the >KES 500 variance
+  comparison is disregarded exactly like it already is for a waitress —
+  but only when actually joining one (tracked via a new
+  `joining_real_custodian` flag computed from the same overlap-scan the
+  existing "another staffer already has this station open" warning
+  already runs); opening alone still gets the real comparison. 8 new
+  tests (`ManagerShiftDoesNotCapRevenueTest` — the literal reported bug
+  reproduced end-to-end, sole-custodian accrues normally, a genuine
+  staff handover still caps a manager exactly like anyone else;
+  `ManagerOpeningFloatVarianceDisregardedTest` — joining-disregarded vs
+  opening-alone-compared-normally) plus the full pre-existing
+  `WaitressShiftDoesNotCapRevenueTest`/`WaitressOpeningFloatVariance
+  DisregardedTest`/`SegmentedShiftReconcileTest` suites re-run and
+  confirmed passing unmodified. No migrations. 2275 tests pass (core +
+  accounts).

@@ -33076,6 +33076,188 @@ class WaitressOpeningFloatVarianceDisregardedTest(TestCase):
         self.assertAlmostEqual(float(shift.opening_variance), 1500.0, places=1)
 
 
+class ManagerShiftDoesNotCapRevenueTest(TestCase):
+    """2026-08-23 live report (Roy, Monsoon Inn): manager Dush Master opened
+    his own bar shift (required to sell, per the manager-must-have-a-shift
+    gate) purely to be present/supervise while bartender Susan was already
+    actively selling on the same till — his shift modal immediately showed
+    real cash/mpesa/deni figures that were actually Susan's ongoing sales,
+    mis-attributed the moment his later shift-open capped hers. Extends the
+    identical 2026-08-08 waitress exemption to 'manager': a manager opening
+    a shift while a real custodian is already active on the same station is
+    a concurrent HELPER, never a handover — his shift-open must never cap
+    the real custodian's attribution, and his OWN attribution nets to zero
+    for any stretch a real custodian overlaps it. If the manager is ever the
+    SOLE open shift on a station, he correctly becomes the real custodian
+    and accrues normally, same as ordinary staff."""
+
+    def _mk_shift(self, business, store, staff, started_at, ended_at=None, station='bar'):
+        return Shift.objects.create(
+            business=business, store=store, staff=staff, station=station,
+            opening_float=Decimal('0'), started_at=started_at, ended_at=ended_at,
+            status='CLOSED' if ended_at else 'OPEN',
+        )
+
+    def test_manager_opening_does_not_cap_bartenders_segment(self):
+        """The literal reported bug: bartender open first and still selling,
+        manager opens later on the same station — the sale made after the
+        manager opened must still be Susan's, not his."""
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='ManagerNoCap Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='MNC-1',
+            description='MNC Beer', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        bartender = User.objects.create_user(username='mnc_bartender', password='x')
+        UserProfile.objects.create(user=bartender, business=business, role='staff')
+        manager = User.objects.create_user(username='mnc_manager', password='x')
+        UserProfile.objects.create(user=manager, business=business, role='manager')
+
+        base = timezone.now() - timedelta(hours=4)
+        bartender_shift = self._mk_shift(business, store, bartender, base)
+        manager_start = base + timedelta(hours=1)
+        manager_shift = self._mk_shift(business, store, manager, manager_start)
+
+        # Sale made AFTER the manager opened — must still count toward the
+        # bartender's own shift; the manager did not ring this up.
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('760'), payment_method='cash',
+            created_at=manager_start + timedelta(minutes=30),
+        )
+        bartender_rec = _reconcile(bartender_shift)
+        manager_rec = _reconcile(manager_shift)
+        self.assertAlmostEqual(bartender_rec['cash_sales'], 760.0, places=1,
+            msg="A manager opening a shift must never cap/reset the real custodian's revenue attribution")
+        self.assertEqual(manager_rec['cash_sales'], 0.0,
+            msg="The manager's own shift must not claim sales he never rang up")
+
+    def test_manager_solely_open_accrues_normally(self):
+        """When the manager is the SOLE open shift on the station — no other
+        real custodian active — he genuinely is the custodian and must get
+        full credit for sales, exactly like ordinary staff."""
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='ManagerSolo Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='MSOLO-1',
+            description='MSolo Beer', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        manager = User.objects.create_user(username='msolo_manager', password='x')
+        UserProfile.objects.create(user=manager, business=business, role='manager')
+
+        start = timezone.now() - timedelta(hours=2)
+        manager_shift = self._mk_shift(business, store, manager, start)
+
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('400'), payment_method='mpesa',
+            created_at=start + timedelta(minutes=15),
+        )
+        rec = _reconcile(manager_shift)
+        self.assertAlmostEqual(rec['mpesa_sales'], 400.0, places=1,
+            msg="A manager who is the sole custodian must accrue attribution normally")
+
+    def test_a_real_handover_between_staff_still_caps_a_manager(self):
+        """Regression lock: the exemption only ever protects a manager/
+        waitress FROM being capped and stops them capping OTHERS — a
+        genuine later handover by an ordinary staff member must still cap
+        the manager's own window, same as it would for anyone else."""
+        from core.shift_views import _reconcile
+
+        business = Business.objects.create(name='ManagerRealHandover Biz')
+        store = Store.objects.create(business=business, name='Bar')
+        item = Item.objects.create(
+            business=business, store=store, material_no='MRH-1',
+            description='MRH Beer', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('40'),
+        )
+        manager = User.objects.create_user(username='mrh_manager', password='x')
+        UserProfile.objects.create(user=manager, business=business, role='manager')
+        staff2 = User.objects.create_user(username='mrh_staff2', password='x')
+        UserProfile.objects.create(user=staff2, business=business, role='staff')
+
+        base = timezone.now() - timedelta(hours=4)
+        manager_shift = self._mk_shift(business, store, manager, base)
+        staff2_start = base + timedelta(hours=1)
+        self._mk_shift(business, store, staff2, staff2_start)
+
+        Transaction.objects.create(
+            business=business, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('900'), payment_method='cash',
+            created_at=staff2_start + timedelta(minutes=30),
+        )
+        rec = _reconcile(manager_shift)
+        self.assertEqual(rec['cash_sales'], 0.0,
+            msg="A genuine staff handover must still cap the manager's earlier window")
+
+
+class ManagerOpeningFloatVarianceDisregardedTest(TestCase):
+    """2026-08-23 (Roy, same live report): the identical opening-variance
+    confusion the waitress fix already covers applies to a manager JOINING
+    an already-active counter too — his opening float is counting cash
+    already mid-session, not an independent till. Unlike a waitress
+    (always disregarded), a manager who is genuinely the SOLE person
+    opening the counter IS the real custodian and must still be compared
+    normally, same as ordinary staff."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='MOF Biz', has_kitchen=False)
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='mof_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='mof_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.bartender = User.objects.create_user(username='mof_bartender', password='x')
+        UserProfile.objects.create(user=self.bartender, business=self.biz, role='staff')
+
+        # Establish a real anchor so till_expected_cash() has something to
+        # compare against — without this the None-path would mask the bug.
+        anchor_staff = User.objects.create_user(username='mof_anchor', password='x')
+        UserProfile.objects.create(user=anchor_staff, business=self.biz, role='staff')
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=anchor_staff,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+            started_at=timezone.now() - timedelta(hours=5),
+            ended_at=timezone.now() - timedelta(hours=4),
+            closing_cash_counted=Decimal('1000'),
+        )
+
+    def test_manager_joining_active_bartender_opening_float_never_flagged(self):
+        # Bartender already open and (presumably) selling on the till.
+        self.client.force_login(self.bartender)
+        self.client.post('/bar/shift/open/', {'opening_float': '1000'})
+
+        self.client.force_login(self.manager)
+        # 2500 counted vs whatever till_expected_cash() now says — would
+        # trip the >500 alert for ordinary staff, but must be disregarded
+        # for a manager JOINING an already-active real custodian.
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '2500'})
+        self.assertEqual(resp.status_code, 200)
+        shift = Shift.objects.get(business=self.biz, staff=self.manager, status='OPEN')
+        self.assertEqual(shift.opening_float, Decimal('2500'))
+        self.assertIsNone(shift.expected_opening_cash)
+        self.assertIsNone(shift.opening_variance)
+
+    def test_manager_opening_alone_still_compared_normally(self):
+        """Regression lock: the disregard only applies while JOINING a real
+        custodian — a manager opening the counter alone (the anchor shift
+        already closed, nobody else currently open) is the real custodian
+        and must be compared exactly like ordinary staff."""
+        self.client.force_login(self.manager)
+        resp = self.client.post('/bar/shift/open/', {'opening_float': '2500'})
+        self.assertEqual(resp.status_code, 200)
+        shift = Shift.objects.get(business=self.biz, staff=self.manager, status='OPEN')
+        self.assertIsNotNone(shift.expected_opening_cash)
+        self.assertIsNotNone(shift.opening_variance)
+        self.assertAlmostEqual(float(shift.opening_variance), 1500.0, places=1)
+
+
 class InspectTillBreakdownCommandTest(TestCase):
     """2026-08-06 live report (Monsoon Inn) — Roy doubted till_expected_cash()'s
     Bar figure and asked to see it verified against real physical cash. This
