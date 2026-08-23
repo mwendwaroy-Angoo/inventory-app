@@ -178,11 +178,13 @@
                 <th>{% trans 'Recipient' %}</th>
                 <th>{% trans 'Invoice No' %}</th>
                 <th>{% trans 'Payment' %}</th>
+                <th>{% trans 'Served by' %}</th>
+                <th>{% trans 'Recorded by' %}</th>
             </tr>
         </thead>
         <tbody id="tableBody">
             {% for trans in transactions %}
-            <tr data-search="{{ trans.date }} {{ trans.item.description }} {{ trans.item.material_no }} {{ trans.item.store.name }} {{ trans.get_type_display }} {{ trans.qty }} {{ trans.recipient }} {{ trans.invoice_no }}"
+            <tr data-search="{{ trans.date }} {{ trans.item.description }} {{ trans.item.material_no }} {{ trans.item.store.name }} {{ trans.get_type_display }} {{ trans.qty }} {{ trans.recipient }} {{ trans.invoice_no }} {{ trans.served_by_name }} {{ trans.recorded_by.get_full_name }} {{ trans.recorded_by.username }}"
                 data-date="{{ trans.date|date:'Y-m-d' }}">
                 <td>{{ trans.date }}</td>
                 <td>
@@ -243,10 +245,24 @@
                     </a>
                     {% endif %}
                 </td>
+                <td>
+                    {% if trans.served_by_name %}
+                    <span style="color:var(--pearl);">{{ trans.served_by_name }}</span>
+                    {% else %}
+                    <span style="color:var(--muted);" title="{% trans 'Not a tab sale — nobody was serving a running bill for this one' %}">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if trans.recorded_by %}
+                    <span style="color:var(--pearl);">{{ trans.recorded_by.get_full_name|default:trans.recorded_by.username }}</span>
+                    {% else %}
+                    <span style="color:var(--muted);" title="{% trans 'System-generated or async transaction — no single staff member to attribute it to' %}">—</span>
+                    {% endif %}
+                </td>
             </tr>
             {% empty %}
             <tr>
-                <td colspan="8" class="no-results">{% trans 'No transactions yet.' %}</td>
+                <td colspan="10" class="no-results">{% trans 'No transactions yet.' %}</td>
             </tr>
             {% endfor %}
         </tbody>

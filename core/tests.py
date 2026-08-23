@@ -42299,3 +42299,133 @@ class BarAuditIdempotencyAndStateTest(TestCase):
         self.assertEqual(req.status, 'ACCEPTED')
         txn.refresh_from_db()
         self.assertEqual(txn.type, 'OwnerConsumption')
+
+
+class WaitressTransactionHistoryRecordedByTest(TestCase):
+    """2026-08-24 live request (Roy): "improving the history section, by
+    showing per transaction who recorded it so that the waitress is not
+    left hanging between counter staffs, this trail is important."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Waitress History Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='wh_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bartender = User.objects.create_user(
+            username='wh_bartender', password='x', first_name='Susan', last_name='N',
+        )
+        UserProfile.objects.create(user=self.bartender, business=self.biz, role='staff')
+        self.waitress = User.objects.create_user(username='wh_waitress', password='x')
+        UserProfile.objects.create(
+            user=self.waitress, business=self.biz, role='waitress', can_access_bar=True,
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='WH-01', unit='Pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('150'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'),
+            payment_method='cash', recorded_by=self.bartender,
+        )
+
+    def test_history_page_shows_who_recorded_each_transaction(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/history/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Susan N')
+
+    def test_history_page_shows_who_served_a_tab_sale(self):
+        """2026-08-24 follow-up (Roy): "the transactional history should
+        show who served and who recorded" — two different people (whose
+        tab it was vs. who keyed the sale in), both needed."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN',
+            source='bar', store=self.store, served_by=self.waitress,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'),
+            payment_method='cash', recorded_by=self.bartender,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Tusker',
+            amount=Decimal('250'), is_paid=False,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/history/')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        self.assertIn('wh_waitress', content)  # served_by, no display name set
+        self.assertIn('Susan N', content)       # recorded_by
+
+    def test_direct_sale_shows_a_dash_for_served_by(self):
+        """A plain direct sale (no tab) has nobody 'serving a bill' — must
+        show a dash, not raise on the missing reverse OneToOne."""
+        self.client.force_login(self.owner)
+        resp = self.client.get('/history/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_waitress_can_reach_the_history_page(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/history/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Susan N')
+
+    def test_kitchen_staff_can_reach_the_history_page(self):
+        kitchen_user = User.objects.create_user(username='wh_kitchen', password='x')
+        UserProfile.objects.create(user=kitchen_user, business=self.biz, role='kitchen')
+        self.client.force_login(kitchen_user)
+        resp = self.client.get('/history/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Susan N')
+
+    def test_kitchen_navbar_carries_the_history_link(self):
+        kitchen_user = User.objects.create_user(username='wh_kitchen2', password='x')
+        UserProfile.objects.create(user=kitchen_user, business=self.biz, role='kitchen')
+        self.client.force_login(kitchen_user)
+        resp = self.client.get('/kitchen/')
+        self.assertContains(resp, 'href="/history/"')
+
+    def test_transaction_with_no_recorded_by_shows_a_dash_not_an_error(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt',
+            qty=Decimal('10'), payment_method='',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/history/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_waitress_navbar_carries_the_history_link(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/')
+        self.assertContains(resp, 'href="/history/"')
+
+    def test_history_query_count_does_not_grow_per_transaction(self):
+        """select_related('recorded_by') must make this free — a query per
+        row for the new column would defeat the whole point on a page that
+        can list hundreds of transactions."""
+        from django.test.utils import CaptureQueriesContext
+        from django.db import connection
+
+        self.client.force_login(self.owner)
+        with CaptureQueriesContext(connection) as small:
+            self.client.get('/history/')
+        small_count = len(small.captured_queries)
+
+        for _ in range(20):
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('-1'), sale_amount=Decimal('100'),
+                payment_method='cash', recorded_by=self.bartender,
+            )
+        with CaptureQueriesContext(connection) as large:
+            self.client.get('/history/')
+        large_count = len(large.captured_queries)
+
+        self.assertEqual(
+            small_count, large_count,
+            'query count must not scale with the number of transactions — '
+            'recorded_by must be select_related, not fetched per row',
+        )

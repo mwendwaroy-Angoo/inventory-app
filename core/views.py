@@ -1907,9 +1907,18 @@ def transaction_history(request):
     from django.db.models import Exists, OuterRef
     from .models import BarTabEntry as _BTE
 
+    # 2026-08-24 live request (Roy): "showing per transaction who recorded
+    # it so that the waitress is not left hanging between counter staffs...
+    # the transactional history should show who served and who recorded."
+    # Two genuinely different people, same distinction customer_profile.py's
+    # journey already makes: served_by is BarTabEntry.tab.served_by (whose
+    # tab this was), recorded_by is whoever actually keyed the sale in —
+    # on a busy counter these routinely differ. select_related so both
+    # columns cost nothing extra per row instead of a query per transaction.
     transactions = list(
         Transaction.objects.filter(item__store__business=user_profile.business)
-        .select_related("item", "item__store")
+        .select_related("item", "item__store", "recorded_by",
+                        "tab_entry__tab__served_by")
         .annotate(has_tab_entry=Exists(_BTE.objects.filter(transaction_id=OuterRef("pk"))))
         .order_by("-date")
     )
@@ -1917,6 +1926,14 @@ def transaction_history(request):
         t.is_direct_correctable = (
             t.type == "Issue" and not t.has_tab_entry
             and t.payment_method in ("cash", "mpesa", "credit")
+        )
+        try:
+            served_by_user = t.tab_entry.tab.served_by
+        except Exception:
+            served_by_user = None
+        t.served_by_name = (
+            (served_by_user.get_full_name() or served_by_user.username)
+            if served_by_user else ""
         )
 
     context = {
