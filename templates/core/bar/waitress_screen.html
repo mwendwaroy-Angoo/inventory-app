@@ -711,9 +711,24 @@
   function closeCart() { _cartOpen = false; document.getElementById('cart-drawer').classList.add('collapsed'); }
 
   // ── Place order ────────────────────────────────────────────────────────────
+  // 2026-08-23 bar audit: this was the one checkout-shaped surface with no
+  // server-side double-submit backstop. Disabling the button only stops a
+  // second LIVE tap — it does nothing for the dangerous case, where the
+  // request reaches the server but the response is lost and the waitress
+  // taps again, creating a genuine duplicate order the bar then prepares
+  // twice. The token is therefore generated ONCE per cart attempt and held
+  // across retries, and cleared only on a confirmed success — so a retry is
+  // refused while a legitimately identical second order later still goes
+  // through (core/idempotency.py's own contract).
+  var _orderToken = null;
+
   window.placeOrder = function() {
     if (!_table) { showToast('Chagua meza kwanza!', false); return; }
     if (_cart.length === 0) { showToast('Ongeza bidhaa kwanza!', false); return; }
+    if (!_orderToken) {
+      _orderToken = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID() : (Date.now() + '-' + Math.random());
+    }
 
     var btn = document.getElementById('btn-place');
     btn.disabled = true;
@@ -736,6 +751,7 @@
     fd.append('notes', document.getElementById('cart-notes').value);
     fd.append('items', JSON.stringify(items));
     fd.append('station', _currentStation);
+    fd.append('idempotency_token', _orderToken);
 
     fetch('/bar/orders/place/', { method: 'POST', body: fd })
       .then(function(r) { return r.json(); })
@@ -743,6 +759,7 @@
         btn.disabled = false;
         btn.textContent = 'Tuma Agizo';
         if (d.ok) {
+          _orderToken = null;  // this cart is done — the next order is a new one
           showToast('✓ Agizo limetumwa — ' + d.table_label, true);
           _cart = [];
           renderCart();
@@ -750,7 +767,19 @@
           document.getElementById('cart-notes').value = '';
           loadMyOrders();
         } else {
-          showToast(d.error || 'Imeshindikana', false);
+          // A duplicate verdict means the FIRST attempt actually landed —
+          // treat it as the success it was, rather than telling the waitress
+          // it failed and inviting a third attempt.
+          if (d.duplicate) {
+            _orderToken = null;
+            showToast('✓ Agizo hili tayari lilitumwa.', true);
+            _cart = [];
+            renderCart();
+            closeCart();
+            loadMyOrders();
+          } else {
+            showToast(d.error || 'Imeshindikana', false);
+          }
         }
       })
       .catch(function() {

@@ -42150,3 +42150,152 @@ class PartialPaidTransferAmountTest(TestCase):
         data = _get_customer_debt_data(bosco_cust, self.biz, scope='all')
         # 50 already on Bosco's own tab + the 200 remainder he just took on.
         self.assertEqual(data['outstanding'], 250.0)
+
+
+class BarAuditIdempotencyAndStateTest(TestCase):
+    """2026-08-23 overall bar audit (item 8 of Roy's batch). Five gaps found
+    by enumerating every write endpoint across the bar surface and verifying
+    each candidate by reading rather than trusting the scan."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Bar Audit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ba_owner', password='x')
+        self.owner_profile = UserProfile.objects.create(
+            user=self.owner, business=self.biz, role='owner',
+        )
+        self.waitress = User.objects.create_user(username='ba_waitress', password='x')
+        UserProfile.objects.create(
+            user=self.waitress, business=self.biz, role='waitress',
+            can_access_bar=True,
+        )
+        Shift.objects.create(business=self.biz, staff=self.waitress, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='BA-01', unit='Pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('150'),
+        )
+
+    # ── Finding 1: place_table_order had no double-submit backstop ────────
+    def test_duplicate_table_order_is_refused(self):
+        """A retry after a lost response used to create a SECOND identical
+        order, which the bar then prepared twice — and each one wrote real
+        Issue transactions once served."""
+        import uuid as _uuid
+        from core.models import TableOrder
+        self.client.force_login(self.waitress)
+        token = str(_uuid.uuid4())
+        payload = {
+            'table_label': 'Meza 4',
+            'items': json.dumps([{
+                'item_id': self.item.id, 'preset_id': '', 'preset_label': 'Tusker',
+                'item_name': 'Tusker', 'unit_price': '250', 'quantity': 1,
+            }]),
+            'station': 'bar',
+            'idempotency_token': token,
+        }
+        first = self.client.post('/bar/orders/place/', payload)
+        self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.json()['ok'])
+
+        second = self.client.post('/bar/orders/place/', payload)
+        self.assertEqual(second.status_code, 409)
+        self.assertTrue(second.json().get('duplicate'))
+        self.assertEqual(TableOrder.objects.filter(business=self.biz).count(), 1)
+
+    def test_two_genuinely_different_orders_both_go_through(self):
+        """The guard must never suppress a real repeat order."""
+        import uuid as _uuid
+        from core.models import TableOrder
+        self.client.force_login(self.waitress)
+        base = {
+            'table_label': 'Meza 4',
+            'items': json.dumps([{
+                'item_id': self.item.id, 'preset_id': '', 'preset_label': 'Tusker',
+                'item_name': 'Tusker', 'unit_price': '250', 'quantity': 1,
+            }]),
+            'station': 'bar',
+        }
+        for _ in range(2):
+            resp = self.client.post(
+                '/bar/orders/place/', dict(base, idempotency_token=str(_uuid.uuid4())))
+            self.assertTrue(resp.json()['ok'])
+        self.assertEqual(TableOrder.objects.filter(business=self.biz).count(), 2)
+
+    # ── Finding 2: confirm_till_count had no guard ────────────────────────
+    def test_duplicate_till_count_is_refused(self):
+        import uuid as _uuid
+        from core.models import TillCount
+        self.client.force_login(self.owner)
+        token = str(_uuid.uuid4())
+        body = {'station': 'bar', 'counted_amount': '5000',
+                'note': '', 'idempotency_token': token}
+        self.assertTrue(self.client.post('/till/confirm/', body).json()['ok'])
+        second = self.client.post('/till/confirm/', body)
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(TillCount.objects.filter(business=self.biz).count(), 1)
+
+    # ── Finding 3: voiding a draw left pending owner-transfers dangling ───
+    def test_voiding_an_owner_draw_cancels_its_pending_transfer(self):
+        from core.models import OwnerConsumptionTransferRequest as OCTR
+        import uuid as _uuid
+        draw = Transaction.objects.create(
+            business=self.biz, item=self.item, type='OwnerConsumption',
+            qty=Decimal('-1'), sale_amount=Decimal('250'),
+            recorded_by=self.owner, recipient='Mmiliki', payment_method='',
+        )
+        req = OCTR.objects.create(
+            business=self.biz, source_txn=draw, direction=OCTR.DIRECTION_FROM_OWNER,
+            dest_customer_name='Bosco', status='PENDING', requested_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/owner-consumption/{draw.id}/void/', {
+            'reason': 'Kosa', 'idempotency_token': str(_uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 200)
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'CANCELLED')
+
+    # ── Finding 4: a voided charge could be resurrected as an owner draw ──
+    def test_accepting_a_voided_transaction_to_owner_is_refused(self):
+        from core.models import OwnerConsumptionTransferRequest as OCTR
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'),
+            payment_method='credit', recipient='Roy',
+        )
+        req = OCTR.objects.create(
+            business=self.biz, source_txn=txn, direction=OCTR.DIRECTION_TO_OWNER,
+            status='PENDING', requested_by=self.owner,
+        )
+        # The business writes the debt off before the owner answers.
+        txn.payment_method = 'void'
+        txn.save(update_fields=['payment_method'])
+
+        with self.assertRaises(ValueError):
+            req.accept()
+        txn.refresh_from_db()
+        self.assertEqual(txn.type, 'Issue', 'a voided charge must not become an owner draw')
+
+    # ── Finding 5: a resolved single request could be re-resolved ─────────
+    def test_a_resolved_owner_transfer_cannot_be_resolved_again(self):
+        from core.models import OwnerConsumptionTransferRequest as OCTR
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'),
+            payment_method='credit', recipient='Roy',
+        )
+        req = OCTR.objects.create(
+            business=self.biz, source_txn=txn, direction=OCTR.DIRECTION_TO_OWNER,
+            status='PENDING', requested_by=self.owner,
+        )
+        req.accept()
+        self.assertEqual(req.status, 'ACCEPTED')
+        # Rejecting AFTER acceptance used to flip status with no reversal,
+        # leaving the transaction an owner draw while the request read REJECTED.
+        with self.assertRaises(ValueError):
+            req.reject()
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'ACCEPTED')
+        txn.refresh_from_db()
+        self.assertEqual(txn.type, 'OwnerConsumption')

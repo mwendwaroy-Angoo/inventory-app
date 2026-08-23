@@ -199,6 +199,19 @@ def place_table_order(request):
     # tabs (zero entries) sitting in the drawer for every cancelled/still-
     # pending order. The tab only comes into existence the moment there's
     # a real sale to put on it.
+    # 2026-08-23 bar audit: this was the ONE checkout-shaped surface in the
+    # app with no double-submit backstop. A double-tap on the waitress screen
+    # created two identical orders, the bar prepared both, and each one wrote
+    # real Issue transactions (stock AND revenue) once marked SERVED. Same
+    # guard every other checkout surface here already carries.
+    from core.idempotency import claim_checkout_token
+    _idem = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(up.business_id, _idem):
+        return JsonResponse(
+            {'ok': False, 'error': 'Agizo hili tayari limetumwa.', 'duplicate': True},
+            status=409,
+        )
+
     order = TableOrder.objects.create(
         business=up.business,
         table_label=table_label,

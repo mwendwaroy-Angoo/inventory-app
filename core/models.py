@@ -6150,16 +6150,25 @@ class OwnerConsumptionTransferRequest(models.Model):
         return f"OwnerTransfer #{self.id}: {self.direction} (KES {self.source_txn.sale_amount or 0}, {self.status})"
 
     def _siblings(self):
+        # 2026-08-23 bar audit: the non-batch branch had NO status filter,
+        # unlike the batch branch right above it — so a single, already
+        # RESOLVED request could be accepted again, or (worse) rejected
+        # AFTER acceptance, flipping status to REJECTED with none of the
+        # applied mutation reversed. Not reachable through the current UI
+        # (respond_owner_transfer filters status='PENDING' when it loads the
+        # row) but this is the shared primitive every caller goes through.
         if self.batch_id:
             return OwnerConsumptionTransferRequest.objects.filter(
                 batch_id=self.batch_id, status='PENDING',
             )
-        return OwnerConsumptionTransferRequest.objects.filter(id=self.id)
+        return OwnerConsumptionTransferRequest.objects.filter(id=self.id, status='PENDING')
 
     def accept(self, resolved_dest_tab=None):
         """Resolve every PENDING sibling sharing batch_id (a whole-bill
         transfer resolves as ONE decision), in one atomic block."""
         from django.db import transaction as _txn
+        if self.status != 'PENDING':
+            raise ValueError('Ombi hili tayari limeshughulikiwa.')
         with _txn.atomic():
             siblings = list(self._siblings().select_for_update())
             for req in siblings:
@@ -6176,6 +6185,8 @@ class OwnerConsumptionTransferRequest(models.Model):
         """No reversal needed either direction — nothing moves until
         accepted, matching the split-transfer feature's own contract."""
         from django.db import transaction as _txn
+        if self.status != 'PENDING':
+            raise ValueError('Ombi hili tayari limeshughulikiwa.')
         with _txn.atomic():
             siblings = list(self._siblings().select_for_update())
             for req in siblings:
@@ -6196,6 +6207,14 @@ class OwnerConsumptionTransferRequest(models.Model):
 
     def _accept_to_owner(self):
         txn = Transaction.objects.select_for_update().get(id=self.source_txn_id)
+        # 2026-08-23 bar audit: a debt transaction can be written off or
+        # voided while a "this is really the owner's" request sits pending
+        # against it. Accepting then flipped a charge the business had
+        # already cancelled into a live owner draw — resurrecting money that
+        # was deliberately written away. Refuse instead; the request is left
+        # for the owner to reject or for the void path to cancel.
+        if txn.payment_method == 'void':
+            raise ValueError('Muamala huu ulishafutwa — hauwezi kuhamishiwa kwa mmiliki.')
         try:
             tab_entry = txn.tab_entry
         except Exception:

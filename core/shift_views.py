@@ -1089,6 +1089,18 @@ def confirm_till_count(request):
     variance = (float(counted) - expected_amount) if expected_amount is not None else None
 
     from .models import TillCount
+    # 2026-08-23 bar audit: no double-submit guard — a retry created a second
+    # TillCount and notified every on-shift staffer twice. The anchor amount is
+    # identical so the running till figure itself was never wrong, but the
+    # audit trail showed two counts for one physical count.
+    from core.idempotency import claim_checkout_token
+    _idem = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(up.business_id, _idem):
+        return JsonResponse(
+            {'ok': False, 'error': 'Hesabu hii tayari imehifadhiwa.', 'duplicate': True},
+            status=409,
+        )
+
     count = TillCount.objects.create(
         business=up.business, station=station, counted_amount=counted,
         expected_amount=expected_amount, variance=variance,

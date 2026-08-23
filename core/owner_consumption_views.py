@@ -293,6 +293,18 @@ def void_owner_consumption(request, txn_id):
     reason = (request.POST.get('reason') or 'Hitilafu — sababu haikuelezwa').strip()[:200]
     old_qty = txn.qty
     txn.qty = Decimal('0')
+    # 2026-08-23 bar audit: a pending "is this the owner's?" request against
+    # this draw is meaningless once the draw itself is voided away — left
+    # alone it keeps rendering as a live accept/reject decision for a charge
+    # that no longer exists. Same phantom-card class already fixed for tab
+    # transfers (remove_tab_entry / void_tab, 2026-08-23).
+    try:
+        from .models import OwnerConsumptionTransferRequest as _OCTRv
+        for _r in _OCTRv.objects.filter(source_txn=txn, status='PENDING'):
+            _r.cancel()
+    except Exception:
+        logger.exception('Failed to cancel pending owner transfers on void of txn %s', txn.id)
+
     txn.invoice_no = '[OC-VOID]'
     txn.recipient = f"{txn.recipient} — FUTWA: {reason}"[:200]
     txn.save(update_fields=['qty', 'invoice_no', 'recipient'])

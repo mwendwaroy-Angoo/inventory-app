@@ -1344,6 +1344,10 @@ function confirmTillCount(station, label) {
   if (note === null) note = '';
   var body = new URLSearchParams({
     station: station, counted_amount: val, note: note,
+    // Fresh per confirmation, so a genuine second count is never suppressed
+    // while a retry of THIS one is (core/idempotency.py contract).
+    idempotency_token: (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID() : String(Date.now()) + Math.random(),
     csrfmiddlewaretoken: '{{ csrf_token }}',
   });
   fetch('/till/confirm/', { method: 'POST', body: body })
