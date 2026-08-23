@@ -8071,3 +8071,158 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   DisregardedTest`/`SegmentedShiftReconcileTest` suites re-run and
   confirmed passing unmodified. No migrations. 2275 tests pass (core +
   accounts).
+- Eight-item System Updates batch (2026-08-23/24), from a detailed Roy-approved
+  spec covering customer profiling, debt reminders, wall-QR search, owner
+  consumption limits, an app-wide customer search engine, and a full bar-system
+  audit ("Proceed as you see fit, I approve"). **(1) Customer Profiling**: new
+  `core/customer_profile.py` — `customer_transaction_history()` (date/time/item/
+  served-by/recorded-by, reusing the `tab_entry__tab__served_by` vs
+  `recorded_by` distinction), `customer_payment_history()`, `customer_summary()`,
+  `Customer.ledger_token` (migration 0173) + `ensure_ledger_token()` for a
+  public, token-authenticated per-customer ledger page. New
+  `core/customer_profile_views.py`: `customer_journey` (staff-facing, any
+  station — Roy's explicit privacy/scope call: "customers have been asking
+  for one simple thing, 'can you search for me in your system?'"),
+  `customer_lookup_api` (search-as-you-type), `customer_ledger_public` (the
+  customer's own token page). **(2) Debt reminder enforcement**: new
+  `DebtReminderLog` (migration 0173) + `fire_debt_reminder()`/`require_
+  reminder_before_flagging()` in `debt_views.py` — a customer must be sent a
+  reminder before being flagged a defaulter or written off; wired into
+  `void_tab()` and `_execute_write_off_approval()` BEFORE the erasing logic
+  runs (a bug in my own first draft — placing the check AFTER meant the
+  debt was already gone by the time `_get_customer_debt_data()` computed
+  what to remind about, so it silently never fired; caught by my own
+  end-to-end regression tests, not by Roy). **(3) Wall-QR search
+  enrichment**: `find_tab_search()` now returns date/time/amount (via the
+  real debt-tracker aggregate, not the stale `unpaid_total()`), a `kind`
+  (active tab vs debt) and cross-links between the two; `find_tab.html`
+  splits results into "💳 Deni" and "🍺 Bili zinazoendelea" sections.
+  **(4) Owner consumption accountability**: new `core/owner_limits.py` —
+  per-owner amount + time-window limit (`Business`/`UserProfile` fields via
+  accounts migration 0065), hard-blocks `record_owner_consumption()` once
+  exceeded, emails the owner on limit-reached and on any transfer proposed
+  into their own name (name-recognition against `Customer.is_owner_alias`
+  reused from the earlier Mmiliki Alichukua work). **(5)/(6) App-wide
+  customer search** — the same `customer_journey`/`customer_lookup_api`
+  from item 1, deliberately open to ALL staff roles, wired into the bar
+  interface and dashboard alike, per Roy's explicit privacy decision.
+  **(7) Tab transfer audit**: fixed a live bug — a transfer stuck PENDING
+  forever when its destination tab had ALREADY been separately settled
+  before anyone responded. `tabs_list()` widened to surface a settled tab
+  with a still-pending INCOMING transfer (`already_settled` flag);
+  `_cancel_pending_transfers_for_tab()` gained an `include_incoming` param,
+  wired into `void_tab()`/`remove_tab_entry()` so a transfer can no longer
+  orphan itself against a tab that's gone. **(8) Full bar-system audit**
+  (money-path idempotency / state-transition completeness / access-control
+  scoping, the same three-theme structure this app's systemic audits always
+  use): `place_table_order()` gained `claim_checkout_token` (the highest-
+  severity finding — a genuine duplicate-order/revenue risk with none
+  before); `confirm_till_count()` likewise; `OwnerConsumptionTransferRequest.
+  _siblings()`'s non-batch branch gained the same `status='PENDING'` guard
+  the batch branch already had (a resolved request could otherwise be
+  re-accepted or rejected-after-acceptance with nothing reversed);
+  `_accept_to_owner()` now refuses a voided transaction; `void_owner_
+  consumption()` now cancels any pending `OwnerConsumptionTransferRequest`
+  referencing the voided draw, mirroring `void_tab()`'s own inverse-action
+  discipline. `waitress_screen.html`'s `placeOrder()` rewritten to hold ONE
+  idempotency token across retries (was minting a fresh one per attempt,
+  defeating the whole point of the guard) with duplicate-response handling
+  treated as success, not failure. 55+ new tests across
+  `CustomerProfilingTest`/`DebtReminderEnforcementTest`/
+  `WallQrSearchEnrichmentTest`/`OwnerConsumptionLimitTest`/
+  `BarAuditIdempotencyAndStateTest`. Migrations: core 0173 (`Customer.
+  ledger_token`, `DebtReminderLog`), core 0174 (`Transaction.consumed_by`),
+  accounts 0065 (owner consumption limit fields).
+- Live fixes, same session (2026-08-24): two bugs Roy caught via a live
+  screenshot, both fixed same-day. **Template comment leak — critical,
+  customer-facing**: Django's `{# ... #}` comment syntax is single-line
+  only; a multi-line one is NOT parsed as a comment and renders as literal
+  text — exactly what Roy saw on a public receipt page. A project-wide scan
+  found 7 instances (6 written this session, 1 pre-existing since
+  2026-08-21 in `kitchen_viability.html`, leaking unnoticed the whole
+  time), all converted to `{% comment %}...{% endcomment %}`. New
+  `TemplateCommentLeakTest` — a permanent regression scan of every `.html`
+  under `templates/` for this exact pattern, so this class of bug can never
+  silently recur. **Partial-paid transfer quoting the wrong amount**: "debt
+  tab transfer is not transferring partial debt payment of an item, it is
+  transferring the whole item price when the customer whom the debt is
+  being transferred from had paid partially." Root cause:
+  `BarTabEntry.split_and_transfer_locked()`'s full-item (`paid_amount==0`)
+  branch and `TabTransferRequest.propose_whole_tab_locked()` both used
+  `entry.amount` (the ORIGINAL price) with zero regard for `entry.
+  amount_paid` (what had since been collected via the debt tracker) when
+  stamping the proposed transfer's own `amount` field. New `BarTabEntry.
+  remaining_amount()` — `max(0, amount - amount_paid)` — is now the one
+  definition used by both paths, so a partial payment can never be quoted
+  away in the transfer flow. 6 new tests
+  (`PartialPaidTransferAmountTest`).
+- Waitress History enhancement — recorded-by, then all-staff + served-by
+  (2026-08-24). Roy: "I need you to enhance waitress capabilities... start
+  with improving the history section, by showing per transaction who
+  recorded it so that the waitress is not left hanging between counter
+  staffs." `transaction_history()` gained `select_related('recorded_by',
+  'tab_entry__tab__served_by')` and a `served_by_name` per row (`served_by`
+  = whose tab this was — often a bartender — `recorded_by` = whoever
+  actually keyed the sale in; the two routinely differ on a busy counter,
+  same distinction `customer_profile.py`'s journey already makes).
+  `transaction_history.html` gained "Served by"/"Recorded by" columns. I
+  then offered 4 further recommendations (table status chips, a
+  ready-to-serve push notification, her own daily tally, split/merge-order
+  flagging) — Roy's own next reply clarified his actual ask was narrower:
+  "all of them if they are not there already, I just need all staff to
+  access History and the transactional history should show who served and
+  who recorded" — i.e. widen ACCESS to every staff role, not build the 4
+  suggestions (deferred, unscoped, not started). Added `transaction_
+  history` navbar links for `is_waitress` and `is_kitchen_staff` (both
+  mobile/desktop blocks in `base.html` — every other role already had it).
+  9 new tests (`WaitressTransactionHistoryRecordedByTest`) including a
+  `CaptureQueriesContext` regression lock proving the new columns cost
+  nothing extra per row (select_related, not N+1).
+- Backfill for the partial-paid-transfer fix — historical data, not just
+  code (2026-08-24, same-day follow-up). Roy, with a live receipt
+  screenshot (#1888, Monsoon Inn): "I need a backfiil command for an
+  already transfered debt to debt that was partially paid before, that was
+  done before the change we made... 30bob was already paid partially in
+  the debt tracker profile for that customer I just transferred the
+  remaining 50 to Marley's Debt but it showed 80 not 50." Traced
+  end-to-end before writing anything: `_do_settle_debt_payment()`'s FIFO
+  reconciliation (`_reconcile_tab_entries_for_debt_payment()`) already
+  correctly persists a partial cover into `entry.amount_paid` via `F()`,
+  and `_get_customer_debt_data()`'s tab-linked walk already recomputes
+  `remaining = txn.revenue() - entry.amount_paid` LIVE at read time — so
+  the actual money owed was never wrong, and `TabTransferRequest.accept()`
+  is a one-field reassignment (`entry.tab = dest_tab`) that never touches
+  `amount`/`amount_paid` either. The bug is entirely in the STORED
+  `TabTransferRequest.amount` snapshot field itself: on the pre-2026-08-23
+  code, both `split_and_transfer_locked()`'s full-item branch and
+  `propose_whole_tab_locked()` stamped it from `entry.amount` (unaware of
+  the fix from the same day's earlier entry above) — read directly by the
+  SMS sent when a transfer is proposed (already sent, unfixable) and by
+  the live pending-transfer banner on the destination customer's own
+  receipt/tab-live page and every tabs drawer (still wrong for as long as
+  a row stays PENDING). New `backfill_tab_transfer_request_amounts`
+  management command (`--dry-run` first, matching this app's established
+  convention) — every `TabTransferRequest` with `paid_amount==0` (the
+  full-item-transfer fingerprint; a REAL partial split always had a
+  genuine non-zero `paid_amount` and was never affected, since its own
+  remainder was already the true remainder at creation time) whose stored
+  `amount` no longer matches `entry.remaining_amount()` computed now gets
+  corrected to that live figure — safe by construction, since `entry.
+  amount` never changes on this path, so a mismatch can only mean
+  `amount_paid` grew after the field was stamped. Deliberately corrects
+  PENDING and REJECTED/CANCELLED rows too, not just ACCEPTED ones — a
+  still-pending stale row is exactly where the live banner still matters
+  today. `diagnose_customer_debt` (read-only, built 2026-08-15) extended
+  with a new "Tab transfer requests involving this customer" section
+  (both as source and destination) flagging any stale row, plus
+  `entry.amount_paid`/`remaining_amount()` on every tab-linked transaction
+  line — so a future report like this one can be traced to a specific
+  transfer row directly instead of reasoned about blind. 7 new tests
+  (`BackfillTabTransferRequestAmountsTest`, `DiagnoseCustomerDebt
+  TransferHistoryTest`) — including a direct end-to-end reproduction of
+  Roy's exact scenario (built via constructing the historical bad row
+  shape directly, since the current, fixed code can no longer produce one
+  on its own) proving the real debt figure was correct throughout and only
+  the display field moves. No new migrations. **Action for Roy**: run
+  `python manage.py backfill_tab_transfer_request_amounts --dry-run` first
+  on Render's Shell to preview, then without the flag to apply.

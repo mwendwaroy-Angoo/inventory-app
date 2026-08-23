@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand
 
 from accounts.models import Business
-from core.models import BarTab, Customer, CustomerDebtPayment, Transaction
+from core.models import BarTab, Customer, CustomerDebtPayment, TabTransferRequest, Transaction
 
 
 class Command(BaseCommand):
@@ -119,7 +119,11 @@ class Command(BaseCommand):
                 pass
             tab_state = ''
             if tab_entry is not None:
-                tab_state = f" | tab#{tab_entry.tab_id} status={tab_entry.tab.status} entry.is_paid={tab_entry.is_paid}"
+                tab_state = (
+                    f" | tab#{tab_entry.tab_id} status={tab_entry.tab.status} "
+                    f"entry.is_paid={tab_entry.is_paid} entry.amount={tab_entry.amount} "
+                    f"amount_paid={tab_entry.amount_paid} remaining={tab_entry.remaining_amount()}"
+                )
             self.stdout.write(
                 f"  txn#{t.id} {t.date} [{station}] {t.item.description if t.item else '?'} "
                 f"KES {t.revenue()} payment_method={t.payment_method!r} was_credit={t.was_credit}{tab_state}"
@@ -137,6 +141,37 @@ class Command(BaseCommand):
                 f"{p.recorded_by.username if p.recorded_by_id else '-'} notes={p.notes!r}"
             )
         self.stdout.write(f"  TOTAL PAID (raw sum): KES {total_paid:.2f}")
+
+        # 2026-08-24 live report: a full-item tab-to-debt transfer proposed
+        # under this customer's own tab (either as the one giving something
+        # away, or the one receiving it) can carry a STALE stored `amount`
+        # (see backfill_tab_transfer_request_amounts) — surfaced here so a
+        # discrepancy Roy reports can be traced to a specific transfer row
+        # instead of guessed at.
+        transfers_out = TabTransferRequest.objects.filter(
+            source_tab__business=business, source_tab__customer=customer,
+        ).select_related('entry', 'dest_tab').order_by('-requested_at')
+        transfers_in = TabTransferRequest.objects.filter(
+            dest_tab__business=business, dest_tab__customer=customer,
+        ).select_related('entry', 'source_tab').order_by('-requested_at')
+        if transfers_out.exists() or transfers_in.exists():
+            self.stdout.write(f"\n-- Tab transfer requests involving this customer --")
+            for tfr in transfers_out:
+                correct = tfr.entry.remaining_amount()
+                flag = '  ⚠️ STALE' if tfr.amount != correct else ''
+                self.stdout.write(
+                    f"  OUT #{tfr.id} ({tfr.status}) -> {tfr.dest_tab.customer_name}: "
+                    f"{tfr.entry.description} stored=KES {tfr.amount} "
+                    f"now-correct=KES {correct}{flag}"
+                )
+            for tfr in transfers_in:
+                correct = tfr.entry.remaining_amount()
+                flag = '  ⚠️ STALE' if tfr.amount != correct else ''
+                self.stdout.write(
+                    f"  IN  #{tfr.id} ({tfr.status}) <- {tfr.source_tab.customer_name}: "
+                    f"{tfr.entry.description} stored=KES {tfr.amount} "
+                    f"now-correct=KES {correct}{flag}"
+                )
 
         data = _get_customer_debt_data(customer, business)
         self.stdout.write(self.style.WARNING(

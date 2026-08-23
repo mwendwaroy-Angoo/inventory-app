@@ -42429,3 +42429,261 @@ class WaitressTransactionHistoryRecordedByTest(TestCase):
             'query count must not scale with the number of transactions — '
             'recorded_by must be select_related, not fetched per row',
         )
+
+
+class BackfillTabTransferRequestAmountsTest(TestCase):
+    """2026-08-24 live report (Roy): a full-item transfer of a partly-paid
+    tab entry (his real case — an 80 KES cup, 30 already paid via the debt
+    tracker, the remaining 50 transferred to Marley's debt) quoted the WHOLE
+    original 80 instead of the true remaining 50 — this specific transfer
+    ran through the OLD, pre-2026-08-23 code (BarTabEntry.remaining_amount()
+    didn't exist yet), so the stored TabTransferRequest.amount is stuck at
+    the stale full price forever unless corrected. Reproduces the exact
+    historical row shape directly (constructing the TabTransferRequest with
+    the old buggy amount, then calling the real, unmodified .accept()) since
+    the CURRENT code path can no longer produce a bad row on its own."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Transfer Backfill Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='tbf_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kikombe',
+            material_no='TBF-01', unit='Pcs', selling_price=Decimal('80'),
+            cost_price=Decimal('40'),
+        )
+        self.roy = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        self.marley = Customer.objects.create(business=self.biz, name='Marley', credit_approved=True)
+
+        self.source_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.roy,
+            status='SETTLED', source='bar',
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Roy',
+        )
+        self.entry = BarTabEntry.objects.create(
+            tab=self.source_tab, transaction=self.txn, description='Kikombe',
+            amount=Decimal('80'), is_paid=False,
+        )
+        # Marley's destination tab must already be a debt-converted (SETTLED,
+        # still-owing) tab, not a plain OPEN one — accept()'s own recipient/
+        # payment_method sync onto the moved Transaction only fires for a
+        # destination already carrying debt (dest_was_debt); an OPEN
+        # destination is a different, unrelated scenario (the item just
+        # joins a live running tab) that never enters the debt ledger at
+        # all until it's later converted in its own right. This is exactly
+        # Roy's real case — "transferred to Marley's Debt".
+        self.dest_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Marley', customer=self.marley,
+            status='SETTLED', source='bar',
+        )
+        marley_prior_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('20'), payment_method='credit', recipient='Marley',
+        )
+        BarTabEntry.objects.create(
+            tab=self.dest_tab, transaction=marley_prior_txn, description='Kikombe',
+            amount=Decimal('20'), is_paid=False,
+        )
+
+    def _simulate_pre_fix_transfer(self, status='ACCEPTED'):
+        """Builds the exact stored row shape the OLD code produced: a
+        TabTransferRequest whose `amount` is the entry's full original
+        price, with zero regard for whatever had already been paid off —
+        then, for an ACCEPTED row, calls the real (unmodified) .accept() to
+        actually move the entry, exactly as production did."""
+        tfr = TabTransferRequest.objects.create(
+            business=self.biz, entry=self.entry,
+            source_tab=self.source_tab, dest_tab=self.dest_tab,
+            amount=self.entry.amount, paid_amount=Decimal('0'),
+            note='Kikombe',
+        )
+        if status == 'ACCEPTED':
+            tfr.accept()
+        elif status == 'REJECTED':
+            tfr.reject()
+        return tfr
+
+    def test_reproduces_roys_exact_scenario_stale_amount_after_partial_payment_then_transfer(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from core.debt_views import _do_settle_debt_payment
+        # Roy pays 30 of the 80 via the debt tracker BEFORE the transfer.
+        _do_settle_debt_payment(self.roy, self.biz, Decimal('30'), 'cash', 'bar')
+        self.entry.refresh_from_db()
+        self.assertEqual(self.entry.amount_paid, Decimal('30'))
+
+        tfr = self._simulate_pre_fix_transfer(status='ACCEPTED')
+        tfr.refresh_from_db()
+        self.assertEqual(
+            tfr.amount, Decimal('80'),
+            'the pre-fix row must be stuck quoting the full price, not the remaining 50 — '
+            'reproducing exactly what Roy reported seeing',
+        )
+
+        # The real money owed was NEVER wrong — _get_customer_debt_data reads
+        # entry.amount_paid live, completely independent of tfr.amount.
+        # Marley's own prior 20 KES debt (set up in setUp) plus the genuine
+        # 50 KES remainder from the transferred cup = 70 total.
+        from core.debt_views import _get_customer_debt_data
+        data = _get_customer_debt_data(self.marley, self.biz)
+        self.assertEqual(
+            data['outstanding'], 70.0,
+            "Marley's real outstanding balance must already be correct (20 prior + "
+            "50 transferred = 70), proving this bug is a stale DISPLAY field, not a money bug",
+        )
+
+        out = StringIO()
+        call_command('backfill_tab_transfer_request_amounts', dry_run=True, stdout=out)
+        output = out.getvalue()
+        self.assertIn('KES 80', output)
+        self.assertIn('KES 50', output)
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.amount, Decimal('80'), 'dry-run must not save anything')
+
+        out = StringIO()
+        call_command('backfill_tab_transfer_request_amounts', stdout=out)
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.amount, Decimal('50'), 'the real run must correct the stored amount to 50')
+
+        # Money owed is unaffected either way — the backfill only ever
+        # touches the display/audit field, never the entry or transaction.
+        data_after = _get_customer_debt_data(self.marley, self.biz)
+        self.assertEqual(data_after['outstanding'], 70.0)
+
+    def test_never_touches_a_real_partial_split_transfer(self):
+        from io import StringIO
+        from django.core.management import call_command
+        """paid_amount>0 rows (source_kept_paid split) already carry the
+        true remainder as their own entry.amount at creation time — must
+        never be touched by this backfill."""
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.roy, self.biz, Decimal('30'), 'cash', 'bar')
+        self.entry.refresh_from_db()
+
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=self.entry.id, business=self.biz,
+            paid_amount=Decimal('20'), paid_method='cash',
+            dest_tab_id=self.dest_tab.id, staff_user=self.owner,
+        )
+        original_amount = tfr.amount
+
+        out = StringIO()
+        call_command('backfill_tab_transfer_request_amounts', stdout=out)
+        tfr.refresh_from_db()
+        self.assertEqual(
+            tfr.amount, original_amount,
+            'a real partial-split transfer (paid_amount>0) must never be touched',
+        )
+        self.assertNotIn(f'#{tfr.id}', out.getvalue())
+
+    def test_a_row_already_matching_is_left_alone(self):
+        from io import StringIO
+        from django.core.management import call_command
+        tfr = self._simulate_pre_fix_transfer(status='ACCEPTED')
+        # No partial payment ever happened — entry.amount_paid stayed 0, so
+        # the stored 80 already equals remaining_amount(). Nothing to fix.
+        out = StringIO()
+        call_command('backfill_tab_transfer_request_amounts', stdout=out)
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.amount, Decimal('80'))
+        self.assertNotIn(f'#{tfr.id}', out.getvalue())
+
+    def test_a_still_pending_stale_row_is_also_corrected(self):
+        from io import StringIO
+        from django.core.management import call_command
+        """A transfer that's still awaiting response is exactly where this
+        matters most in real time — the live pending banner on the
+        destination customer's receipt/tab-live page reads this field
+        directly, so a still-PENDING stale row must be fixed too."""
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.roy, self.biz, Decimal('30'), 'cash', 'bar')
+        tfr = self._simulate_pre_fix_transfer(status=None)  # never accepted/rejected — stays PENDING
+        self.assertEqual(tfr.status, 'PENDING')
+
+        call_command('backfill_tab_transfer_request_amounts', stdout=StringIO())
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.amount, Decimal('50'))
+        self.assertEqual(tfr.status, 'PENDING', 'the backfill must never touch status, only amount')
+
+    def test_a_rejected_stale_row_is_still_corrected_for_data_hygiene(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.roy, self.biz, Decimal('30'), 'cash', 'bar')
+        tfr = self._simulate_pre_fix_transfer(status='REJECTED')
+        self.assertEqual(tfr.status, 'REJECTED')
+
+        call_command('backfill_tab_transfer_request_amounts', stdout=StringIO())
+        tfr.refresh_from_db()
+        self.assertEqual(tfr.amount, Decimal('50'))
+
+
+class DiagnoseCustomerDebtTransferHistoryTest(TestCase):
+    """2026-08-24: diagnose_customer_debt gained a TabTransferRequest section
+    so a discrepancy like Roy's (a full-item transfer quoting the wrong
+    amount) can be traced to a specific row instead of guessed at."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Diag Transfer Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='dtb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kikombe',
+            material_no='DTB-01', unit='Pcs', selling_price=Decimal('80'),
+            cost_price=Decimal('40'),
+        )
+        self.roy = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        self.marley = Customer.objects.create(business=self.biz, name='Marley', credit_approved=True)
+        self.source_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.roy,
+            status='SETTLED', source='bar',
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Roy',
+        )
+        self.entry = BarTabEntry.objects.create(
+            tab=self.source_tab, transaction=self.txn, description='Kikombe',
+            amount=Decimal('80'), is_paid=False,
+        )
+        self.dest_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Marley', customer=self.marley,
+            status='OPEN', source='bar',
+        )
+
+    def test_flags_a_stale_transfer_for_the_destination_customer(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.roy, self.biz, Decimal('30'), 'cash', 'bar')
+        tfr = TabTransferRequest.objects.create(
+            business=self.biz, entry=self.entry,
+            source_tab=self.source_tab, dest_tab=self.dest_tab,
+            amount=self.entry.amount, paid_amount=Decimal('0'), note='Kikombe',
+        )
+        tfr.accept()
+
+        out = StringIO()
+        call_command('diagnose_customer_debt', business='Diag Transfer', customer='Marley', stdout=out)
+        output = out.getvalue()
+        self.assertIn('STALE', output)
+        self.assertIn('stored=KES 80', output)
+        self.assertIn('now-correct=KES 50', output)
+
+    def test_a_clean_transfer_is_not_flagged(self):
+        from io import StringIO
+        from django.core.management import call_command
+        tfr = TabTransferRequest.objects.create(
+            business=self.biz, entry=self.entry,
+            source_tab=self.source_tab, dest_tab=self.dest_tab,
+            amount=self.entry.remaining_amount(), paid_amount=Decimal('0'), note='Kikombe',
+        )
+        tfr.accept()
+        out = StringIO()
+        call_command('diagnose_customer_debt', business='Diag Transfer', customer='Marley', stdout=out)
+        self.assertNotIn('STALE', out.getvalue())
