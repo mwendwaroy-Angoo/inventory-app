@@ -41662,3 +41662,152 @@ class DebtReminderEnforcementTest(TestCase):
         self.assertIsNotNone(log, 'void must auto-send a reminder before flagging')
         self.assertEqual(log.trigger, 'auto_flag')
         self.assertEqual(float(log.outstanding_at_send), 250.0)
+
+
+class WallQrSearchEnrichmentTest(TestCase):
+    """2026-08-23 live request (Roy), item 3: the wall-QR name search showed
+    only a name and a bare time ("ilifunguliwa 7:25pm"), so a customer with
+    several receipts under their name had to open them at random to find the
+    right one. Results now carry the date and the amount, and are split into
+    two visually distinct sections (still-running bills vs debt). Plus the
+    cross-link: an active tab's receipt points at the customer's debt rather
+    than the search showing both as separate confusing rows."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WallQR Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='wq_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='wq_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='WQ-01', unit='Pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('150'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Roy', credit_approved=True,
+        )
+
+    def _tab(self, status='OPEN', customer=None):
+        return BarTab.create_with_credentials(
+            business=self.biz, customer_name='Roy', status=status,
+            source='bar', store=self.store, customer=customer,
+        )
+
+    def _entry(self, tab, amount, is_paid=False, payment_method='credit'):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount,
+            payment_method=payment_method, recipient='Roy',
+        )
+        return BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Tusker',
+            amount=amount, is_paid=is_paid,
+        )
+
+    def test_results_carry_date_and_amount(self):
+        tab = self._tab()
+        self._entry(tab, Decimal('250'))
+        Receipt.issue(
+            business=self.biz, lines=[{'subtotal': 250}],
+            customer_name='Roy', payment_method='tab',
+            meta={'tab_id': tab.id},
+        )
+        resp = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Roy')
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.json()['tabs']
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertIn('opened_date', r)
+        self.assertTrue(r['opened_date'])
+        self.assertEqual(r['amount'], 250.0)
+        self.assertEqual(r['kind'], 'active')
+
+    def test_debt_and_active_tabs_are_labelled_separately(self):
+        active = self._tab()
+        self._entry(active, Decimal('100'))
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 100}],
+                      customer_name='Roy', payment_method='tab',
+                      meta={'tab_id': active.id})
+
+        debt = self._tab(status='SETTLED', customer=self.customer)
+        self._entry(debt, Decimal('900'))
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 900}],
+                      customer_name='Roy', payment_method='credit',
+                      meta={'tab_id': debt.id})
+
+        rows = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Roy').json()['tabs']
+        kinds = {r['kind'] for r in rows}
+        self.assertEqual(kinds, {'active', 'debt'})
+        debt_row = next(r for r in rows if r['kind'] == 'debt')
+        self.assertEqual(debt_row['amount'], 900.0)
+
+    def test_debt_amount_reflects_a_partial_payment_not_the_stale_entry_flag(self):
+        """BarTabEntry.is_paid only flips once a line is FULLY covered, so a
+        real partial payment would otherwise still quote the original figure
+        at the customer."""
+        debt = self._tab(status='SETTLED', customer=self.customer)
+        self._entry(debt, Decimal('900'))
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 900}],
+                      customer_name='Roy', payment_method='credit',
+                      meta={'tab_id': debt.id})
+        # Must go through the real payment view: a raw CustomerDebtPayment
+        # row does not run the FIFO reconciliation that updates the tab
+        # entry's own amount_paid, which is what the debt aggregate reads
+        # for a tab-linked line (2026-08-15 fix in _get_customer_debt_data).
+        import uuid as _uuid
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '400', 'payment_method': 'cash',
+            'idempotency_token': str(_uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.client.logout()
+
+        rows = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Roy').json()['tabs']
+        debt_row = next(r for r in rows if r['kind'] == 'debt')
+        self.assertEqual(debt_row['amount'], 500.0)
+
+    def test_active_receipt_cross_links_to_the_customers_debt(self):
+        debt = self._tab(status='SETTLED', customer=self.customer)
+        self._entry(debt, Decimal('900'))
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 900}],
+                      customer_name='Roy', payment_method='credit',
+                      meta={'tab_id': debt.id})
+
+        active = self._tab()
+        self._entry(active, Decimal('100'))
+        active_rcpt = Receipt.issue(
+            business=self.biz, lines=[{'subtotal': 100}],
+            customer_name='Roy', payment_method='tab',
+            meta={'tab_id': active.id},
+        )
+        resp = self.client.get(f'/r/{active_rcpt.token}/')
+        self.assertEqual(resp.status_code, 200)
+        other = resp.context['other_debt']
+        self.assertIsNotNone(other)
+        self.assertEqual(other['amount'], 900.0)
+
+    def test_debt_receipt_does_not_link_back_to_itself(self):
+        debt = self._tab(status='SETTLED', customer=self.customer)
+        self._entry(debt, Decimal('900'))
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'subtotal': 900}],
+            customer_name='Roy', payment_method='credit',
+            meta={'tab_id': debt.id},
+        )
+        resp = self.client.get(f'/r/{rcpt.token}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.context['other_debt'])
+
+    def test_no_cross_link_when_the_customer_owes_nothing_else(self):
+        active = self._tab()
+        self._entry(active, Decimal('100'))
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'subtotal': 100}],
+            customer_name='Roy', payment_method='tab',
+            meta={'tab_id': active.id},
+        )
+        resp = self.client.get(f'/r/{rcpt.token}/')
+        self.assertIsNone(resp.context['other_debt'])

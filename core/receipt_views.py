@@ -581,7 +581,70 @@ def public_receipt(request, token):
         'pending_transfers_in': pending_transfers_in,
         'total_paid_so_far': total_paid_so_far,
         'tab_pins':     tab_pins,
+        'other_debt':   _other_debt_link(receipt, tab_status),
     })
+
+
+def _other_debt_link(receipt, tab_status):
+    """{'amount', 'url'} when this customer ALSO owes money on a different,
+    debt-converted tab -- otherwise None.
+
+    2026-08-23 live request (Roy): "when someone's active tab receipt is
+    shown and that same customer also has debt elsewhere, add a link from
+    the active-tab receipt into their debt receipt (rather than showing both
+    as separate rows in search)". Only fires for a receipt that is NOT itself
+    the debt one, so a customer reading their debt receipt is never pointed
+    back at itself.
+
+    The amount shown prefers the debt tracker's own aggregate where a real
+    Customer record exists: BarTabEntry.is_paid alone stays False until a
+    line is FULLY covered, so it would overstate the balance after a genuine
+    partial payment -- the same staleness _get_live_tab_state and
+    _debt_converted_tabs_qs both already correct for elsewhere.
+
+    Never raises -- a convenience cross-link must never be able to take down
+    the customer's own bill.
+    """
+    if tab_status == 'DEBT':
+        return None
+    name = (receipt.customer_name or '').strip()
+    if not name:
+        return None
+    try:
+        from .models import BarTab, BarTabEntry, Customer
+        from core.keg_views import _resolve_tab_public_url
+        from core.debt_views import _get_customer_debt_data
+
+        own_tab_ids = _receipt_all_tab_ids(receipt)
+        debt_tab = (
+            BarTab.objects
+            .filter(business=receipt.business, customer_name__iexact=name)
+            .exclude(id__in=own_tab_ids)
+            .exclude(status__in=['OPEN', 'VOID'])
+            .filter(id__in=BarTabEntry.objects.filter(is_paid=False)
+                    .exclude(payment_method='void').values('tab_id'))
+            .order_by('-opened_at')
+            .first()
+        )
+        if debt_tab is None:
+            return None
+        url = _resolve_tab_public_url(debt_tab)
+        if not url:
+            return None
+
+        amount = float(debt_tab.unpaid_total() or 0)
+        if debt_tab.customer_id:
+            cust = Customer.objects.filter(pk=debt_tab.customer_id).first()
+            if cust is not None:
+                amount = float(
+                    _get_customer_debt_data(cust, receipt.business, scope='all')['outstanding']
+                )
+        if amount <= 0:
+            return None
+        return {'amount': round(amount, 2), 'url': url}
+    except Exception:
+        logger.exception('other-debt cross-link failed for receipt %s', receipt.id)
+        return None
 
 
 def receipt_live_status(request, token):

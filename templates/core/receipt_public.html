@@ -520,6 +520,24 @@
             <span class="total-amount">KES {{ receipt.total|floatformat:"0" }}</span>
         </div>
 
+        {# 2026-08-23 (Roy): this customer also owes money on a separate,
+           debt-converted tab. Linked from here rather than shown as another
+           confusing row in the wall-QR search results. #}
+        {% if other_debt %}
+        <a href="{{ other_debt.url }}"
+           style="display:flex; align-items:center; justify-content:space-between; gap:.6rem;
+                  margin-top:.7rem; padding:.6rem .8rem; border-radius:10px; text-decoration:none;
+                  background:rgba(248,113,113,0.08); border:1px solid rgba(248,113,113,0.35);">
+            <span style="color:#f87171; font-size:.85rem;">
+                💳 Pia una deni la <strong>KES {{ other_debt.amount|floatformat:"0" }}</strong>
+                <span style="display:block; color:#b0b0b0; font-size:.74rem; margin-top:.1rem;">
+                    Bofya kuona deni lako lote
+                </span>
+            </span>
+            <span style="color:#f87171; font-size:1.2rem;">›</span>
+        </a>
+        {% endif %}
+
         {% if receipt.meta.credit_score %}
         <div class="standing-row">
             <span class="standing-label-txt">Hadhi ya Mkopo:</span>

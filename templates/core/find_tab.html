@@ -61,6 +61,15 @@
   }
   .tab-name { font-size: 0.95rem; font-weight: 500; }
   .tab-time { font-size: 0.78rem; color: var(--muted); margin-top: 0.12rem; }
+  .tab-amt { font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
+  .tab-amt.debt { color: #f87171; }
+  .tab-amt.open { color: #c9a84c; }
+  .tab-amt.paid { color: #6ee7b7; font-size: 0.78rem; font-weight: 500; }
+  .sec-head {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: #c9a84c; margin: 1rem 0 0.4rem;
+  }
+  .sec-head.debt { color: #f87171; }
   .tab-arrow { color: var(--gold); font-size: 1.1rem; }
   .empty-msg {
     text-align: center; color: var(--muted); font-size: 0.88rem;
@@ -131,14 +140,40 @@
         : '';
       return;
     }
-    var html = '';
-    data.tabs.forEach(function (tab) {
+    // 2026-08-23 (Roy): split into two visually distinct sections so a
+    // still-running bill is never confused with money already owed, and
+    // show the date + amount on every row so the customer can tell which
+    // receipt is which without opening them at random.
+    function money(n) {
+      return 'KES ' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    }
+    function card(tab) {
       var name = tab.name || '—';
-      html += '<a class="tab-card" href="' + tab.url + '">' +
+      var amountBit = '';
+      if (tab.settled) {
+        amountBit = '<div class="tab-amt paid">Imelipwa ✓</div>';
+      } else if (tab.amount > 0) {
+        amountBit = '<div class="tab-amt ' + (tab.kind === 'debt' ? 'debt' : 'open') + '">'
+          + money(tab.amount) + '</div>';
+      }
+      return '<a class="tab-card" href="' + tab.url + '">' +
         '<div><div class="tab-name">' + name + '</div>' +
-        '<div class="tab-time">Imefunguliwa saa ' + tab.opened_at + '</div></div>' +
-        '<span class="tab-arrow">›</span></a>';
-    });
+        '<div class="tab-time">' + tab.opened_date + ' · saa ' + tab.opened_at + '</div></div>' +
+        '<div style="display:flex;align-items:center;gap:.5rem;">' + amountBit +
+        '<span class="tab-arrow">›</span></div></a>';
+    }
+
+    var active = data.tabs.filter(function (t) { return t.kind !== 'debt'; });
+    var debts = data.tabs.filter(function (t) { return t.kind === 'debt'; });
+    var html = '';
+    if (debts.length) {
+      html += '<div class="sec-head debt">💳 Deni — bado kulipa</div>'
+        + debts.map(card).join('');
+    }
+    if (active.length) {
+      html += '<div class="sec-head">🍺 Bili zinazoendelea</div>'
+        + active.map(card).join('');
+    }
     results.innerHTML = html;
   }
 

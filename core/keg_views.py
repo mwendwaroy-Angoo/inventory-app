@@ -5737,6 +5737,23 @@ def find_tab_search(request, business_id):
     # already combines every linked tab's entries into a single bill.
     seen_urls = set()
     results = []
+    # 2026-08-23 live request (Roy): "it does not show when that transaction
+    # receipt was in regards to the time and when the customer was billed for
+    # it ... if the customer searches for their name and there are multiple
+    # receipts showing under their name with just a time stamp it is hard for
+    # them to know which one is for what and when." Each row now carries the
+    # DATE, the amount still owed, and which of the two kinds it is, so the
+    # customer can pick the right one instead of opening receipts at random.
+    #
+    # Debt outstanding is deliberately NOT BarTab.unpaid_total() for a
+    # debt-converted tab: that only reads BarTabEntry.is_paid, which stays
+    # False until a payment has cumulatively covered a line's FULL amount, so
+    # it would still quote the original figure after a real partial payment
+    # (the exact staleness _debt_converted_tabs_qs and _get_live_tab_state
+    # both already correct for elsewhere). The debt tracker's own aggregate is
+    # the honest number to show a customer.
+    from core.debt_views import _get_customer_debt_data
+    _debt_cache = {}
     for t in tabs:
         url = _resolve_tab_public_url(t)
         if not url:
@@ -5744,9 +5761,29 @@ def find_tab_search(request, business_id):
         if url in seen_urls:
             continue
         seen_urls.add(url)
+
+        unpaid = float(t.unpaid_total() or 0)
+        is_debt = t.status != 'OPEN' and unpaid > 0
+        amount = unpaid
+        if is_debt and t.customer_id:
+            if t.customer_id not in _debt_cache:
+                try:
+                    _debt_cache[t.customer_id] = float(
+                        _get_customer_debt_data(t.customer, business, scope='all')['outstanding']
+                    )
+                except Exception:
+                    logger.exception('Debt lookup failed for tab %s in find_tab_search', t.id)
+                    _debt_cache[t.customer_id] = unpaid
+            amount = _debt_cache[t.customer_id]
+
+        _opened_local = timezone.localtime(t.opened_at)
         results.append({
             'name': t.customer_name or '—',
             'url': url,
-            'opened_at': t.opened_at.strftime('%I:%M %p'),
+            'opened_at': _opened_local.strftime('%I:%M %p').lstrip('0'),
+            'opened_date': _opened_local.strftime('%d %b %Y'),
+            'amount': round(amount, 2),
+            'kind': 'debt' if is_debt else 'active',
+            'settled': t.status != 'OPEN' and unpaid <= 0,
         })
     return JsonResponse({'tabs': results})
