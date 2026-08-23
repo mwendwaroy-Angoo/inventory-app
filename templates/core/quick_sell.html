@@ -2999,6 +2999,9 @@
         tabs.forEach(function (tab) {
             var entries = '';
             var incomingHtml = '';
+            var settledNote = tab.already_settled
+              ? '<div style="color:#ff9800;margin-bottom:.25rem;">💤 Tab hii tayari imelipwa — ukikubali, itafunguliwa upya na deni hili.</div>'
+              : '';
             (tab.incoming_transfers || []).forEach(function (t) {
                 var bodyBit;
                 if (t.is_whole_tab) {
@@ -3013,7 +3016,7 @@
                 incomingHtml +=
                     '<div style="background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.3);border-radius:6px;' +
                     'padding:.3rem .55rem;margin-bottom:.35rem;font-size:.75rem;color:#a5d6a7;">' +
-                    bodyBit +
+                    settledNote + bodyBit +
                     '<div style="display:flex;gap:.4rem;margin-top:.3rem;">' +
                     '<button onclick="qsRespondTabTransfer(' + t.id + ',\'accept\')" ' +
                     'style="flex:1;padding:.2rem;background:rgba(76,175,80,.15);border:1px solid rgba(76,175,80,.4);border-radius:5px;color:#4caf50;font-size:.72rem;cursor:pointer;">Kubali</button>' +

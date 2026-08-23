@@ -41016,3 +41016,255 @@ class StaffRecognitionWiringTest(TestCase):
         resp = self.client.get(f'/staff/{self.staff_profile.id}/journey/')
         self.assertEqual(resp.status_code, 200)
         self.assertIn('recognition', resp.context['contrib'])
+
+
+class TabTransferSettledDestinationTest(TestCase):
+    """2026-08-23 live report (Roy): "tab transfer stays at pending when that
+    tab being transferred to has been paid for, at the same time the kubali
+    kataa option is no longer showing in the tabs drawer ... the staff can
+    accept or reject in behalf of that recipient."
+
+    Root cause: tabs_list() built its whole card list (and therefore the only
+    Kubali/Kataa UI staff have) from a plain status='OPEN' queryset, so the
+    moment the destination tab was settled it vanished from the drawer with
+    its pending incoming transfer still attached — unresolvable forever.
+    Also covers the two adjacent state-transition gaps found in the same
+    trace: accept() never checked whether the entry had since been PAID on
+    its own source tab, and a VOIDED tab never cleared transfers pointing AT
+    it (only ones leaving it)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Settled Dest Transfer Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='sdt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='sdt_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='SDT-01', unit='Pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('150'),
+        )
+
+    def _tab(self, name, status='OPEN', source='bar'):
+        return BarTab.objects.create(
+            business=self.biz, customer_name=name, status=status,
+            source=source, store=self.store,
+        )
+
+    def _entry(self, tab, amount, is_paid=False):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount, payment_method='credit',
+        )
+        return BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Tusker',
+            amount=amount, is_paid=is_paid,
+        )
+
+    def _propose(self, entry, source_tab, dest_tab, amount):
+        return TabTransferRequest.objects.create(
+            business=self.biz, entry=entry, source_tab=source_tab,
+            dest_tab=dest_tab, amount=amount, status='PENDING',
+            requested_by=self.staff, note='Tusker',
+        )
+
+    def test_settled_destination_tab_still_shows_kubali_kataa_in_drawer(self):
+        """The literal reported bug: Bosco's tab is paid off while Roy's
+        transfer to it is still pending — the card (and its accept/reject
+        buttons) must still be reachable in the tabs drawer."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('200'))
+        self._entry(bosco, Decimal('300'), is_paid=True)
+        transfer = self._propose(entry, roy, bosco, Decimal('200'))
+
+        # Bosco pays up — his tab settles.
+        bosco.status = 'SETTLED'
+        bosco.settled_at = timezone.now()
+        bosco.save(update_fields=['status', 'settled_at'])
+
+        self.client.force_login(self.staff)
+        resp = self.client.get('/bar/tabs/')
+        self.assertEqual(resp.status_code, 200)
+        tabs = resp.json()['tabs']
+        bosco_row = next((t for t in tabs if t['id'] == bosco.id), None)
+        self.assertIsNotNone(
+            bosco_row,
+            'A settled tab with a pending incoming transfer must stay in the drawer '
+            'so staff can accept/reject on the customer\'s behalf',
+        )
+        self.assertTrue(bosco_row['already_settled'])
+        self.assertEqual(len(bosco_row['incoming_transfers']), 1)
+        self.assertEqual(bosco_row['incoming_transfers'][0]['id'], transfer.id)
+
+    def test_ordinary_settled_tab_without_transfers_stays_out_of_the_drawer(self):
+        """Regression lock: the widening is scoped to tabs with a pending
+        incoming transfer — an ordinary paid-off tab must NOT reappear."""
+        bosco = self._tab('Bosco')
+        self._entry(bosco, Decimal('300'), is_paid=True)
+        bosco.status = 'SETTLED'
+        bosco.save(update_fields=['status'])
+
+        self.client.force_login(self.staff)
+        resp = self.client.get('/bar/tabs/')
+        ids = [t['id'] for t in resp.json()['tabs']]
+        self.assertNotIn(bosco.id, ids)
+
+    def test_accepting_onto_a_fully_paid_tab_reopens_it(self):
+        """A genuinely fully-PAID tab that receives an unpaid item is a live
+        tab again — leaving it SETTLED would hide the new unpaid entry from
+        the drawer, unpaid_total()'s callers, and the shift-close sweep."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('200'))
+        self._entry(bosco, Decimal('300'), is_paid=True)
+        bosco.status = 'SETTLED'
+        bosco.settled_at = timezone.now()
+        bosco.save(update_fields=['status', 'settled_at'])
+        transfer = self._propose(entry, roy, bosco, Decimal('200'))
+
+        transfer.accept()
+
+        bosco.refresh_from_db()
+        entry.refresh_from_db()
+        self.assertEqual(bosco.status, 'OPEN')
+        self.assertIsNone(bosco.settled_at)
+        self.assertEqual(entry.tab_id, bosco.id)
+        self.assertEqual(transfer.status, 'ACCEPTED')
+
+    def test_accepting_onto_a_debt_converted_tab_still_syncs_to_credit(self):
+        """Regression lock for the 2026-08-11 behaviour: a debt-converted
+        destination (SETTLED but still owing) must NOT be reopened — it stays
+        debt, and the moved transaction is attributed to its new owner."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('200'))
+        self._entry(bosco, Decimal('300'), is_paid=False)  # still owing = debt-converted
+        bosco.status = 'SETTLED'
+        bosco.settled_at = timezone.now()
+        bosco.save(update_fields=['status', 'settled_at'])
+        transfer = self._propose(entry, roy, bosco, Decimal('200'))
+
+        transfer.accept()
+
+        bosco.refresh_from_db()
+        entry.refresh_from_db()
+        self.assertEqual(bosco.status, 'SETTLED', 'a debt-converted tab must stay debt')
+        self.assertEqual(entry.transaction.recipient, 'Bosco')
+        self.assertEqual(entry.transaction.payment_method, 'credit')
+
+    def test_accepting_an_entry_that_was_paid_meanwhile_cancels_instead_of_moving(self):
+        """Money already collected must never be silently re-attributed to
+        someone else's tab."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('200'))
+        transfer = self._propose(entry, roy, bosco, Decimal('200'))
+
+        # Roy pays for it himself before Bosco ever answers.
+        entry.is_paid = True
+        entry.payment_method = 'cash'
+        entry.save(update_fields=['is_paid', 'payment_method'])
+
+        transfer.accept()
+
+        entry.refresh_from_db()
+        self.assertEqual(entry.tab_id, roy.id, 'a paid entry must stay where it is')
+        self.assertEqual(transfer.status, 'CANCELLED')
+
+    def test_mixed_batch_moves_unpaid_and_cancels_the_paid_one(self):
+        """A whole-tab transfer where one item got paid mid-flight must move
+        the rest rather than deadlocking the whole batch forever."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        e1 = self._entry(roy, Decimal('200'))
+        e2 = self._entry(roy, Decimal('150'))
+        t1 = self._propose(e1, roy, bosco, Decimal('200'))
+        t2 = self._propose(e2, roy, bosco, Decimal('150'))
+        TabTransferRequest.objects.filter(id__in=[t1.id, t2.id]).update(batch_id='batch-xyz')
+        t1.refresh_from_db(); t2.refresh_from_db()
+
+        e1.is_paid = True
+        e1.save(update_fields=['is_paid'])
+
+        t1.accept()
+
+        e1.refresh_from_db(); e2.refresh_from_db()
+        t1.refresh_from_db(); t2.refresh_from_db()
+        self.assertEqual(e1.tab_id, roy.id)
+        self.assertEqual(e2.tab_id, bosco.id)
+        self.assertEqual(t1.status, 'CANCELLED')
+        self.assertEqual(t2.status, 'ACCEPTED')
+
+    def test_all_paid_batch_does_not_falsely_void_the_source_tab(self):
+        """If nothing actually moved, the source tab must not be closed with
+        a 'bili yote ilihamishiwa' reason that never happened."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('200'))
+        transfer = self._propose(entry, roy, bosco, Decimal('200'))
+        entry.is_paid = True
+        entry.save(update_fields=['is_paid'])
+
+        transfer.accept()
+
+        roy.refresh_from_db()
+        self.assertEqual(roy.status, 'OPEN')
+        self.assertEqual(roy.void_reason, '')
+
+    def test_voiding_the_destination_tab_cancels_incoming_transfers(self):
+        """A VOID tab can never receive anything — a pending incoming request
+        left dangling would block its entry from ever being re-proposed."""
+        import uuid
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('200'))
+        transfer = self._propose(entry, roy, bosco, Decimal('200'))
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{bosco.id}/void/', {
+            'reason': 'Kosa la kuandika',
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 200)
+
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'CANCELLED')
+
+    def test_converting_destination_to_debt_leaves_incoming_transfer_alive(self):
+        """Regression lock: unlike VOID, a debt-converted tab is still a
+        valid destination (2026-08-11) — conversion must NOT cancel."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('200'))
+        self._entry(bosco, Decimal('300'), is_paid=False)
+        transfer = self._propose(entry, roy, bosco, Decimal('200'))
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/tabs/{bosco.id}/debt/', {
+            'customer_name': 'Bosco',
+        })
+        self.assertEqual(resp.status_code, 200)
+
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'PENDING')
+
+    def test_removing_an_entry_cancels_its_pending_transfer(self):
+        """Transfer-flow audit (2026-08-23): ✕ Futa voids an entry but used
+        to leave any pending transfer for it rendering as a live card with
+        working Kubali/Kataa buttons for a charge that no longer exists."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('200'))
+        transfer = self._propose(entry, roy, bosco, Decimal('200'))
+
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/bar/tabs/{roy.id}/entries/{entry.id}/remove/', {
+            'reason': 'Kosa',
+        })
+        self.assertEqual(resp.status_code, 200)
+
+        transfer.refresh_from_db()
+        self.assertEqual(transfer.status, 'CANCELLED')

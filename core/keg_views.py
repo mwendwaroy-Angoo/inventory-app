@@ -68,13 +68,29 @@ def _allowed_tab_sources(up):
     return allowed
 
 
-def _cancel_pending_transfers_for_tab(tab):
+def _cancel_pending_transfers_for_tab(tab, include_incoming=False):
     """Auto-cancel any PENDING TabTransferRequest whose entry lives on `tab`,
     when that tab is about to leave the ordinary open-tab lifecycle (voided
     or converted to debt) — a pending split-bill request against an entry
     that's no longer sitting on a normal open tab doesn't make sense anymore.
-    Inverse-action safeguard for BarTabEntry.split_and_transfer_locked()."""
-    for tfr in TabTransferRequest.objects.filter(source_tab=tab, status='PENDING'):
+    Inverse-action safeguard for BarTabEntry.split_and_transfer_locked().
+
+    include_incoming (2026-08-23): also cancel requests pointing AT this tab
+    as their DESTINATION. Deliberately opt-in, not the default, because the
+    two callers differ: a VOIDED tab can never receive anything again, so a
+    pending incoming request is genuinely dead and must be cleared (otherwise
+    it blocks its entry from ever being re-proposed elsewhere, since
+    propose_whole_tab_locked refuses an entry that already has one pending);
+    but a tab converted to DEBT is still a perfectly valid destination — see
+    TabTransferRequest.accept()'s own 2026-08-11 note — so conversion must
+    leave incoming requests alone.
+    """
+    qs = TabTransferRequest.objects.filter(source_tab=tab, status='PENDING')
+    if include_incoming:
+        qs = TabTransferRequest.objects.filter(
+            Q(source_tab=tab) | Q(dest_tab=tab), status='PENDING',
+        )
+    for tfr in qs:
         try:
             tfr.cancel()
         except Exception:
@@ -1506,9 +1522,32 @@ def tabs_list(request):
         # Bar board context: bar + kitchen tabs (cross-counter visible), never QS
         _source_filter = {'source__in': ['bar', 'kitchen']}
 
+    # 2026-08-23 live report (Roy): "tab transfer stays at pending when that
+    # tab being transferred to has been paid for, at the same time the kubali
+    # kataa option is no longer showing in the tabs drawer." Root cause: this
+    # queryset was a plain status='OPEN' filter, so the moment a destination
+    # tab was fully settled it dropped out of the drawer entirely — taking
+    # its incoming-transfer card (the only Kubali/Kataa UI that exists for
+    # staff to resolve on the customer's behalf) with it, leaving the request
+    # PENDING forever with no way to act on it. A SETTLED tab that still has
+    # a pending incoming transfer is therefore kept in the list, flagged so
+    # the card can say plainly that it's already paid — deliberately NOT
+    # auto-cancelled, since accepting or rejecting is a real decision a human
+    # should make (Bosco settling up and saying "add Roy's beer to mine" is
+    # exactly the case this exists for), not something silently discarded.
+    _pending_dest_ids = set(
+        TabTransferRequest.objects
+        .filter(business=up.business, status='PENDING')
+        .values_list('dest_tab_id', flat=True)
+    )
+
     tabs = (
         BarTab.objects
-        .filter(business=up.business, status='OPEN', **_source_filter)
+        .filter(
+            Q(status='OPEN') | Q(id__in=_pending_dest_ids),
+            business=up.business, **_source_filter,
+        )
+        .exclude(status='VOID')
         .select_related('served_by')
         .prefetch_related(
             Prefetch('entries',
@@ -1674,6 +1713,7 @@ def tabs_list(request):
                 'tab_pin': tab.tab_pin,
                 'cash_requested': bool(tab.cash_requested_at),
                 'incoming_transfers': _pending_in_by_tab.get(tab.id, []),
+                'already_settled': tab.status != 'OPEN',
             })
         else:
             # Bar-only staff: see only bar (non-kitchen) entries
@@ -1712,6 +1752,7 @@ def tabs_list(request):
                 'tab_pin': tab.tab_pin,
                 'cash_requested': bool(tab.cash_requested_at),
                 'incoming_transfers': _pending_in_by_tab.get(tab.id, []),
+                'already_settled': tab.status != 'OPEN',
             })
 
     return JsonResponse({'tabs': result, 'bar_only_view': not _see_all})
@@ -2935,6 +2976,20 @@ def remove_tab_entry(request, tab_id, entry_id):
         txn.qty = Decimal('0')  # nullify stock effect — item was never given to customer
         txn.save(update_fields=['payment_method', 'qty'])
 
+        # 2026-08-23 (transfer-flow audit): a pending split-bill transfer
+        # proposing THIS entry to somebody else is now meaningless — the
+        # charge it refers to has been voided away. Left alone it would keep
+        # rendering as a live "X anataka kuongeza KES Y" card with working
+        # Kubali/Kataa buttons in every tabs drawer, for an item that no
+        # longer exists. (accept() would refuse to move it now that
+        # is_paid=True, so no money could move — but staff shouldn't be shown
+        # a phantom decision to make in the first place.)
+        for _tfr in TabTransferRequest.objects.filter(entry=entry, status='PENDING'):
+            try:
+                _tfr.cancel()
+            except Exception:
+                logger.exception('Failed to auto-cancel TabTransferRequest %s on entry removal', _tfr.id)
+
     who = request.user.get_full_name() or request.user.username
     when = timezone.localtime(now).strftime('%d %b %Y, %H:%M')
     message = (
@@ -3697,7 +3752,10 @@ def void_tab(request, tab_id):
     tab.void_reason = reason[:120]
     tab.cash_requested_at = None
     tab.save(update_fields=['status', 'settled_at', 'void_reason', 'cash_requested_at'])
-    _cancel_pending_transfers_for_tab(tab)
+    # include_incoming: a VOID tab can never receive a transfer either, so
+    # clear both directions (2026-08-23) — a pending incoming request left
+    # dangling here would block its entry from ever being re-proposed.
+    _cancel_pending_transfers_for_tab(tab, include_incoming=True)
 
     # Only mark defaulter when the voided tab actually carried converted credit transactions
     if had_credit and tab.customer_name:

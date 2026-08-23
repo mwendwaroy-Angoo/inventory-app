@@ -5743,6 +5743,24 @@ class TabTransferRequest(models.Model):
                     .order_by('id')
                 )
             result = fresh
+            now = timezone.now()
+            moved_any = False
+            moved_dest_names = set()
+            # 2026-08-23: whether each destination tab was ALREADY carrying an
+            # unpaid balance BEFORE this accept moved anything onto it —
+            # computed once per tab, up front, so a second row in the same
+            # batch can't misread the first row's own just-moved entry as
+            # pre-existing debt. This is the discriminator between the two
+            # very different kinds of non-OPEN destination: a debt-converted
+            # tab (unpaid entries already there) versus a genuinely fully-PAID
+            # one (nothing owed).
+            dest_was_debt = {}
+            for row in siblings:
+                if row.dest_tab_id not in dest_was_debt:
+                    _d = BarTab.objects.get(pk=row.dest_tab_id)
+                    dest_was_debt[row.dest_tab_id] = (
+                        _d.status != 'OPEN' and _d.entries.filter(is_paid=False).exists()
+                    )
             for row in siblings:
                 dest_tab = BarTab.objects.select_for_update().get(pk=row.dest_tab_id)
                 # 2026-08-11 live request (Roy): a destination already
@@ -5750,8 +5768,25 @@ class TabTransferRequest(models.Model):
                 if dest_tab.status not in ('OPEN', 'SETTLED'):
                     raise ValueError('Tab lengwa haiko wazi tena wala haijawa deni.')
                 entry = BarTabEntry.objects.select_for_update().get(pk=row.entry_id)
+                # 2026-08-23: the entry may have been PAID on its own source
+                # tab while this request sat pending (staff settled it, or the
+                # source customer paid up). Moving an already-collected item
+                # onto somebody else's tab would silently re-attribute money
+                # that has already changed hands — cancel that row instead and
+                # leave the paid entry exactly where it is. Per-row, not
+                # all-or-nothing, so one item being paid mid-flight can't
+                # deadlock an otherwise-valid whole-tab transfer forever.
+                if entry.is_paid:
+                    row.status = 'CANCELLED'
+                    row.resolved_at = now
+                    row.save(update_fields=['status', 'resolved_at'])
+                    if row.pk == self.pk:
+                        result = row
+                    continue
                 entry.tab = dest_tab
                 entry.save(update_fields=['tab'])
+                moved_any = True
+                moved_dest_names.add(dest_tab.customer_name)
                 # If the destination is a debt-converted tab, there is no
                 # future convert_tab_to_debt() call coming to attribute this
                 # moved item correctly — convert_tab_to_debt()'s own entry
@@ -5766,12 +5801,24 @@ class TabTransferRequest(models.Model):
                 # exclusion) or it gets converted later, at which point that
                 # future conversion sets recipient correctly on its own.
                 if dest_tab.status != 'OPEN':
-                    txn = entry.transaction
-                    txn.recipient = dest_tab.customer_name
-                    txn.payment_method = 'credit'
-                    txn.save(update_fields=['recipient', 'payment_method'])
+                    if dest_was_debt.get(row.dest_tab_id):
+                        txn = entry.transaction
+                        txn.recipient = dest_tab.customer_name
+                        txn.payment_method = 'credit'
+                        txn.save(update_fields=['recipient', 'payment_method'])
+                    else:
+                        # 2026-08-23: a genuinely fully-PAID tab has just
+                        # received an unpaid item — it is a live tab again.
+                        # Say so, rather than leaving an unpaid entry hiding
+                        # on a tab every other surface in this app treats as
+                        # closed (it would be invisible to the tabs drawer's
+                        # own open-tab list, to unpaid_total()'s callers, and
+                        # to the shift-close convert-to-debt sweep).
+                        dest_tab.status = 'OPEN'
+                        dest_tab.settled_at = None
+                        dest_tab.save(update_fields=['status', 'settled_at'])
                 row.status = 'ACCEPTED'
-                row.resolved_at = timezone.now()
+                row.resolved_at = now
                 row.save(update_fields=['status', 'resolved_at'])
                 if row.pk == self.pk:
                     result = row
@@ -5785,9 +5832,14 @@ class TabTransferRequest(models.Model):
             # and the same VOID-with-explanation closing pattern
             # _merge_tab_into() already established for an emptied-out tab
             # shell (this isn't a real cancellation — nothing went wrong).
+            # `moved_any` guard (2026-08-23): if every row was cancelled
+            # because its entry had already been paid, nothing was
+            # transferred anywhere — voiding the source tab with a
+            # "bili yote ilihamishiwa" reason would be an outright false
+            # statement about what happened.
             source_tab = BarTab.objects.select_for_update().get(pk=fresh.source_tab_id)
-            if source_tab.status == 'OPEN' and not source_tab.entries.filter(is_paid=False).exists():
-                dest_names = ', '.join(sorted({row.dest_tab.customer_name for row in siblings}))
+            if moved_any and source_tab.status == 'OPEN' and not source_tab.entries.filter(is_paid=False).exists():
+                dest_names = ', '.join(sorted(moved_dest_names))
                 source_tab.status = 'VOID'
                 source_tab.settled_at = timezone.now()
                 source_tab.void_reason = (
