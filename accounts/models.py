@@ -568,6 +568,30 @@ class UserProfile(models.Model):
         ),
     )
 
+    # ── Owner consumption discipline (2026-08-23, Roy) ─────────────────
+    CONSUMPTION_WINDOW_CHOICES = [
+        ('daily',   'Kila siku'),
+        ('weekly',  'Kila wiki'),
+        ('monthly', 'Kila mwezi'),
+    ]
+    consumption_limit_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text=(
+            '2026-08-23 live request (Roy): "Owner consumption accountability — set an '
+            'amount and a window period limit setting to enhance owner discipline ... if '
+            'the limit is reached and a customer takes a drink in his name the system '
+            'rejects automatically." Blank means no limit at all (the default, so nothing '
+            'changes for a business that never sets one). Held PER OWNER rather than on '
+            'Business because Roy asked for multiple owners to be able to carry different '
+            'settings — "mostly the owner is just one in these bars, regardless set it up '
+            'for multiple owners just in case."'
+        ),
+    )
+    consumption_limit_window = models.CharField(
+        max_length=8, choices=CONSUMPTION_WINDOW_CHOICES, default='monthly',
+        help_text='Window the limit above is measured over. Ignored when no limit is set.',
+    )
+
     # ── Session Control ────────────────────────────────────────────────
     current_session_key = models.CharField(
         max_length=40, blank=True,

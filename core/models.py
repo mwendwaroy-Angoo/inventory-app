@@ -1272,6 +1272,20 @@ class Transaction(models.Model):
         related_name='recorded_transactions',
         help_text='The staff member or owner who recorded this transaction. Null for async/system-generated transactions.',
     )
+    consumed_by = models.ForeignKey(
+        'accounts.UserProfile', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='owner_consumption_draws',
+        help_text=(
+            '2026-08-23 (Roy): WHICH owner took this draw. Only ever set for '
+            "type='OwnerConsumption' — recorded_by is whoever KEYED the entry in "
+            '(routinely a staff member), which is a different question and cannot '
+            'stand in for it. Needed because owner consumption limits are held per '
+            'owner, so a business with more than one owner can give each their own '
+            'ceiling. Null on every pre-2026-08-23 draw and on any business that '
+            'never picks an owner, in which case the limit check falls back to the '
+            "business's single owner where there is exactly one."
+        ),
+    )
     settles_transaction = models.ForeignKey(
         'self', null=True, blank=True, on_delete=models.SET_NULL, related_name='settlements',
         help_text=(

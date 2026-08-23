@@ -1025,6 +1025,28 @@ def payment_settings(request):
                 messages.error(request, _("Tafadhali ingiza nambari sahihi kwa mipangilio ya deni."))
             return redirect('payment_settings')
 
+        if section == 'owner_consumption_limit':
+            # 2026-08-23 (Roy): per-OWNER ceiling on Mmiliki Alichukua draws.
+            # Held on the acting owner's own UserProfile, not on Business, so
+            # a business with more than one owner can give each their own.
+            try:
+                raw = (request.POST.get('consumption_limit_amount') or '').strip()
+                amount = Decimal(raw) if raw else None
+                if amount is not None and amount < 0:
+                    raise InvalidOperation('negative')
+                window = request.POST.get('consumption_limit_window', 'monthly')
+                valid_windows = {w for w, _label in UserProfile.CONSUMPTION_WINDOW_CHOICES}
+                if window not in valid_windows:
+                    window = 'monthly'
+                UserProfile.objects.filter(pk=request.user.userprofile.pk).update(
+                    consumption_limit_amount=amount,
+                    consumption_limit_window=window,
+                )
+                messages.success(request, _("Kikomo cha matumizi kimehifadhiwa."))
+            except (ValueError, TypeError, InvalidOperation):
+                messages.error(request, _("Tafadhali ingiza kiasi sahihi."))
+            return redirect('payment_settings')
+
         if section == 'cup_config':
             try:
                 Business.objects.filter(pk=business.pk).update(

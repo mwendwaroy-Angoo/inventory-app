@@ -41811,3 +41811,183 @@ class WallQrSearchEnrichmentTest(TestCase):
         )
         resp = self.client.get(f'/r/{rcpt.token}/')
         self.assertIsNone(resp.context['other_debt'])
+
+
+class OwnerConsumptionLimitTest(TestCase):
+    """2026-08-23 live request (Roy), item 4: "set an amount and a window
+    period limit setting to enhance owner discipline ... if the limit is
+    reached and a customer takes a drink in his name the system rejects
+    automatically ... owner should receive report/notification via mail."
+
+    Per-owner, not per-business — Roy asked for multiple owners to be able to
+    carry different settings. Settled (paid-back) draws free the budget again,
+    since the point is discipline about what is taken and NOT paid back."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Owner Limit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(
+            username='ol_owner', password='x', email='owner@example.test',
+            first_name='Roy',
+        )
+        self.owner_profile = UserProfile.objects.create(
+            user=self.owner, business=self.biz, role='owner',
+        )
+        self.staff = User.objects.create_user(username='ol_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='OL-01', unit='Pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('150'),
+        )
+
+    def _set_limit(self, amount, window='monthly'):
+        self.owner_profile.consumption_limit_amount = Decimal(str(amount))
+        self.owner_profile.consumption_limit_window = window
+        self.owner_profile.save(update_fields=[
+            'consumption_limit_amount', 'consumption_limit_window',
+        ])
+
+    def _draw(self, amount, settled=False):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='OwnerConsumption',
+            qty=Decimal('-1'), sale_amount=Decimal(str(amount)),
+            recorded_by=self.staff, consumed_by=self.owner_profile,
+            recipient='Mmiliki', payment_method='',
+        )
+        if settled:
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('0'), sale_amount=Decimal(str(amount)),
+                payment_method='cash', settles_transaction=txn,
+            )
+        return txn
+
+    def _record(self, qty='1', price='250'):
+        import uuid as _uuid
+        return self.client.post('/stock/owner-consumption/', {
+            'item_id': self.item.id, 'qty': qty, 'price': price,
+            'idempotency_token': str(_uuid.uuid4()),
+        })
+
+    def test_no_limit_set_means_no_gate(self):
+        self.client.force_login(self.staff)
+        resp = self._record()
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'])
+
+    def test_draw_within_the_limit_is_allowed(self):
+        self._set_limit(1000)
+        self.client.force_login(self.staff)
+        resp = self._record(price='250')
+        self.assertTrue(resp.json()['ok'])
+        txn = Transaction.objects.get(type='OwnerConsumption')
+        self.assertEqual(txn.consumed_by_id, self.owner_profile.id)
+
+    def test_draw_breaching_the_limit_is_rejected_outright(self):
+        self._set_limit(300)
+        self._draw(200)
+        self.client.force_login(self.staff)
+        with patch('core.notifications.send_email_notification_async') as mail:
+            resp = self._record(price='250')  # 200 + 250 > 300
+        self.assertEqual(resp.status_code, 403)
+        body = resp.json()
+        self.assertFalse(body['ok'])
+        self.assertTrue(body['limit_reached'])
+        # Nothing recorded — the draw really was refused, not just warned about.
+        self.assertEqual(Transaction.objects.filter(type='OwnerConsumption').count(), 1)
+        self.assertTrue(mail.called, 'owner must be emailed when the ceiling refuses a draw')
+
+    def test_exactly_reaching_the_limit_is_allowed(self):
+        self._set_limit(450)
+        self._draw(200)
+        self.client.force_login(self.staff)
+        resp = self._record(price='250')  # 200 + 250 == 450
+        self.assertTrue(resp.json()['ok'])
+
+    def test_settling_a_draw_frees_the_budget_again(self):
+        """Deliberate: the ceiling is about what has been taken and NOT paid
+        back, not a hard cap on ever taking anything."""
+        from core.owner_limits import owner_consumption_usage
+        self._draw(500, settled=True)
+        self._draw(200)
+        used = owner_consumption_usage(self.owner_profile, self.biz)
+        self.assertEqual(used, Decimal('200'))
+
+    def test_voided_draws_do_not_count_against_the_limit(self):
+        from core.owner_limits import owner_consumption_usage
+        voided = self._draw(500)
+        voided.invoice_no = '[OC-VOID]'
+        voided.save(update_fields=['invoice_no'])
+        self._draw(100)
+        self.assertEqual(owner_consumption_usage(self.owner_profile, self.biz), Decimal('100'))
+
+    def test_each_owner_carries_their_own_ceiling(self):
+        from core.owner_limits import check_owner_consumption_limit
+        other_user = User.objects.create_user(username='ol_owner2', password='x')
+        other = UserProfile.objects.create(user=other_user, business=self.biz, role='owner')
+        self._set_limit(300)
+        other.consumption_limit_amount = Decimal('5000')
+        other.save(update_fields=['consumption_limit_amount'])
+        self._draw(250)
+
+        allowed_a, _info_a = check_owner_consumption_limit(
+            self.biz, self.owner_profile, Decimal('100'))
+        allowed_b, _info_b = check_owner_consumption_limit(
+            self.biz, other, Decimal('100'))
+        self.assertFalse(allowed_a, "the capped owner's own draws are blocked")
+        self.assertTrue(allowed_b, "a different owner's ceiling is independent")
+
+    def test_one_owner_business_attributes_draws_automatically(self):
+        from core.owner_limits import resolve_draw_owner
+        self.assertEqual(resolve_draw_owner(self.biz), self.owner_profile)
+
+    def test_multi_owner_business_refuses_to_guess_which_owner(self):
+        """Better an unattributed draw than one silently charged against the
+        wrong person's ceiling."""
+        from core.owner_limits import resolve_draw_owner
+        other_user = User.objects.create_user(username='ol_owner3', password='x')
+        UserProfile.objects.create(user=other_user, business=self.biz, role='owner')
+        self.assertIsNone(resolve_draw_owner(self.biz))
+        self.assertEqual(
+            resolve_draw_owner(self.biz, self.owner_profile.id), self.owner_profile,
+        )
+
+    def test_daily_window_ignores_an_earlier_day(self):
+        from core.owner_limits import owner_consumption_usage
+        old = self._draw(400)
+        Transaction.objects.filter(id=old.id).update(
+            created_at=timezone.now() - timedelta(days=2))
+        self._draw(100)
+        self.assertEqual(
+            owner_consumption_usage(self.owner_profile, self.biz, window='daily'),
+            Decimal('100'),
+        )
+        self.assertEqual(
+            owner_consumption_usage(self.owner_profile, self.biz, window='monthly'),
+            Decimal('500'),
+        )
+
+    def test_owner_can_save_their_limit_from_payment_settings(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post('/business/payment-settings/', {
+            '_section': 'owner_consumption_limit',
+            'consumption_limit_amount': '1500',
+            'consumption_limit_window': 'weekly',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.owner_profile.refresh_from_db()
+        self.assertEqual(self.owner_profile.consumption_limit_amount, Decimal('1500'))
+        self.assertEqual(self.owner_profile.consumption_limit_window, 'weekly')
+
+    def test_blank_amount_clears_the_limit(self):
+        self._set_limit(900)
+        self.client.force_login(self.owner)
+        self.client.post('/business/payment-settings/', {
+            '_section': 'owner_consumption_limit',
+            'consumption_limit_amount': '',
+            'consumption_limit_window': 'monthly',
+        })
+        self.owner_profile.refresh_from_db()
+        self.assertIsNone(self.owner_profile.consumption_limit_amount)

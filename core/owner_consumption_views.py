@@ -125,6 +125,30 @@ def record_owner_consumption(request):
         except Exception:
             backdated_at = None
 
+    # 2026-08-23 live request (Roy): "set an amount and a window period limit
+    # setting to enhance owner discipline ... if the limit is reached and a
+    # customer takes a drink in his name the system rejects automatically."
+    # A HARD block, per his explicit choice — not a warning. Only ever bites
+    # when that owner has actually configured a ceiling; with none set (the
+    # default) nothing changes at all.
+    from core.owner_limits import (
+        check_owner_consumption_limit, notify_owner_limit_reached, resolve_draw_owner,
+    )
+    draw_owner = resolve_draw_owner(business, request.POST.get('owner_profile_id'))
+    allowed, limit_info = check_owner_consumption_limit(business, draw_owner, price)
+    if not allowed:
+        notify_owner_limit_reached(business, draw_owner, limit_info, item_name=item.description)
+        return JsonResponse({
+            'ok': False,
+            'limit_reached': True,
+            'error': (
+                f"Kikomo cha matumizi kimefikiwa. Kikomo ({limit_info['window_label']}): "
+                f"KES {limit_info['limit']:,.0f} — umeshatumia KES {limit_info['used']:,.0f}, "
+                f"iliyobaki KES {limit_info['remaining']:,.0f}. "
+                f"Lipa deni la ulichochukua ili kikomo kifunguke tena."
+            ),
+        }, status=403)
+
     Transaction.objects.create(
         business=business,
         item=item,
@@ -133,6 +157,7 @@ def record_owner_consumption(request):
         sale_amount=price,
         date=(timezone.localtime(backdated_at).date() if backdated_at else timezone.localdate()),
         recorded_by=request.user,
+        consumed_by=draw_owner,
         recipient=note or 'Mmiliki',
         payment_method='',
         **({'created_at': backdated_at} if backdated_at else {}),
@@ -396,6 +421,21 @@ def propose_transfer_to_owner(request):
 
     actor_name = request.user.get_full_name() or request.user.username
     total = sum(float(r.source_txn.sale_amount or 0) for r in reqs)
+
+    # 2026-08-23 (Roy): "the same mail notifications should be applicable to
+    # tab transfers to the owner's name" — the owner must never find out
+    # after the fact that a bill landed against him. Fire-and-forget; a
+    # notification failing must not affect the proposal itself.
+    try:
+        from core.owner_limits import notify_owner_of_transfer_to_their_name
+        _source_name = reqs[0].source_txn.recipient if reqs else ''
+        for _owner in up.business.users.filter(role='owner').select_related('user'):
+            notify_owner_of_transfer_to_their_name(
+                up.business, _owner, _source_name or actor_name, total,
+            )
+    except Exception:
+        logger.exception('Owner transfer email fan-out failed')
+
     if len(reqs) == 1:
         req = reqs[0]
         item_name = req.source_txn.item.description if req.source_txn.item_id else ''
