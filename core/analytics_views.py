@@ -980,7 +980,9 @@ def analytics_dashboard(request):
     total_tabs_owed = 0.0
     for tab in open_tabs:
         age_days = (today - tab.opened_at.date()).days
-        unpaid = sum(float(e.amount) for e in tab.entries.all() if not e.is_paid)
+        # 2026-08-24 — remaining_amount(), not full amount: an unpaid entry
+        # can carry a pre-existing amount_paid from a transferred, part-paid item.
+        unpaid = sum(float(e.remaining_amount()) for e in tab.entries.all() if not e.is_paid)
         idx = 0 if age_days == 0 else (1 if age_days <= 3 else (2 if age_days <= 7 else 3))
         _aging_buckets[idx]['count'] += 1
         _aging_buckets[idx]['total'] += unpaid

@@ -5204,8 +5204,24 @@ class BarTab(models.Model):
         return result or Decimal('0')
 
     def unpaid_total(self):
-        result = self.entries.filter(is_paid=False).aggregate(t=models.Sum('amount'))['t']
-        return result or Decimal('0')
+        """The TRUE amount still owed across every unpaid entry.
+
+        2026-08-24 live report (Roy, Marley's tab): a full-item transfer
+        (BarTabEntry.split_and_transfer_locked's paid_amount==0 branch) can
+        land an entry with a real amount_paid>0 (e.g. 30 of an 80 KES cup,
+        already collected via a debt-tracker payment BEFORE the transfer)
+        onto an OPEN tab — this used to sum plain `amount` (80), showing a
+        tab total 30 KES higher than what's genuinely still owed (50), and
+        — far more seriously — feeding `settle_entries_amount_locked()`'s
+        own boundary math, which would then treat the entry as needing 80
+        MORE to close instead of 50, silently reopening a bogus "still
+        owed" balance for money already collected. Summing
+        remaining_amount() instead is a no-op for the overwhelming common
+        case (amount_paid=0, remaining_amount()==amount) and only differs
+        for exactly this scenario, where it's the only correct answer.
+        """
+        entries = self.entries.filter(is_paid=False).only('amount', 'amount_paid')
+        return sum((e.remaining_amount() for e in entries), Decimal('0'))
 
     @classmethod
     def settle_entries_amount_locked(cls, tab_id, business, entry_ids, amount, payment_method, recorded_by=None):
@@ -5246,7 +5262,12 @@ class BarTab(models.Model):
             if not entries:
                 raise ValueError('Hakuna kiingilio kilichochaguliwa.')
 
-            total_selected = sum((e.amount for e in entries), Decimal('0'))
+            # 2026-08-24 live report (Roy, Marley's tab): summed against
+            # remaining_amount(), not the entries' full original amount —
+            # an entry carrying a pre-existing amount_paid (a debt-tracker
+            # payment collected before a full-item transfer landed it here)
+            # must never be treated as needing its FULL price paid again.
+            total_selected = sum((e.remaining_amount() for e in entries), Decimal('0'))
             amount = Decimal(str(amount))
             if amount <= 0:
                 raise ValueError('Kiasi lazima kiwe zaidi ya 0.')
@@ -5260,17 +5281,11 @@ class BarTab(models.Model):
             for entry in entries:
                 if remaining <= 0:
                     break
-                if remaining >= entry.amount:
-                    entry.is_paid = True
-                    entry.paid_at = now
-                    entry.payment_method = payment_method
-                    entry.settled_by = recorded_by
-                    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method', 'settled_by'])
-                    if entry.transaction_id:
-                        entry.transaction.payment_method = payment_method
-                        entry.transaction.save(update_fields=['payment_method'])
+                entry_remaining = entry.remaining_amount()
+                if remaining >= entry_remaining:
+                    entry._newly_collected = entry.mark_fully_paid(payment_method, recorded_by, now)
                     fully_paid.append(entry)
-                    remaining -= entry.amount
+                    remaining -= entry_remaining
                 else:
                     split_remainder = BarTabEntry.split_paid_unpaid_locked(
                         entry, remaining, payment_method, recorded_by,
@@ -5356,6 +5371,28 @@ class BarTabEntry(models.Model):
     # correctly report the TRUE outstanding amount for a still-unpaid
     # (is_paid=False) entry, instead of assuming the full original amount
     # is owed just because is_paid hasn't flipped to True yet.
+    debt_collected_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    # ↑ 2026-08-24 (Roy, Marley's tab) — a NARROWER sibling of amount_paid:
+    # ONLY ever incremented by debt_views._reconcile_tab_entries_for_debt_
+    # payment() (both its partial and fully-covered branches), NEVER by an
+    # ordinary counter settle (split_paid_unpaid_locked/mark_fully_paid/
+    # settle_entries_amount_locked). amount_paid tracks "collected via
+    # EITHER source" (needed for remaining_amount()/split math to stay
+    # revenue-correct regardless of how an entry gets resolved); this field
+    # isolates the DEBT-TRACKER-sourced portion specifically — the part
+    # that's ALSO separately counted via CustomerDebtPayment in shift_
+    # views._reconcile()'s own debt_recovered_cash/mpesa. Once payment_
+    # method later flips to cash/mpesa (a full-item transfer landing on an
+    # OPEN tab, then settled ordinarily; or the entry finally reaching full
+    # coverage entirely via the debt tracker itself), _reconcile() and
+    # till_expected_cash() both subtract THIS field (never amount_paid)
+    # from the transaction's sale_amount before counting it as freshly
+    # collected cash/mpesa — otherwise the debt-recovered portion would be
+    # double-counted. A pure counter split (Hezzy's 40-of-50 mpesa split,
+    # no debt tracker involved) leaves this at 0, so its own newly-
+    # collected 40 is correctly counted in full, unlike amount_paid (which
+    # DOES grow from a counter split, and would wrongly zero it out if
+    # subtracted here instead).
     paid_at        = models.DateTimeField(null=True, blank=True)
     payment_method = models.CharField(max_length=10, blank=True)
     settled_by     = models.ForeignKey(
@@ -5388,6 +5425,46 @@ class BarTabEntry(models.Model):
         silently ignored in one place and honoured in another.
         """
         return max(Decimal('0'), (self.amount or Decimal('0')) - (self.amount_paid or Decimal('0')))
+
+    def mark_fully_paid(self, payment_method, recorded_by=None, now=None):
+        """Close out this entry's remaining balance via the counter (cash/
+        mpesa), NOT the debt tracker — the single, shared "fully settle
+        this entry right now" primitive used by settle_tab's plain loop,
+        settle_entries_amount_locked's fully-covered branch, and
+        tick_entry's non-debt branch (2026-08-24, same live report as
+        unpaid_total()'s fix above).
+
+        Captures and returns the amount GENUINELY collected in THIS action
+        (remaining_amount(), computed before mutating anything) — for the
+        common case (amount_paid=0) this equals `amount`, unchanged from
+        before; only when a prior partial payment already covered part of
+        this entry (a transferred, previously part-paid item) does it
+        differ, and callers (settled_amount/SMS text, till reconciliation
+        via _reconcile()'s amount_paid-aware subquery) must use THIS
+        figure, never the entry's own full `amount`, or the already-
+        collected portion gets silently double-counted.
+
+        Deliberately does NOT touch Transaction.sale_amount — that stays
+        the item's true, full historical sale price (revenue is recognised
+        at SALE time throughout this app, not at payment time); only
+        `payment_method` moves off 'credit'. amount_paid is stamped to the
+        full `amount` here so remaining_amount() correctly reads 0 once
+        paid, matching the convention _reconcile_tab_entries_for_debt_
+        payment() already established for its own "fully covered" branch.
+        """
+        now = now or timezone.now()
+        newly_collected = self.remaining_amount()
+        self.is_paid = True
+        self.paid_at = now
+        self.payment_method = payment_method
+        self.settled_by = recorded_by
+        self.amount_paid = self.amount
+        self.save(update_fields=['is_paid', 'paid_at', 'payment_method', 'settled_by', 'amount_paid'])
+        if self.transaction_id:
+            txn = self.transaction
+            txn.payment_method = payment_method
+            txn.save(update_fields=['payment_method'])
+        return newly_collected
 
     def __str__(self):
         status = 'paid' if self.is_paid else 'open'
@@ -5461,9 +5538,14 @@ class BarTabEntry(models.Model):
                 raise ValueError('Tab ya kiingilio hiki haiko wazi wala haijawa deni.')
 
             paid_amount = Decimal(str(paid_amount))
-            if paid_amount < 0 or paid_amount >= entry.amount:
+            # 2026-08-24: validated against remaining_amount() (what's
+            # genuinely still owed), not the entry's full original amount —
+            # an entry carrying a pre-existing amount_paid (e.g. a debt-
+            # tracker payment collected before this transfer) must never be
+            # split against money that was already collected.
+            if paid_amount < 0 or paid_amount >= entry.remaining_amount():
                 raise ValueError(
-                    'Kiasi cha kulipa lazima kiwe 0 au zaidi, na pungufu ya jumla ya kiingilio.'
+                    'Kiasi cha kulipa lazima kiwe 0 au zaidi, na pungufu ya deni lililobaki.'
                 )
             if source_kept_paid and paid_amount > 0 and paid_method not in ('cash', 'mpesa'):
                 raise ValueError('Njia ya malipo si sahihi.')
@@ -5544,10 +5626,10 @@ class BarTabEntry(models.Model):
 
     @classmethod
     def split_paid_unpaid_locked(cls, entry, paid_amount, paid_method, recorded_by=None):
-        """Split an entry into a paid portion (reduced in place to
-        paid_amount, marked paid via paid_method) and a NEW unpaid remainder
-        entry on the SAME tab. Caller must already hold the row lock
-        (select_for_update) and have validated 0 < paid_amount < entry.amount.
+        """Split an entry into a paid portion (reduced in place, marked paid
+        via paid_method) and a NEW unpaid remainder entry on the SAME tab.
+        Caller must already hold the row lock (select_for_update) and have
+        validated 0 < paid_amount < entry.remaining_amount().
 
         Shared building block: split_and_transfer_locked() (above) uses this
         for its split step, then proposes the remainder to a DIFFERENT
@@ -5557,14 +5639,31 @@ class BarTabEntry(models.Model):
         remainder as an ordinary unpaid entry on THIS SAME tab instead —
         same split mechanic, different destiny for the remainder.
 
+        2026-08-24 live report (Roy, Marley's tab): `paid_amount` used to be
+        measured against the entry's full `amount`, ignoring any pre-
+        existing `amount_paid` (e.g. 30 already collected via a debt-
+        tracker payment BEFORE a full-item transfer landed this entry here)
+        — a customer paying exactly the true remaining balance would still
+        get incorrectly split, reopening an already-settled portion as a
+        brand-new "still owed" balance. total_kept is everything EVER
+        collected for the kept portion (the pre-existing amount_paid plus
+        what's being collected right now); the two Transaction rows still
+        sum to the original entry.amount — no revenue gained or lost, just
+        correctly redistributed between them, exactly as before.
+
         The new Transaction carries qty=0 (no additional stock left the
         shelf — this re-bills an already-sold item) and copies the
         original's keg_barrel/produce_bunch/kitchen_batch FK so Transaction.
         cost()'s proportional formula still attributes correctly — see
         split_and_transfer_locked()'s docstring for the full reasoning.
-        Returns the new remainder BarTabEntry (unpaid, same tab).
+        Returns the new remainder BarTabEntry (unpaid, same tab). Stashes
+        `entry._newly_collected = paid_amount` on the mutated original
+        entry — what THIS call actually collected, as opposed to
+        entry.amount/total_kept which include any earlier collection —
+        for callers building a receipt/SMS/settled_amount figure.
         """
-        remainder = entry.amount - paid_amount
+        total_kept = (entry.amount_paid or Decimal('0')) + paid_amount
+        remainder = entry.amount - total_kept
         orig_txn = Transaction.objects.select_for_update().get(pk=entry.transaction_id)
 
         # payment_method MUST move off 'credit' here too (found 2026-07-31,
@@ -5585,16 +5684,20 @@ class BarTabEntry(models.Model):
         # staying in sync. split_kept_unpaid_locked() is correctly NOT
         # touched here — its kept portion is still genuinely unpaid, so
         # 'credit' remains the right tag for it.
-        orig_txn.sale_amount = paid_amount
+        orig_txn.sale_amount = total_kept
         orig_txn.payment_method = paid_method
         orig_txn.save(update_fields=['sale_amount', 'payment_method'])
 
-        entry.amount = paid_amount
+        entry.amount = total_kept
+        entry.amount_paid = total_kept
         entry.is_paid = True
         entry.payment_method = paid_method
         entry.paid_at = timezone.now()
         entry.settled_by = recorded_by
-        entry.save(update_fields=['amount', 'is_paid', 'payment_method', 'paid_at', 'settled_by'])
+        entry.save(update_fields=[
+            'amount', 'amount_paid', 'is_paid', 'payment_method', 'paid_at', 'settled_by',
+        ])
+        entry._newly_collected = paid_amount
 
         # payment_method='credit' EXPLICITLY (found 2026-07-25, live Monsoon
         # Inn cash-reconciliation report: system showed KES 2980 expected,
@@ -5636,18 +5739,30 @@ class BarTabEntry(models.Model):
         flag ever touched. The carved-off transfer_amount becomes the new
         unpaid entry proposed to the destination tab, same as the sibling
         method. Caller must already hold the row lock and have validated
-        0 <= kept_amount < entry.amount.
+        0 <= kept_amount < entry.remaining_amount().
+
+        kept_amount is "how much of what's still owed stays behind" — NOT
+        the entry's new full amount. 2026-08-24 live report (same fix as
+        split_paid_unpaid_locked): a pre-existing amount_paid (already
+        collected via a debt-tracker payment before this split) must be
+        preserved, never silently dropped just because the entry is
+        shrinking — the kept portion's new `amount` is prior amount_paid
+        plus kept_amount, so remaining_amount() on the shrunk entry still
+        correctly reads `kept_amount` afterward.
         """
-        transfer_amount = entry.amount - kept_amount
+        prior_paid = entry.amount_paid or Decimal('0')
+        transfer_amount = entry.remaining_amount() - kept_amount
+        new_kept_amount = prior_paid + kept_amount
         orig_txn = Transaction.objects.select_for_update().get(pk=entry.transaction_id)
 
-        orig_txn.sale_amount = kept_amount
+        orig_txn.sale_amount = new_kept_amount
         orig_txn.save(update_fields=['sale_amount'])
-        entry.amount = kept_amount
+        entry.amount = new_kept_amount
         entry.save(update_fields=['amount'])
-        # entry.is_paid / payment_method deliberately untouched — it was
-        # already an ordinary unpaid tab charge and stays exactly that,
-        # just for a smaller amount now that part of it has moved away.
+        # entry.is_paid / payment_method / amount_paid deliberately
+        # untouched — it was already an ordinary unpaid (or partly-paid)
+        # tab charge and stays exactly that, just for a smaller balance now
+        # that part of it has moved away.
 
         new_txn = Transaction.objects.create(
             item=orig_txn.item, business=orig_txn.business, type='Issue',

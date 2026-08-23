@@ -17,7 +17,7 @@ from decimal import Decimal, InvalidOperation
 logger = logging.getLogger(__name__)
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Case, DecimalField, F, Q, Sum, Value, When
+from django.db.models import Case, DecimalField, F, OuterRef, Q, Subquery, Sum, Value, When
 from django.db.models.functions import Abs, Coalesce
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -602,8 +602,45 @@ def _reconcile(shift):
         default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
         output_field=DecimalField(max_digits=12, decimal_places=2),
     )
-    cash_sales   = float(txns.filter(payment_method='cash'  ).aggregate(t=Sum(_rev))['t'] or 0)
-    mpesa_sales  = float(txns.filter(payment_method='mpesa' ).aggregate(t=Sum(_rev))['t'] or 0)
+    # 2026-08-24 live report (Roy, Marley's tab) — a genuine, confirmed
+    # double-count found while tracing the display bug reported for this
+    # same tab: a tab-linked transaction's BarTabEntry.debt_collected_
+    # amount can be >0 BEFORE its own payment_method ever flips off
+    # 'credit' — a real debt-tracker payment already collected (and
+    # already counted below via debt_recovered_cash/mpesa) against a still
+    # -open balance, most often because that balance was later transferred
+    # to a different customer's tab and then settled ordinarily at the
+    # counter. The moment payment_method DOES flip to cash/mpesa (full-item
+    # transfer landing on an OPEN tab, then Lipa Yote — or, in the pure
+    # non-transfer case, an entry finally reaching full coverage entirely
+    # via the debt tracker), cash_sales/mpesa_sales would otherwise count
+    # the transaction's WHOLE sale_amount as freshly collected — double-
+    # counting the portion already recognised via debt_recovered_cash/
+    # mpesa. Deliberately reads debt_collected_amount, NOT the broader
+    # amount_paid (which also grows from an ORDINARY counter split-settle,
+    # e.g. a customer paying 40 of 50 via M-Pesa with no debt tracker
+    # involved at all — subtracting THAT would wrongly zero out money that
+    # was never double-counted anywhere; see the field's own docstring on
+    # BarTabEntry). Subtracting here is a no-op for the overwhelming common
+    # case (no tab_entry, or nothing ever collected via the debt tracker)
+    # and only differs for exactly this scenario. credit_sales is
+    # deliberately UNCHANGED — it represents total credit ever extended
+    # (an accrual fact, like revenue), never reduced by a later payment.
+    from .models import BarTabEntry as _BTE
+    _tab_debt_collected_sq = Subquery(
+        _BTE.objects.filter(transaction_id=OuterRef('pk')).values('debt_collected_amount')[:1],
+        output_field=DecimalField(max_digits=10, decimal_places=2),
+    )
+    txns = txns.annotate(_tab_debt_collected=Coalesce(
+        _tab_debt_collected_sq, Value(0), output_field=DecimalField(max_digits=10, decimal_places=2),
+    ))
+    _rev_cash_mpesa = Case(
+        When(sale_amount__isnull=False, then=F('sale_amount') - F('_tab_debt_collected')),
+        default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+    cash_sales   = float(txns.filter(payment_method='cash'  ).aggregate(t=Sum(_rev_cash_mpesa))['t'] or 0)
+    mpesa_sales  = float(txns.filter(payment_method='mpesa' ).aggregate(t=Sum(_rev_cash_mpesa))['t'] or 0)
     credit_sales = float(txns.filter(payment_method='credit').aggregate(t=Sum(_rev))['t'] or 0)
 
     # 2026-08-22 live Q&A (Roy): the owner never needs an open shift to
@@ -628,8 +665,8 @@ def _reconcile(shift):
         )
         if _owner_ids:
             _owner_txns = txns.filter(recorded_by_id__in=_owner_ids)
-            owner_cash   = float(_owner_txns.filter(payment_method='cash'  ).aggregate(t=Sum(_rev))['t'] or 0)
-            owner_mpesa  = float(_owner_txns.filter(payment_method='mpesa' ).aggregate(t=Sum(_rev))['t'] or 0)
+            owner_cash   = float(_owner_txns.filter(payment_method='cash'  ).aggregate(t=Sum(_rev_cash_mpesa))['t'] or 0)
+            owner_mpesa  = float(_owner_txns.filter(payment_method='mpesa' ).aggregate(t=Sum(_rev_cash_mpesa))['t'] or 0)
             owner_credit = float(_owner_txns.filter(payment_method='credit').aggregate(t=Sum(_rev))['t'] or 0)
     # 2026-07-31 live report — "cash sales and mpesa ... should not include
     # confirmed unpaid bills and debts, only what was confirmed". credit_sales
@@ -978,17 +1015,37 @@ def till_expected_cash(business, station, as_of=None):
             f"{timezone.localtime(anchor.ended_at).strftime('%d %b, %H:%M')}"
         )
 
-    _rev = Case(
-        When(sale_amount__isnull=False, then=F('sale_amount')),
-        default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
-        output_field=DecimalField(max_digits=12, decimal_places=2),
-    )
     txns = Transaction.objects.filter(
         business=business, type='Issue', payment_method='cash',
         created_at__lte=as_of, item__store__is_kitchen=is_kitchen,
     ).exclude(invoice_no='[SVQ]')
     if window_start:
         txns = txns.filter(created_at__gt=window_start)
+    # 2026-08-24 — same fix, same reasoning, as _reconcile()'s own
+    # cash_sales above: a tab-linked transaction can carry a pre-existing
+    # BarTabEntry.debt_collected_amount (already collected via the debt
+    # tracker, and already counted a few lines below via debt_recovered)
+    # from BEFORE its payment_method ever flips to 'cash' — subtracting it
+    # here stops that portion being double-counted into this continuous
+    # till figure too. Deliberately debt_collected_amount, NOT the broader
+    # amount_paid, which also grows from an ordinary counter split-settle
+    # that was never double-counted anywhere (see the field's own
+    # docstring on BarTabEntry) — subtracting THAT would wrongly zero out
+    # genuinely fresh cash. No-op for the overwhelming common case (no tab_
+    # entry, or nothing ever collected via the debt tracker).
+    from .models import BarTabEntry as _BTE
+    _tab_debt_collected_sq = Subquery(
+        _BTE.objects.filter(transaction_id=OuterRef('pk')).values('debt_collected_amount')[:1],
+        output_field=DecimalField(max_digits=10, decimal_places=2),
+    )
+    txns = txns.annotate(_tab_debt_collected=Coalesce(
+        _tab_debt_collected_sq, Value(0), output_field=DecimalField(max_digits=10, decimal_places=2),
+    ))
+    _rev = Case(
+        When(sale_amount__isnull=False, then=F('sale_amount') - F('_tab_debt_collected')),
+        default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
     cash_sales = float(txns.aggregate(t=Sum(_rev))['t'] or 0)
 
     # 2026-08-22, same-day follow-up ("every transactional aspect of the

@@ -42687,3 +42687,339 @@ class DiagnoseCustomerDebtTransferHistoryTest(TestCase):
         out = StringIO()
         call_command('diagnose_customer_debt', business='Diag Transfer', customer='Marley', stdout=out)
         self.assertNotIn('STALE', out.getvalue())
+
+
+class PartiallyPaidEntryDisplayAndReconcileTest(TestCase):
+    """2026-08-24 live report (Roy, live screenshots): Marley's tab showed
+    Kikombe at KES 80 (not the true remaining 50) and a tab total of 740
+    (not 710) after a full-item transfer landed an entry there that had
+    already been PARTIALLY paid via the debt tracker before the transfer.
+    Traced far beyond the display bug itself: BarTabEntry.amount_paid
+    (tracking that 30 already collected) was never respected by ANY of the
+    ordinary tab-settle mechanisms once an entry carries it forward — the
+    tabs drawer, the live receipt, BarTab.unpaid_total(), settle_tab()'s
+    own partial-settle boundary math (settle_entries_amount_locked would
+    have silently REOPENED the already-paid 30 as a brand-new "still
+    owed" balance the instant a customer tried to pay exactly what they
+    truly owed), and — most seriously — shift_views._reconcile()'s own
+    cash/mpesa till reconciliation, which would have DOUBLE-COUNTED the
+    already-collected 30 the moment the entry's payment_method finally
+    flipped off 'credit' at full settlement, since that 30 was already
+    separately recognised via debt_recovered_cash/mpesa.
+
+    Fixed at the root: BarTabEntry.remaining_amount() (already existed) is
+    now the one figure used everywhere an entry's "still owed" state is
+    read or acted on — BarTab.unpaid_total(), the tabs-drawer entry
+    serialisers (keg_views._entry_dict / kitchen_views' equivalents),
+    _get_live_tab_state()'s outstanding total, settle_entries_amount_
+    locked()'s boundary math, and the new shared BarTabEntry.
+    mark_fully_paid() helper used by settle_tab/tick_entry/settle_entries_
+    amount_locked alike. A SEPARATE, narrower field — debt_collected_
+    amount — isolates specifically the portion ever collected via the
+    debt tracker (as opposed to amount_paid, which also grows from an
+    ordinary counter split-settle that was never double-counted anywhere)
+    so _reconcile()/till_expected_cash() can subtract exactly the right
+    amount and no more."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Marley Scenario Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='mrl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kikombe',
+            material_no='MRL-01', unit='Pcs', selling_price=Decimal('80'),
+            cost_price=Decimal('40'),
+        )
+        self.roy = Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        self.marley = Customer.objects.create(business=self.biz, name='Marley', credit_approved=True)
+
+        self.source_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.roy,
+            status='SETTLED', source='bar',
+        )
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='Roy',
+        )
+        self.entry = BarTabEntry.objects.create(
+            tab=self.source_tab, transaction=self.txn, description='Kikombe',
+            amount=Decimal('80'), is_paid=False,
+        )
+        self.dest_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Marley', customer=self.marley,
+            status='OPEN', source='bar',
+        )
+        self.client.force_login(self.owner)
+
+    def _pay_30_then_transfer_remaining_to_marley(self):
+        from core.debt_views import _do_settle_debt_payment
+        _do_settle_debt_payment(self.roy, self.biz, Decimal('30'), 'cash', 'bar')
+        self.entry.refresh_from_db()
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=self.entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=self.dest_tab.id, staff_user=self.owner,
+        )
+        tfr.accept()
+        self.entry.refresh_from_db()
+        return self.entry
+
+    def test_tabs_drawer_shows_remaining_not_full_amount(self):
+        self._pay_30_then_transfer_remaining_to_marley()
+        resp = self.client.get('/bar/tabs/')
+        data = resp.json()
+        marley_tab = next(t for t in data['tabs'] if t['customer_name'] == 'Marley')
+        kikombe = next(e for e in marley_tab['entries'] if e['description'] == 'Kikombe')
+        self.assertEqual(kikombe['amount'], 50.0, 'must show the true remaining 50, not the original 80')
+        self.assertEqual(marley_tab['unpaid_total'], 50.0)
+        self.assertEqual(marley_tab['total'], 50.0)
+        self.assertEqual(kikombe.get('already_paid'), 30.0)
+
+    def test_unpaid_total_model_method_reflects_remaining(self):
+        self._pay_30_then_transfer_remaining_to_marley()
+        self.assertEqual(self.dest_tab.unpaid_total(), Decimal('50'))
+
+    def test_live_receipt_outstanding_shows_remaining_not_full(self):
+        self._pay_30_then_transfer_remaining_to_marley()
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Kikombe', 'qty': 1, 'subtotal': 80}],
+            payment_method='tab', customer_name='Marley', meta={'tab_id': self.dest_tab.id},
+        )
+        from core.receipt_views import _get_live_tab_state
+        is_live, status, lines, outstanding = _get_live_tab_state(rcpt)
+        self.assertTrue(is_live)
+        self.assertEqual(status, 'OPEN')
+        self.assertEqual(outstanding, 50.0, 'Jumla must be the true remaining, matching this app\'s own "what\'s still unpaid" convention')
+        kikombe_line = next(l for l in lines if 'Kikombe' in l['name'])
+        self.assertEqual(kikombe_line['subtotal'], 80.0, 'the line ITEM PRICE stays the true full price, unlike the outstanding total')
+
+    def test_paying_exactly_the_remaining_does_not_wrongly_reopen_a_debt(self):
+        """The most dangerous shape of this bug: settle_entries_amount_
+        locked's own boundary math, before the fix, compared the customer's
+        payment against the entry's FULL amount (80) — so a customer paying
+        exactly the true remaining 50 would have been wrongly SPLIT,
+        silently reopening the already-collected 30 as a brand-new unpaid
+        balance."""
+        self._pay_30_then_transfer_remaining_to_marley()
+        resp = self.client.post(
+            f'/bar/tabs/{self.dest_tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [str(self.entry.id)], 'amount': '50'},
+        )
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.entry.refresh_from_db()
+        self.assertTrue(self.entry.is_paid, 'paying exactly what is owed must fully settle the entry')
+        self.assertEqual(self.dest_tab.unpaid_total(), Decimal('0'))
+        self.assertEqual(
+            data['settled_amount'], 50.0,
+            'the SMS/response must say 50 was collected, not 80 (30 of it was already collected earlier)',
+        )
+
+    def test_lipa_yote_full_settle_requests_and_reports_only_the_remainder(self):
+        self._pay_30_then_transfer_remaining_to_marley()
+        resp = self.client.post(
+            f'/bar/tabs/{self.dest_tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(self.entry.id)]},
+        )
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertEqual(data['settled_amount'], 50.0)
+        self.entry.refresh_from_db()
+        self.assertTrue(self.entry.is_paid)
+        self.assertEqual(self.entry.amount, Decimal('80'), 'the true full price is preserved, unchanged')
+        self.assertEqual(self.entry.amount_paid, Decimal('80'), 'amount_paid syncs to the full amount once fully paid')
+        self.assertEqual(
+            self.entry.debt_collected_amount, Decimal('30'),
+            'debt_collected_amount stays at exactly what the debt tracker itself collected, never the counter portion',
+        )
+
+    def test_reconcile_never_double_counts_the_debt_recovered_portion(self):
+        """The core money-correctness fix: sum cash_sales + debt_recovered_
+        cash across BOTH the shift the debt payment happened in AND the
+        shift the counter settle happened in — must equal exactly the
+        true 80 total ever collected (30 + 50), never 110 (30 + 80)."""
+        shift_a = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner,
+            status='CLOSED', opening_float=Decimal('0'), station='bar',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+        )
+        from core.debt_views import _do_settle_debt_payment
+        # Pay the 30 while shift_a's window is "current" by backdating the payment.
+        _do_settle_debt_payment(
+            self.roy, self.biz, Decimal('30'), 'cash', 'bar',
+            paid_at=timezone.now() - timedelta(hours=2, minutes=30),
+        )
+        self.entry.refresh_from_db()
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=self.entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=self.dest_tab.id, staff_user=self.owner,
+        )
+        tfr.accept()
+        self.entry.refresh_from_db()
+
+        # started_at explicitly backdated to BEFORE the original Kikombe
+        # transaction's own created_at (stamped in setUp, a moment before
+        # this test method body runs) — otherwise _reconcile()'s created_
+        # at-scoped window would exclude it entirely (too early for the
+        # shift's own window), understating shift_b's cash_sales to 0
+        # regardless of this fix.
+        shift_b = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+            started_at=timezone.now() - timedelta(minutes=5),
+        )
+        resp = self.client.post(
+            f'/bar/tabs/{self.dest_tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [str(self.entry.id)]},
+        )
+        self.assertTrue(resp.json().get('ok'))
+
+        from core.shift_views import _reconcile
+        rec_a = _reconcile(shift_a)
+        rec_b = _reconcile(shift_b)
+        total_ever_collected = (
+            rec_a['cash_sales'] + rec_a['debt_recovered_cash']
+            + rec_b['cash_sales'] + rec_b['debt_recovered_cash']
+        )
+        self.assertEqual(
+            round(total_ever_collected, 2), 80.0,
+            'must equal the true 80 KES ever collected (30 + 50), never 110 (double-counting the 30)',
+        )
+        self.assertEqual(rec_b['cash_sales'], 50.0, "shift_b's OWN cash_sales must be only the fresh 50, not 80")
+
+    def test_till_expected_cash_never_double_counts_either(self):
+        """Same fix, same reasoning, applied to the continuous till figure
+        (till_expected_cash) rather than a bound shift's own reconciliation.
+        An anchor must exist first (a real physical count) — matching
+        TillExpectedCashTest's own established fixture pattern — or the
+        figure reads as "not yet established" (expected_cash=None)
+        regardless of this fix."""
+        from core.debt_views import _do_settle_debt_payment
+        from core.shift_views import till_expected_cash
+
+        # Owner-staffed shifts are deliberately excluded as anchors (an
+        # owner's own shift isn't tied to one counter) — a non-owner staffer
+        # is required to establish one.
+        bar_staff = User.objects.create_user(username='mrl_bar_staff', password='x')
+        UserProfile.objects.create(user=bar_staff, business=self.biz, role='staff')
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=bar_staff,
+            opening_float=Decimal('0'), status='CLOSED', station='bar',
+            started_at=timezone.now() - timedelta(hours=2),
+            ended_at=timezone.now() - timedelta(hours=1),
+            closing_cash_counted=Decimal('0'),
+        )
+        before = till_expected_cash(self.biz, 'bar')
+        self.assertTrue(before['anchor_established'])
+        self.assertEqual(before['expected_cash'], 0.0)
+
+        _do_settle_debt_payment(self.roy, self.biz, Decimal('30'), 'cash', 'bar')
+        self.entry.refresh_from_db()
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=self.entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='cash', dest_tab_id=self.dest_tab.id, staff_user=self.owner,
+        )
+        tfr.accept()
+        self.entry.refresh_from_db()
+
+        resp = self.client.post(
+            f'/bar/tabs/{self.dest_tab.id}/settle/',
+            {'payment_method': 'cash', 'entry_ids': [str(self.entry.id)]},
+        )
+        self.assertTrue(resp.json().get('ok'))
+        after = till_expected_cash(self.biz, 'bar')
+
+        # Exactly the 50 genuinely newly collected at the counter — the 30
+        # collected via the debt tracker is real cash too (correctly
+        # reflected via debt_recovered_cash), but must not ALSO be counted
+        # a second time via cash_sales once the transaction's payment_
+        # method finally flips to 'cash'.
+        self.assertEqual(after['expected_cash'], 80.0)
+        self.assertEqual(after['breakdown']['cash_sales'], 50.0)
+        self.assertEqual(after['breakdown']['debt_recovered'], 30.0)
+
+    def test_a_pure_counter_split_with_no_debt_tracker_involved_is_unaffected(self):
+        """Regression lock for the fix's own precision: debt_collected_
+        amount must stay 0 (and therefore never reduce cash_sales/mpesa_
+        sales) for an entry that was NEVER touched by the debt tracker at
+        all — an ordinary partial M-Pesa payment at the counter."""
+        tab = BarTab.objects.create(business=self.biz, customer_name='Hezzy', status='OPEN', source='bar')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('50'), payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(tab=tab, transaction=txn, description='Kikombe', amount=Decimal('50'))
+        # started_at explicitly backdated to before txn's own created_at —
+        # see the shift_b comment above for why this matters.
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+            started_at=timezone.now() - timedelta(minutes=5),
+        )
+        self.client.post(
+            f'/bar/tabs/{tab.id}/settle/',
+            {'payment_method': 'mpesa', 'entry_ids': [str(entry.id)], 'amount': '40'},
+        )
+        entry.refresh_from_db()
+        self.assertEqual(entry.debt_collected_amount, Decimal('0'))
+        from core.shift_views import _reconcile
+        data = _reconcile(shift)
+        self.assertEqual(data['mpesa_sales'], 40.0, 'a pure counter split must count its own full newly-collected amount')
+        # credit_sales isn't asserted to an exact figure here — this shared
+        # fixture's setUp() also carries its own still-credit Kikombe
+        # transaction, unrelated to this test's own Hezzy fixture, which
+        # legitimately also falls inside the shift's window.
+
+    def test_mark_fully_paid_returns_only_the_newly_collected_remainder(self):
+        self._pay_30_then_transfer_remaining_to_marley()
+        newly_collected = self.entry.mark_fully_paid('cash', self.owner)
+        self.assertEqual(newly_collected, Decimal('50'))
+        self.entry.refresh_from_db()
+        self.assertTrue(self.entry.is_paid)
+        self.assertEqual(self.entry.amount_paid, Decimal('80'))
+        self.assertEqual(self.entry.transaction.payment_method, 'cash')
+        # sale_amount must stay the true full historical price — revenue is
+        # recognised at sale time throughout this app, never reduced at
+        # payment time.
+        self.assertEqual(self.entry.transaction.sale_amount, Decimal('80'))
+
+    def test_tick_entry_debt_redirect_uses_remaining_not_full_amount(self):
+        """The debt-redirect branch of tick_entry (a single-entry tick on a
+        tab already converted to debt) must record a NEW debt payment for
+        only what remains, not re-charge the already-collected portion."""
+        self._pay_30_then_transfer_remaining_to_marley()
+        # Convert Marley's tab (now carrying the transferred item) to debt.
+        self.client.post(f'/bar/tabs/{self.dest_tab.id}/debt/', {'customer_name': 'Marley'})
+        resp = self.client.post(
+            f'/bar/tabs/entry/{self.entry.id}/tick/', {'payment_method': 'mpesa'},
+        )
+        data = resp.json()
+        self.assertTrue(data.get('redirected_to_debt'))
+        self.assertIn('KES 50', data['message'])
+        from core.debt_views import _get_customer_debt_data
+        post = _get_customer_debt_data(self.marley, self.biz)
+        self.assertEqual(post['outstanding'], 0.0)
+
+    def test_split_paid_unpaid_locked_preserves_prior_amount_paid(self):
+        """Direct model-layer check: a SECOND partial split on an entry that
+        already carries amount_paid from the debt tracker must correctly
+        account for both — total_kept sums prior collection plus this
+        split's own newly-collected amount."""
+        self._pay_30_then_transfer_remaining_to_marley()
+        # Of the true remaining 50, split off 20 as a fresh cash payment
+        # kept on Marley's own tab, leaving 30 to transfer onward.
+        new_entry, tfr = BarTabEntry.split_and_transfer_locked(
+            entry_id=self.entry.id, business=self.biz, paid_amount=Decimal('20'),
+            paid_method='cash', dest_tab_id=self.source_tab.id, staff_user=self.owner,
+        )
+        self.entry.refresh_from_db()
+        self.assertEqual(self.entry.amount, Decimal('50'), 'kept portion = prior 30 + this split\'s 20')
+        self.assertEqual(self.entry.amount_paid, Decimal('50'))
+        self.assertTrue(self.entry.is_paid)
+        self.assertEqual(
+            self.entry.debt_collected_amount, Decimal('30'),
+            'debt_collected_amount must stay at the debt-tracker-only portion, unaffected by this counter split',
+        )
+        self.assertEqual(new_entry.amount, Decimal('30'), 'the transferred remainder is the true leftover 30')
+        self.assertEqual(tfr.amount, Decimal('30'))

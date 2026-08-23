@@ -338,7 +338,17 @@ def _get_live_tab_state(receipt):
                 icon = '🍽 ' if is_kitchen else '🍺 '
                 amt = float(e.amount)
                 if not e.is_paid:
-                    outstanding += amt
+                    # 2026-08-24 live report (Roy, Marley's tab): "still
+                    # owed" must be remaining_amount(), not the line's full
+                    # price — a full-item transfer can land an entry here
+                    # already carrying a real amount_paid (collected
+                    # earlier via the debt tracker), and Jumla is this
+                    # app's own established "what's still unpaid right now"
+                    # figure (see the 2026-08-01 "Umeshalipa Hadi Sasa"
+                    # entry), never the gross original total. The line
+                    # subtotal itself stays the true full item price —
+                    # only the OUTSTANDING total is adjusted.
+                    outstanding += float(e.remaining_amount())
                 lines.append({
                     'name': icon + e.description,
                     'qty': 1,

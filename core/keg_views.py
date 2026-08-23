@@ -1661,10 +1661,23 @@ def tabs_list(request):
             _dt_local = timezone.localtime(e.transaction.created_at)
             if _dt_local.date() != _today_local:
                 _entry_date = _dt_local.strftime('%d %b')
+        # 2026-08-24 live report (Roy, Marley's tab): an UNPAID entry shows
+        # what's genuinely still owed (remaining_amount()), not its full
+        # original price — a full-item transfer can land an entry here
+        # already carrying a real amount_paid (e.g. 30 of an 80 KES cup,
+        # collected earlier via the debt tracker), and showing the full 80
+        # both misleads staff/the customer AND, since this same figure
+        # drives the tab's own displayed total and the "Kiasi" partial-
+        # settle input, risks a wrong overpay/split attempt. A PAID entry
+        # still shows its true full price (struck through elsewhere in the
+        # UI) — remaining_amount() would read 0 there, which is correct for
+        # "still owed" but wrong for "what this line cost".
+        _display_amount = e.amount if e.is_paid else e.remaining_amount()
         return {
             'id': e.id,
             'description': e.description,
-            'amount': float(e.amount),
+            'amount': float(_display_amount),
+            'already_paid': float(e.amount_paid) if (not e.is_paid and e.amount_paid) else 0,
             'is_paid': e.is_paid,
             'payment_method': e.payment_method,
             'is_kitchen_item': _is_kitchen_item,
@@ -2738,10 +2751,15 @@ def tick_entry(request, entry_id):
         if tab.source not in _allowed_tab_sources(up):
             return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kulipa deni hili.'}, status=403)
         source = tab.source if tab.source in ('bar', 'kitchen') else 'bar'
+        # 2026-08-24 live report (Roy, Marley's tab): remaining_amount(),
+        # not entry.amount — a partial-paid-then-transferred entry must
+        # only ever record a NEW debt payment for what's genuinely still
+        # owed, never re-charge the portion already collected earlier.
+        _owed_now = entry.remaining_amount()
         try:
             from core.debt_views import _do_settle_debt_payment
             rcpt, _post_data = _do_settle_debt_payment(
-                tab.customer, up.business, entry.amount, pay, source,
+                tab.customer, up.business, _owed_now, pay, source,
                 notes=f'Malipo kwenye tab #{tab.id} (ilishageuzwa deni) — kipengele: {entry.description}',
                 recorded_by=request.user,
             )
@@ -2755,7 +2773,7 @@ def tick_entry(request, entry_id):
             'ok': True,
             'redirected_to_debt': True,
             'message': (
-                f'ℹ️ Tab hii ilishageuzwa deni — KES {entry.amount:,.0f} '
+                f'ℹ️ Tab hii ilishageuzwa deni — KES {_owed_now:,.0f} '
                 f'imerekodiwa kama malipo ya deni ya {tab.customer.name}.'
             ),
             'receipt_url': f'/r/{rcpt.token}/',
@@ -2763,14 +2781,7 @@ def tick_entry(request, entry_id):
         })
 
     now = timezone.now()
-    entry.is_paid = True
-    entry.paid_at = now
-    entry.payment_method = pay
-    entry.settled_by = request.user
-    entry.save(update_fields=['is_paid', 'paid_at', 'payment_method', 'settled_by'])
-
-    entry.transaction.payment_method = pay
-    entry.transaction.save(update_fields=['payment_method'])
+    entry.mark_fully_paid(pay, request.user, now)
     tab_settled = not tab.entries.filter(is_paid=False).exists()
     receipt_url = None
     receipt_id = None
@@ -3361,7 +3372,14 @@ def _finish_settle_tab(request, up, tab, pay, entries_to_settle, now):
         tab.cash_requested_at = None
         tab.save(update_fields=['cash_requested_at'])
 
-    settled_amount = sum(float(e.amount) for e in entries_to_settle)
+    # 2026-08-24 live report (Roy, Marley's tab): what the customer/SMS/
+    # receipt says was "just paid" must be what was GENUINELY collected in
+    # THIS action — _newly_collected (stashed by mark_fully_paid()/
+    # split_paid_unpaid_locked() on each entry) excludes any portion
+    # already collected earlier via a debt-tracker payment (a transferred,
+    # part-paid item). Falls back to e.amount for a caller that never set
+    # it (shouldn't happen post-fix, kept as a safe default).
+    settled_amount = sum(float(getattr(e, '_newly_collected', e.amount)) for e in entries_to_settle)
     customer_phone = (request.POST.get('customer_phone') or '').strip()
 
     # Auto-create or update Customer record on any settlement (not just credit)
@@ -3649,7 +3667,13 @@ def settle_tab(request, tab_id):
     # tab stays OPEN with the shortfall as an ordinary unpaid entry — never
     # silently written off. Omitted/blank/>= total behaves exactly as
     # before (full settle of every selected entry).
-    total_selected = sum((e.amount for e in entries_to_settle), Decimal('0'))
+    # 2026-08-24 live report (Roy, Marley's tab): against remaining_amount(),
+    # not full amount — an entry carrying a pre-existing amount_paid (a
+    # debt-tracker payment collected before a full-item transfer landed it
+    # here) must never be treated as needing its FULL price paid again, or a
+    # customer paying exactly what's truly owed gets wrongly split, silently
+    # reopening an already-settled portion as a brand-new "still owed" entry.
+    total_selected = sum((e.remaining_amount() for e in entries_to_settle), Decimal('0'))
     amount_raw = (request.POST.get('amount') or '').strip()
     if amount_raw:
         try:
@@ -3676,13 +3700,7 @@ def settle_tab(request, tab_id):
         return _finish_settle_tab(request, up, tab, pay, entries_to_settle, now)
 
     for entry in entries_to_settle:
-        entry.is_paid = True
-        entry.paid_at = now
-        entry.payment_method = pay
-        entry.settled_by = request.user
-        entry.save(update_fields=['is_paid', 'paid_at', 'payment_method', 'settled_by'])
-        entry.transaction.payment_method = pay
-        entry.transaction.save(update_fields=['payment_method'])
+        entry._newly_collected = entry.mark_fully_paid(pay, request.user, now)
 
     return _finish_settle_tab(request, up, tab, pay, entries_to_settle, now)
 
@@ -5297,8 +5315,11 @@ def bar_z_report(request):
         opened_at__gte=day_start,
     ).prefetch_related('entries')
     open_tab_count = open_tabs.count()
+    # 2026-08-24 — remaining_amount(), not full amount (see keg_views.py's
+    # _entry_dict() for the full reasoning): an unpaid entry can carry a
+    # pre-existing amount_paid from a transferred, part-paid item.
     open_tab_kes = sum(
-        float(e.amount) for tab in open_tabs for e in tab.entries.filter(is_paid=False)
+        float(e.remaining_amount()) for tab in open_tabs for e in tab.entries.filter(is_paid=False)
     )
 
     # Keg variance KES for the day — currently tapped barrels + barrels closed today.

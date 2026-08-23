@@ -8226,3 +8226,79 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   the display field moves. No new migrations. **Action for Roy**: run
   `python manage.py backfill_tab_transfer_request_amounts --dry-run` first
   on Render's Shell to preview, then without the flag to apply.
+- Fix: partially-paid transfer entries — full display gap + a real till
+  double-count (2026-08-24, same-day follow-up, live screenshots). Roy ran
+  the new backfill and reported "it went through but why is the result
+  still the same" — the tabs drawer and live receipt STILL showed Kikombe
+  at KES 80 and Marley's tab total at KES 740, not the true 50/710.
+  **Root cause, traced far beyond the backfill's own scope**: the backfill
+  only ever corrected the STORED `TabTransferRequest.amount` snapshot field
+  (used by the proposal SMS/pending banner) — `BarTabEntry.remaining_
+  amount()` (added earlier the same day) was never wired into any of the
+  places that actually DISPLAY or ACT ON an entry's still-owed balance.
+  `BarTab.unpaid_total()`, the tabs-drawer entry serialisers (`keg_views.
+  _entry_dict()` and kitchen_views' three equivalents), and `_get_live_
+  tab_state()`'s outstanding total (the live receipt's own "Jumla" figure
+  — this app's own established "what's still unpaid right now" convention,
+  see the 2026-08-01 "Umeshalipa Hadi Sasa" entry) all summed the entry's
+  full original `amount`, ignoring `amount_paid` entirely. Fixed all of
+  them to use `remaining_amount()` for an unpaid entry (a receipt LINE's
+  own subtotal stays the true full item price, unchanged — only the
+  OUTSTANDING/total figures move). **A second, far more serious money-
+  correctness bug found in the same trace**: `settle_entries_amount_
+  locked()`'s own partial-settle boundary math compared a customer's
+  payment against the entry's FULL amount, not what was truly still owed
+  — a customer paying EXACTLY the correct remaining balance would have
+  been wrongly SPLIT via `split_paid_unpaid_locked()`, silently reopening
+  the already-collected portion as a brand-new "still owed" balance.
+  Worse: once an entry's `payment_method` finally flips off 'credit' at
+  full settlement (a full-item transfer landing on an OPEN tab, then
+  settled ordinarily), `shift_views._reconcile()`'s cash_sales/mpesa_sales
+  would count the transaction's WHOLE `sale_amount` as freshly collected —
+  DOUBLE-COUNTING the portion already recognised via `debt_recovered_cash/
+  mpesa` when the earlier debt-tracker payment happened, corrupting till
+  reconciliation for real. **Fix, comprehensive**: new shared
+  `BarTabEntry.mark_fully_paid()` (used by `settle_tab`'s full-settle
+  loop, `settle_entries_amount_locked`'s fully-covered branch, and
+  `tick_entry`'s non-debt branch) captures and returns exactly what was
+  NEWLY collected in that action (`remaining_amount()`, read before
+  mutating) — used for the settled_amount/SMS text so a customer is never
+  told they paid more than they actually just paid. `split_paid_unpaid_
+  locked()`/`split_kept_unpaid_locked()` both made amount_paid-aware
+  (`total_kept = prior amount_paid + this action's own paid_amount`,
+  never touching `Transaction.sale_amount`'s revenue-recognition
+  correctness — the two split transactions still sum to the original,
+  no revenue gained or lost, just correctly redistributed). For the till
+  double-count specifically: a NEW, NARROWER field —
+  `BarTabEntry.debt_collected_amount` (migration 0175) — isolates
+  specifically the portion ever collected via `_reconcile_tab_entries_
+  for_debt_payment()` (both its partial and fully-covered branches),
+  deliberately distinct from the broader `amount_paid` (which also grows
+  from an ORDINARY counter split-settle, e.g. a customer paying 40 of 50
+  via M-Pesa with zero debt-tracker involvement — subtracting THAT would
+  have wrongly zeroed out genuinely fresh cash, confirmed by a real test
+  failure — `SplitPaidTransactionPaymentMethodSyncTest`'s own pre-existing
+  Hezzy fixture — caught before push, not after). `_reconcile()` and
+  `till_expected_cash()` both now subtract `debt_collected_amount` (never
+  `amount_paid`) from a transaction's `sale_amount` before counting it as
+  cash/mpesa, via a `Subquery`/`OuterRef` annotation — a no-op for the
+  overwhelming common case (no tab entry, or nothing ever collected via
+  the debt tracker) and only differs for exactly this scenario.
+  `_rebuild_tab_entry_state_for_customer()` (the debt-payment-revert
+  replay mechanism) resets `debt_collected_amount` alongside `amount_paid`
+  — proven safe by tracing that every entry reaching its own filter
+  (`payment_method` still 'credit', or `was_credit=True`) can ONLY ever
+  have had its `amount_paid` history contributed by the debt tracker
+  (ordinary counter-settle paths never touch a tab that isn't OPEN, so
+  they can never produce a `was_credit=True` stamp), so the two fields are
+  always equal there — nothing else to preserve. 11 new tests
+  (`PartiallyPaidEntryDisplayAndReconcileTest`) reproducing Roy's exact
+  scenario end-to-end across the tabs drawer, the live receipt, the
+  dangerous pay-exactly-what's-owed split case, `_reconcile()`, `till_
+  expected_cash()`, and a direct regression lock that a pure counter
+  split with zero debt-tracker involvement is completely unaffected —
+  plus the full pre-existing settle/transfer/reconcile/till test suites
+  (172+117 tests) re-run and confirmed passing, including catching and
+  fixing the real `debt_collected_amount` vs `amount_paid` distinction
+  via `SplitPaidTransactionPaymentMethodSyncTest`'s own failure before
+  it could reach production. One migration (0175, additive).

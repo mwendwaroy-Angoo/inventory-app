@@ -744,6 +744,14 @@ def _reconcile_tab_entries_for_debt_payment(customer, business, amount, payment_
             covered = round(min(entry_amount, paid_remaining), 2)
             paid_remaining = round(paid_remaining - covered, 2)
             if covered >= entry_amount:
+                # debt_collected_amount (2026-08-24) — additive by `covered`,
+                # NOT jumped to F('amount') the way amount_paid is: it must
+                # isolate only the DEBT-TRACKER-sourced total across this
+                # entry's whole history (this payment's own share, plus
+                # whatever partial debt payments came before it), never the
+                # full price, since some of that price may have been (or
+                # will be) collected via an ordinary counter settle instead
+                # — see the field's own docstring on BarTabEntry.
                 BarTabEntry.objects.filter(
                     tab__id__in=settled_tab_ids,
                     transaction=txn,
@@ -751,6 +759,7 @@ def _reconcile_tab_entries_for_debt_payment(customer, business, amount, payment_
                 ).update(
                     is_paid=True, paid_at=now, payment_method=payment_method,
                     amount_paid=F('amount'),
+                    debt_collected_amount=F('debt_collected_amount') + Decimal(str(covered)),
                 )
                 if txn.payment_method != payment_method:
                     txn.payment_method = payment_method
@@ -767,7 +776,10 @@ def _reconcile_tab_entries_for_debt_payment(customer, business, amount, payment_
                     tab__id__in=settled_tab_ids,
                     transaction=txn,
                     is_paid=False,
-                ).update(amount_paid=F('amount_paid') + Decimal(str(covered)))
+                ).update(
+                    amount_paid=F('amount_paid') + Decimal(str(covered)),
+                    debt_collected_amount=F('debt_collected_amount') + Decimal(str(covered)),
+                )
     except Exception:
         logger.exception('_reconcile_tab_entries_for_debt_payment failed (customer=%s)', customer.id)
 
@@ -813,9 +825,20 @@ def _rebuild_tab_entry_state_for_customer(customer, business):
         for entry in touched_entries:
             entry.is_paid = False
             entry.amount_paid = Decimal('0')
+            # 2026-08-24 — debt_collected_amount reset alongside amount_paid.
+            # Every entry reaching this filter (payment_method still
+            # 'credit', or was_credit=True — which only ever stamps for a
+            # transition on a NON-open tab, something the ordinary counter-
+            # settle paths never touch, since they only ever act on OPEN
+            # tabs) got its entire amount_paid history from the debt
+            # tracker alone, so the two fields are always equal here —
+            # safe to reset together with nothing else to preserve.
+            entry.debt_collected_amount = Decimal('0')
             entry.paid_at = None
             entry.payment_method = ''
-            entry.save(update_fields=['is_paid', 'amount_paid', 'paid_at', 'payment_method'])
+            entry.save(update_fields=[
+                'is_paid', 'amount_paid', 'debt_collected_amount', 'paid_at', 'payment_method',
+            ])
             if entry.transaction.was_credit and entry.transaction.payment_method != 'credit':
                 entry.transaction.payment_method = 'credit'
                 entry.transaction.save(update_fields=['payment_method'])

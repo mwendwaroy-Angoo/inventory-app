@@ -661,8 +661,15 @@ def kitchen_board(request):
     )
     food_tabs_data = []
     for tab in food_tabs:
+        # 2026-08-24 live report (Roy, Marley's tab): an unpaid entry shows
+        # remaining_amount(), not its full original price — see the same
+        # fix in keg_views.py's _entry_dict() for the full reasoning.
         entries = [
-            {'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid}
+            {
+                'id': e.id, 'description': e.description,
+                'amount': float(e.amount if e.is_paid else e.remaining_amount()),
+                'is_paid': e.is_paid,
+            }
             for e in tab.entries.all()
         ]
         food_tabs_data.append({
@@ -2529,9 +2536,14 @@ def kitchen_tabs_list(request):
                     return _dt_local.strftime('%d %b')
             return ''
 
+        # 2026-08-24 live report (Roy, Marley's tab): an unpaid entry shows
+        # remaining_amount(), not its full original price — see the same
+        # fix in keg_views.py's _entry_dict() for the full reasoning.
         entries = [
             {
-                'id': e.id, 'description': e.description, 'amount': float(e.amount), 'is_paid': e.is_paid,
+                'id': e.id, 'description': e.description,
+                'amount': float(e.amount if e.is_paid else e.remaining_amount()),
+                'is_paid': e.is_paid,
                 'entry_date': _kb_entry_date(e),
                 'pending_transfer_out': _pending_out_by_entry.get(e.id),
                 'transfer_note': ('' if e.id in _pending_out_by_entry else e.transfer_reason_note()),
@@ -2586,11 +2598,18 @@ def kitchen_tabs_list(request):
         kitchen_entries = list(
             tab.entries
             .filter(transaction__item__store__is_kitchen=True)
-            .values('id', 'description', 'amount', 'is_paid')
+            .values('id', 'description', 'amount', 'amount_paid', 'is_paid')
         )
+        # 2026-08-24 — remaining_amount(), not full amount, for an unpaid
+        # entry (see keg_views.py's _entry_dict() for the full reasoning).
         kitchen_entries = [
-            {'id': e['id'], 'description': e['description'],
-             'amount': float(e['amount']), 'is_paid': e['is_paid']}
+            {
+                'id': e['id'], 'description': e['description'],
+                'amount': float(e['amount'] if e['is_paid'] else max(
+                    Decimal('0'), e['amount'] - (e['amount_paid'] or Decimal('0')),
+                )),
+                'is_paid': e['is_paid'],
+            }
             for e in kitchen_entries
         ]
         unpaid = sum(e['amount'] for e in kitchen_entries if not e['is_paid'])
