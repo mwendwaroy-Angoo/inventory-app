@@ -1028,8 +1028,19 @@ def receipt_pay(request, token):
         else:
             entries_qs = BarTabEntry.objects.filter(tab__id__in=all_tab_ids, is_paid=False)
 
-        entries_list = list(entries_qs.select_related('transaction__item__store'))
-        amount       = int(sum(float(e.amount) for e in entries_list))
+        # 2026-08-24 audit — remaining_amount(), never the full `amount`.
+        # This is what the CUSTOMER actually gets charged (STK Push) or told
+        # to hand over at the counter, so reading the entry's original price
+        # on a partly-paid entry (e.g. an 80 KES cup with 30 already
+        # collected via a debt-tracker payment before it was transferred
+        # here) overcharges them by exactly the already-collected portion.
+        # Entries whose balance is already fully covered are dropped rather
+        # than billed at zero.
+        entries_list = [
+            e for e in entries_qs.select_related('transaction__item__store')
+            if e.remaining_amount() > 0
+        ]
+        amount       = int(sum(float(e.remaining_amount()) for e in entries_list))
         selected_ids = [e.id for e in entries_list]
 
         if amount < 1:

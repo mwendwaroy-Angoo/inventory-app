@@ -8302,3 +8302,75 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   fixing the real `debt_collected_amount` vs `amount_paid` distinction
   via `SplitPaidTransactionPaymentMethodSyncTest`'s own failure before
   it could reach production. One migration (0175, additive).
+- Money-path audit — three real defects found and fixed (2026-08-24, Roy's
+  own framing: "cash & mpesa entries accuracy, counter cash accuracy per
+  shift... basically anywhere money & inventory touches transactionally...
+  no duplications, accurate arithmetic"). A fresh systematic pass over
+  every place a BarTabEntry's paid state is written or read, every STK
+  settlement callback, and `_reconcile()`/`till_expected_cash()`'s own
+  arithmetic — scrutinising the SAME session's own earlier changes hardest,
+  which is where two of the three turned out to live. **(1) `revoke_
+  payment_locked()` never rolled back `BarTabEntry.amount_paid`.** Several
+  settle paths stamp `amount_paid` to the full amount once an entry is
+  fully covered (`mark_fully_paid()` and `split_paid_unpaid_locked()`, both
+  added earlier the same day, plus `debt_views._reconcile_tab_entries_for_
+  debt_payment()`'s own fully-covered branch, which has done this since
+  2026-08-15). Leaving that stale on revoke made `remaining_amount()`
+  return 0, so a revoked entry read as owing **KES 0** — invisible to
+  `unpaid_total()`, showing zero in all three tabs drawers, dropped from
+  `_get_customer_debt_data()`'s per-line remainder, and rejected by
+  `settle_entries_amount_locked()` as "more than owed" on any attempt to
+  re-settle it correctly. Fixed to reset `amount_paid` to
+  `debt_collected_amount` — NOT to zero: revoking a COUNTER settle must
+  never un-collect money the debt tracker genuinely took (that has its own
+  `CustomerDebtPayment` row and its own separate revert path,
+  `revert_debt_payment` → `_rebuild_tab_entry_state_for_customer`, which
+  resets both fields and replays). Was already a live bug for
+  debt-tracker-settled entries before `mark_fully_paid()` widened it to
+  every counter settle. **(2) `mpesa_views._create_debt_payment_from_
+  receipt()` carried its own hand-rolled copy of the debt FIFO walk** —
+  the last one left (its staff-side sibling `_settle_debt_customer_from_
+  payment()` already delegates to `_do_settle_debt_payment`) — and it had
+  drifted badly, losing money three ways: it had **NO partial-coverage
+  branch at all**, so a customer's partial STK debt payment from the public
+  receipt created the `CustomerDebtPayment` but never persisted
+  `amount_paid` on the entry — their outstanding balance did not move at
+  all (verified: 80 owed, 30 paid, still showed 80); it never synced the
+  underlying `Transaction` off `'credit'` on full coverage (the 2026-08-14
+  fix, applied to `debt_views`' copy but never to this one), meaning this
+  path kept permanently REGENERATING exactly the broken rows
+  `backfill_split_paid_txn_payment_method` exists to repair; and it never
+  stamped `debt_collected_amount`, so once that backfill DID flip such a
+  Transaction to `'mpesa'`, `_reconcile()`/`till_expected_cash()` would
+  count its whole `sale_amount` as freshly collected cash/mpesa ON TOP OF
+  the `CustomerDebtPayment` already counted in `debt_recovered_mpesa` — a
+  real, reachable double-count. Replaced with a direct call to the
+  canonical `_reconcile_tab_entries_for_debt_payment()`. **(3)
+  `receipt_views.receipt_pay()` billed the customer an entry's FULL
+  original price**, not its remaining balance — `sum(float(e.amount))`
+  rather than `remaining_amount()` — so a customer whose item already had
+  a partial payment against it (e.g. an 80 KES cup with 30 collected
+  before it was transferred to them) was STK-charged the full 80 instead
+  of the 50 they owed. Fixed, and entries whose balance is already fully
+  covered are now dropped from the bill rather than billed at zero.
+  **Audited and confirmed CLEAN, no changes made**: `_reconcile()`'s
+  `expected_cash` arithmetic and every component's filter (void/`[SVQ]`/
+  non-Issue types all correctly excluded; splits sum to the original with
+  no double-count); `till_expected_cash()`'s anchor and window logic;
+  `split_payment_method_locked()`/`apply_split_payment_locked()`/
+  `split_to_credit_locked()` sum invariants (the two resulting rows always
+  sum to the original `sale_amount`, `qty=0` on the sibling so stock is
+  untouched, envelope FKs copied so `cost()`'s proportional share stays
+  correct); `_settle_tab_from_payment()` (correctly routes through
+  `settle_entries_amount_locked`, with a safe ValueError backstop);
+  `_settle_receipt_entries_from_payment()` (flips entries+transactions to
+  mpesa and creates NO `CustomerDebtPayment`, so no double-count);
+  `remove_tab_entry()`/`void_tab()` (both `is_paid=True` +
+  `payment_method='void'`, correctly excluded from every unpaid/cash
+  aggregate, and revoke explicitly refuses a void entry); and
+  `OwnerConsumptionTransferRequest._accept_to_owner()` (`type` flip to
+  `'OwnerConsumption'` is excluded by construction from every
+  `type='Issue'` aggregate). 8 new tests (`MoneyPathAuditFixesTest`),
+  including a direct regression lock that a fully-STK-paid debt is never
+  double-counted as both `debt_recovered_mpesa` and `mpesa_sales`. No
+  migrations.

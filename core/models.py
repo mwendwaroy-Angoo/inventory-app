@@ -5824,7 +5824,27 @@ class BarTabEntry(models.Model):
             entry.is_paid = False
             entry.payment_method = ''
             entry.paid_at = None
-            entry.save(update_fields=['is_paid', 'payment_method', 'paid_at'])
+            # 2026-08-24 audit — amount_paid MUST be rolled back to just the
+            # debt-tracker-collected portion, or the revoked entry reads as
+            # owing nothing at all. Several settle paths stamp amount_paid to
+            # the full amount when an entry is fully covered (mark_fully_paid,
+            # split_paid_unpaid_locked, and debt_views' own FIFO branch) —
+            # leaving that stale on revoke makes remaining_amount() return 0,
+            # so the re-opened entry shows KES 0 owed in the tabs drawer, is
+            # skipped by unpaid_total(), vanishes from _get_customer_debt_
+            # data()'s per-line remainder, and makes settle_entries_amount_
+            # locked() reject any payment against it as "more than owed".
+            # debt_collected_amount (never amount_paid) is the correct floor:
+            # revoking a COUNTER settle must never un-collect money the debt
+            # tracker genuinely took — that has its own CustomerDebtPayment
+            # record and its own separate revert path (revert_debt_payment →
+            # _rebuild_tab_entry_state_for_customer, which resets both to 0
+            # and replays). Was a live bug for debt-tracker-settled entries
+            # even before mark_fully_paid() widened it to counter settles.
+            entry.amount_paid = entry.debt_collected_amount or Decimal('0')
+            entry.save(update_fields=[
+                'is_paid', 'payment_method', 'paid_at', 'amount_paid',
+            ])
             if entry.transaction_id:
                 entry.transaction.payment_method = ''
                 entry.transaction.save(update_fields=['payment_method'])

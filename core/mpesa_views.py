@@ -299,7 +299,7 @@ def _create_debt_payment_from_receipt(payment):
             pmt.save(update_fields=['debt_settled'])
 
         from .models import Receipt as _Receipt, BarTab as _BarTab, Customer as _Customer
-        from .models import CustomerDebtPayment as _CDP, BarTabEntry as _BTE
+        from .models import CustomerDebtPayment as _CDP
         from .debt_views import _get_customer_debt_data
         from .receipt_views import _receipt_all_tab_ids
 
@@ -345,29 +345,32 @@ def _create_debt_payment_from_receipt(payment):
             notes=f'M-Pesa {mpesa_ref} · risiti {token_frag}',
         )
 
-        # FIFO entry reconciliation — only mark entries is_paid=True when fully covered
-        settled_tabs = list(_BarTab.objects.filter(
-            business=payment.business,
-            customer=cust,
-            status='SETTLED',
-        ).values_list('id', flat=True))
-
-        if settled_tabs and unpaid_before:
-            now_ts = timezone.now()
-            paid_remaining = float(payment.amount)
-            for entry in unpaid_before:
-                if paid_remaining <= 0:
-                    break
-                txn = entry['txn']
-                entry_amount = float(entry['amount'])
-                covered = round(min(entry_amount, paid_remaining), 2)
-                paid_remaining = round(paid_remaining - covered, 2)
-                if covered >= entry_amount:
-                    _BTE.objects.filter(
-                        tab__id__in=settled_tabs,
-                        transaction=txn,
-                        is_paid=False,
-                    ).update(is_paid=True, paid_at=now_ts, payment_method='mpesa')
+        # FIFO entry reconciliation — delegate to the ONE canonical
+        # implementation (2026-08-24 audit). This used to carry its own
+        # hand-rolled copy of the walk, which had drifted badly from the
+        # real thing and was silently losing money three ways:
+        #   (1) NO partial-coverage branch at all — a customer's partial
+        #       STK debt payment created the CustomerDebtPayment but never
+        #       persisted `amount_paid` on the entry, so _get_customer_debt_
+        #       data() kept reporting the FULL original amount as still
+        #       owed. The customer paid and their balance did not move.
+        #   (2) Never synced the underlying Transaction off 'credit' on
+        #       full coverage (the 2026-08-14 fix, applied to debt_views'
+        #       copy but never to this one) — so this path kept
+        #       REGENERATING exactly the broken rows
+        #       backfill_split_paid_txn_payment_method exists to repair.
+        #   (3) Never stamped debt_collected_amount, so once (2) was
+        #       repaired by that backfill, _reconcile()/till_expected_cash()
+        #       would count the transaction's whole sale_amount as fresh
+        #       cash/mpesa ON TOP OF the CustomerDebtPayment already
+        #       counted in debt_recovered_mpesa — a real double-count.
+        # _do_settle_debt_payment (the staff-side STK sibling,
+        # _settle_debt_customer_from_payment) already delegates the same
+        # way; this was the last hand-rolled copy left.
+        from .debt_views import _reconcile_tab_entries_for_debt_payment
+        _reconcile_tab_entries_for_debt_payment(
+            cust, payment.business, payment.amount, 'mpesa', unpaid_before,
+        )
 
         # Notify via the existing receipt SMS helper
         try:

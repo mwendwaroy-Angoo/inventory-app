@@ -43023,3 +43023,269 @@ class PartiallyPaidEntryDisplayAndReconcileTest(TestCase):
         )
         self.assertEqual(new_entry.amount, Decimal('30'), 'the transferred remainder is the true leftover 30')
         self.assertEqual(tfr.amount, Decimal('30'))
+
+
+class MoneyPathAuditFixesTest(TestCase):
+    """2026-08-24 money-path audit (Roy: "cash & mpesa entries accuracy,
+    counter cash accuracy per shift... no duplications, accurate
+    arithmetic"). Three real defects found and fixed:
+
+      1. revoke_payment_locked() never rolled back BarTabEntry.amount_paid,
+         so a revoked entry read as owing KES 0 (several settle paths stamp
+         amount_paid to the full amount on full coverage).
+      2. mpesa_views._create_debt_payment_from_receipt() carried its own
+         hand-rolled, drifted copy of the debt FIFO walk — no partial-
+         coverage branch (a customer's partial STK debt payment never
+         reduced their balance), no Transaction payment_method sync, no
+         debt_collected_amount stamp (which would become a real cash/mpesa
+         double-count once the existing repair backfill flipped the
+         Transaction).
+      3. receipt_pay() billed the customer an entry's FULL original price
+         instead of its remaining balance — overcharging by exactly the
+         portion already collected."""
+
+    def setUp(self):
+        # mpesa_till set so receipt_pay's QR branch reaches its amount
+        # response instead of short-circuiting on no_mpesa_config.
+        self.biz = Business.objects.create(name='Money Audit Biz', mpesa_till='123456')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='ma_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kikombe',
+            material_no='MA-01', unit='Pcs', selling_price=Decimal('80'),
+            cost_price=Decimal('40'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Roy', credit_approved=True,
+        )
+        self.client.force_login(self.owner)
+
+    def _debt_tab_with_entry(self, amount=Decimal('80')):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=amount, payment_method='credit', recipient='Roy',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Kikombe', amount=amount, is_paid=False,
+        )
+        return tab, entry, txn
+
+    # ── Fix 1: revoke must roll amount_paid back ────────────────────────
+    def test_revoke_after_a_plain_counter_settle_restores_the_full_balance(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Walk-in', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Kikombe', amount=Decimal('80'),
+        )
+        entry.mark_fully_paid('cash', self.owner)
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount_paid, Decimal('80'))
+
+        BarTabEntry.revoke_payment_locked(entry.id, self.biz, 'bahati mbaya', self.owner)
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_paid)
+        self.assertEqual(
+            entry.amount_paid, Decimal('0'),
+            'a revoked counter settle must leave nothing recorded as collected',
+        )
+        self.assertEqual(entry.remaining_amount(), Decimal('80'))
+        self.assertEqual(
+            tab.unpaid_total(), Decimal('80'),
+            'the re-opened entry must show its full balance again, not KES 0',
+        )
+
+    def test_revoke_preserves_the_debt_tracker_collected_portion(self):
+        """Revoking a COUNTER settle must never un-collect money the debt
+        tracker genuinely took — that has its own CustomerDebtPayment row
+        and its own separate revert path."""
+        from core.debt_views import _do_settle_debt_payment
+        tab, entry, txn = self._debt_tab_with_entry(Decimal('80'))
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('30'), 'cash', 'bar')
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount_paid, Decimal('30'))
+        self.assertEqual(entry.debt_collected_amount, Decimal('30'))
+
+        entry.mark_fully_paid('cash', self.owner)
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount_paid, Decimal('80'))
+
+        BarTabEntry.revoke_payment_locked(entry.id, self.biz, 'bahati mbaya', self.owner)
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_paid)
+        self.assertEqual(
+            entry.amount_paid, Decimal('30'),
+            'only the counter portion is revoked — the 30 the debt tracker collected stands',
+        )
+        self.assertEqual(entry.remaining_amount(), Decimal('50'))
+
+    def test_revoke_of_a_debt_tracker_settled_entry_restores_its_balance(self):
+        """Pre-existing shape of the same bug (predates mark_fully_paid):
+        debt_views' own FIFO stamps amount_paid=F('amount') on full
+        coverage, so revoking such an entry left it reading KES 0 owed."""
+        from core.debt_views import _do_settle_debt_payment
+        tab, entry, txn = self._debt_tab_with_entry(Decimal('80'))
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('80'), 'cash', 'bar')
+        entry.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(entry.amount_paid, Decimal('80'))
+
+        BarTabEntry.revoke_payment_locked(entry.id, self.biz, 'bahati mbaya', self.owner)
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_paid)
+        self.assertEqual(entry.remaining_amount(), Decimal('0'),
+                         'the debt tracker really did collect all 80 — its own revert path undoes that')
+        self.assertEqual(entry.amount_paid, Decimal('80'))
+
+    # ── Fix 2: the receipt-STK debt path must use the canonical FIFO ────
+    def test_partial_stk_debt_payment_from_receipt_reduces_the_balance(self):
+        """The headline defect: this path had NO partial-coverage branch, so
+        a customer's partial STK debt payment created the payment record but
+        left their outstanding balance completely unmoved."""
+        from core.mpesa_views import _create_debt_payment_from_receipt
+        from core.debt_views import _get_customer_debt_data
+        tab, entry, txn = self._debt_tab_with_entry(Decimal('80'))
+        receipt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Kikombe', 'qty': 1, 'subtotal': 80}],
+            payment_method='credit', customer_name='Roy', meta={'tab_id': tab.id},
+        )
+        payment = Payment.objects.create(
+            business=self.biz, source='bar', amount=Decimal('30'), method='mpesa',
+            status='completed', receipt_token=receipt.token,
+        )
+        _create_debt_payment_from_receipt(payment)
+
+        entry.refresh_from_db()
+        self.assertFalse(entry.is_paid, 'a partial payment must never mark the entry fully paid')
+        self.assertEqual(entry.amount_paid, Decimal('30'), 'the partial cover must persist on the entry')
+        self.assertEqual(entry.debt_collected_amount, Decimal('30'))
+        self.assertEqual(entry.remaining_amount(), Decimal('50'))
+        data = _get_customer_debt_data(self.customer, self.biz)
+        self.assertEqual(
+            data['outstanding'], 50.0,
+            "the customer paid 30 — their outstanding balance must drop to 50, not stay at 80",
+        )
+
+    def test_full_stk_debt_payment_from_receipt_syncs_the_transaction(self):
+        """Second half of the same defect: the Transaction was never moved
+        off 'credit', permanently regenerating the exact broken rows
+        backfill_split_paid_txn_payment_method exists to repair."""
+        from core.mpesa_views import _create_debt_payment_from_receipt
+        tab, entry, txn = self._debt_tab_with_entry(Decimal('80'))
+        receipt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Kikombe', 'qty': 1, 'subtotal': 80}],
+            payment_method='credit', customer_name='Roy', meta={'tab_id': tab.id},
+        )
+        payment = Payment.objects.create(
+            business=self.biz, source='bar', amount=Decimal('80'), method='mpesa',
+            status='completed', receipt_token=receipt.token,
+        )
+        _create_debt_payment_from_receipt(payment)
+
+        entry.refresh_from_db()
+        txn.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(txn.payment_method, 'mpesa', 'the Transaction must move off credit too')
+        self.assertEqual(entry.debt_collected_amount, Decimal('80'))
+
+    def test_full_stk_debt_payment_is_never_double_counted_as_fresh_mpesa(self):
+        """Third half: with the Transaction correctly synced to 'mpesa',
+        _reconcile() must still not count it as freshly collected — that
+        money is already in debt_recovered_mpesa. debt_collected_amount is
+        what keeps the two from summing to double."""
+        from core.mpesa_views import _create_debt_payment_from_receipt
+        from core.shift_views import _reconcile
+        tab, entry, txn = self._debt_tab_with_entry(Decimal('80'))
+        receipt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Kikombe', 'qty': 1, 'subtotal': 80}],
+            payment_method='credit', customer_name='Roy', meta={'tab_id': tab.id},
+        )
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.owner,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+            started_at=timezone.now() - timedelta(minutes=5),
+        )
+        payment = Payment.objects.create(
+            business=self.biz, source='bar', amount=Decimal('80'), method='mpesa',
+            status='completed', receipt_token=receipt.token,
+        )
+        _create_debt_payment_from_receipt(payment)
+
+        rec = _reconcile(shift)
+        self.assertEqual(rec['debt_recovered_mpesa'], 80.0)
+        self.assertEqual(
+            rec['mpesa_sales'], 0.0,
+            'the same 80 must not ALSO appear as a fresh mpesa sale — that is the double-count',
+        )
+
+    # ── Fix 3: the customer is billed what they owe, not the full price ──
+    def test_public_receipt_bills_only_the_remaining_balance(self):
+        from core.debt_views import _do_settle_debt_payment
+        import json as _json
+        tab, entry, txn = self._debt_tab_with_entry(Decimal('80'))
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('30'), 'cash', 'bar')
+        entry.refresh_from_db()
+        self.assertEqual(entry.remaining_amount(), Decimal('50'))
+
+        # Move it onto an OPEN tab so the entry-selection (not debt-block)
+        # branch of receipt_pay applies.
+        open_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.customer,
+            status='OPEN', source='bar',
+        )
+        entry.tab = open_tab
+        entry.save(update_fields=['tab'])
+        receipt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Kikombe', 'qty': 1, 'subtotal': 80}],
+            payment_method='tab', customer_name='Roy', meta={'tab_id': open_tab.id},
+        )
+        resp = self.client.post(
+            f'/r/{receipt.token}/pay/',
+            data=_json.dumps({'type': 'qr', 'entry_ids': [entry.id]}),
+            content_type='application/json',
+        )
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertEqual(
+            data['amount'], 50,
+            'the customer must be billed the 50 they still owe, never the original 80',
+        )
+
+    def test_public_receipt_skips_an_entry_with_nothing_left_to_pay(self):
+        from core.debt_views import _do_settle_debt_payment
+        import json as _json
+        tab, entry, txn = self._debt_tab_with_entry(Decimal('80'))
+        # Cover the whole balance via the debt tracker, but leave the entry
+        # itself technically unpaid by clearing the flag afterwards — the
+        # shape a fully-covered-but-unflagged entry would take.
+        _do_settle_debt_payment(self.customer, self.biz, Decimal('80'), 'cash', 'bar')
+        entry.refresh_from_db()
+        entry.is_paid = False
+        entry.save(update_fields=['is_paid'])
+
+        open_tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.customer,
+            status='OPEN', source='bar',
+        )
+        entry.tab = open_tab
+        entry.save(update_fields=['tab'])
+        receipt = Receipt.issue(
+            business=self.biz, lines=[{'name': 'Kikombe', 'qty': 1, 'subtotal': 80}],
+            payment_method='tab', customer_name='Roy', meta={'tab_id': open_tab.id},
+        )
+        resp = self.client.post(
+            f'/r/{receipt.token}/pay/',
+            data=_json.dumps({'type': 'qr', 'entry_ids': [entry.id]}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json().get('error'), 'nothing_to_pay')
