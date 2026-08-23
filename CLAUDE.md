@@ -8374,3 +8374,45 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   including a direct regression lock that a fully-STK-paid debt is never
   double-counted as both `debt_recovered_mpesa` and `mpesa_sales`. No
   migrations.
+- Money-path audit, live-data companions (2026-08-24, same day). Roy's
+  follow-up question — "will this update reconcile and correct live
+  figures?" — answered honestly per fix rather than assumed. Two of the
+  three fixes are forward-looking only for data that already exists;
+  one leaves a stored value that IS deterministically reconstructible.
+  **The gap that had to be closed first**: `debt_collected_amount`
+  (migration 0175) defaults to 0, so EVERY pre-existing row understates
+  it — and `revoke_payment_locked()` now rolls `amount_paid` back to
+  that field. On a legacy entry the debt tracker genuinely paid off,
+  revoking would therefore have reset `amount_paid` to 0 and re-inflated
+  a debt the customer had already cleared: the fix shipped hours earlier
+  was itself incomplete against existing data. Verified directly against
+  the pre-2026-08-24 source (`git show 94aaba4:core/models.py` /
+  `core/debt_views.py`) that the ONLY writer of `BarTabEntry.amount_paid`
+  before that date was `_reconcile_tab_entries_for_debt_payment` (both
+  branches) — `mark_fully_paid()` and `split_paid_unpaid_locked()`'s own
+  `amount_paid` write both landed the same day as the new field — so for
+  every legacy row `debt_collected_amount` should simply equal
+  `amount_paid`. New `backfill_debt_collected_amount` (`--dry-run` first,
+  idempotent) does exactly that, scoped by the SAME discriminator
+  `_rebuild_tab_entry_state_for_customer` already uses in production
+  (`transaction.payment_method='credit' OR was_credit=True`), which
+  cleanly separates debt-tracker-collected entries from an ordinary
+  counter settle (a counter settle happens while the tab is still OPEN,
+  so `was_credit` is never stamped) — making it correct whenever it runs,
+  not only immediately after deploy. New read-only
+  `audit_money_path_integrity` answers "did these bugs actually touch my
+  live data?" without changing anything: (A) revoked entries left with a
+  stale `amount_paid` (detected via the permanent `TabPaymentRevocation`
+  audit row + current state), (B) customers whose receipt-STK debt
+  payment was never applied to their entries (payment ledger total vs
+  what the entries actually record — that path's `CustomerDebtPayment`
+  rows carry a distinctive `risiti ` notes marker), (C) rows still
+  missing `debt_collected_amount`. Prints "clean, nothing to reconcile"
+  when a business is unaffected. Honest scope note recorded for the
+  future: the receipt overcharge fix is forward-only — a past overcharge
+  is real money that moved and can only be refunded by hand, never
+  corrected in code; the audit surfaces the other two so a decision can
+  be made on real numbers instead of guesses. 7 new tests
+  (`MoneyPathBackfillAndAuditTest`) including a direct lock that the
+  backfill never touches an ordinary counter settle and that the audit
+  is strictly read-only. No migrations.

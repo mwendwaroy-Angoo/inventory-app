@@ -43289,3 +43289,182 @@ class MoneyPathAuditFixesTest(TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json().get('error'), 'nothing_to_pay')
+
+
+class MoneyPathBackfillAndAuditTest(TestCase):
+    """2026-08-24 — companions to the money-path audit fixes.
+
+    backfill_debt_collected_amount closes the one gap those fixes leave on
+    EXISTING data: debt_collected_amount (migration 0175) defaults to 0, so
+    every pre-existing row understates it. Verified directly against the
+    pre-2026-08-24 source that the ONLY writer of BarTabEntry.amount_paid
+    before that date was the debt tracker's own FIFO — so for legacy rows
+    debt_collected_amount should simply equal amount_paid. Without this,
+    revoke_payment_locked() would reset a legacy debt-paid entry's
+    amount_paid to 0 and re-inflate a debt the customer already cleared.
+
+    audit_money_path_integrity is the read-only "is my live data actually
+    affected?" companion — it must never mutate anything."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Backfill Audit Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='bfa_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kikombe',
+            material_no='BFA-01', unit='Pcs', selling_price=Decimal('80'),
+            cost_price=Decimal('40'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Roy', credit_approved=True,
+        )
+
+    def _legacy_debt_paid_entry(self, amount=Decimal('80'), paid=Decimal('80')):
+        """The exact stored shape a pre-0175 debt-tracker settle left behind:
+        amount_paid stamped, debt_collected_amount still at its 0 default,
+        Transaction carrying was_credit (the debt-settle fingerprint)."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', customer=self.customer,
+            status='SETTLED', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=amount, payment_method='cash', recipient='Roy',
+            was_credit=True,
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Kikombe', amount=amount,
+            is_paid=(paid >= amount), amount_paid=paid,
+            debt_collected_amount=Decimal('0'),
+        )
+        return tab, entry, txn
+
+    def test_backfill_populates_debt_collected_from_amount_paid(self):
+        from io import StringIO
+        from django.core.management import call_command
+        _tab, entry, _txn = self._legacy_debt_paid_entry()
+
+        out = StringIO()
+        call_command('backfill_debt_collected_amount', dry_run=True, stdout=out)
+        entry.refresh_from_db()
+        self.assertEqual(entry.debt_collected_amount, Decimal('0'), 'dry-run must not save')
+        self.assertIn('DRY RUN', out.getvalue())
+
+        call_command('backfill_debt_collected_amount', stdout=StringIO())
+        entry.refresh_from_db()
+        self.assertEqual(entry.debt_collected_amount, Decimal('80'))
+
+    def test_backfill_makes_revoke_behave_correctly_on_a_legacy_entry(self):
+        """The reason the backfill matters: without it, revoking a legacy
+        debt-tracker-settled entry resets amount_paid to 0 and re-creates a
+        debt the customer already cleared."""
+        from io import StringIO
+        from django.core.management import call_command
+        _tab, entry, _txn = self._legacy_debt_paid_entry()
+        call_command('backfill_debt_collected_amount', stdout=StringIO())
+
+        BarTabEntry.revoke_payment_locked(entry.id, self.biz, 'kosa', self.owner)
+        entry.refresh_from_db()
+        self.assertEqual(
+            entry.amount_paid, Decimal('80'),
+            'the debt tracker really did collect this — revoking a counter '
+            'settle must not un-collect it',
+        )
+        self.assertEqual(entry.remaining_amount(), Decimal('0'))
+
+    def test_backfill_never_touches_an_ordinary_counter_settle(self):
+        """The discriminator that makes this safe whenever it runs: a counter
+        settle happens while the tab is still OPEN, so was_credit is never
+        stamped and the Transaction is not 'credit' — it must be excluded, or
+        its cash would be wrongly subtracted from the till figure."""
+        from io import StringIO
+        from django.core.management import call_command
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Walk-in', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Kikombe', amount=Decimal('80'),
+        )
+        entry.mark_fully_paid('cash', self.owner)
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount_paid, Decimal('80'))
+        self.assertEqual(entry.debt_collected_amount, Decimal('0'))
+
+        call_command('backfill_debt_collected_amount', stdout=StringIO())
+        entry.refresh_from_db()
+        self.assertEqual(
+            entry.debt_collected_amount, Decimal('0'),
+            'an ordinary counter settle was never double-counted — leave it alone',
+        )
+
+    def test_backfill_is_idempotent(self):
+        from io import StringIO
+        from django.core.management import call_command
+        _tab, entry, _txn = self._legacy_debt_paid_entry()
+        call_command('backfill_debt_collected_amount', stdout=StringIO())
+        out = StringIO()
+        call_command('backfill_debt_collected_amount', stdout=out)
+        self.assertIn('Backfilled 0 entr', out.getvalue())
+
+    def test_audit_reports_clean_for_untouched_data_and_mutates_nothing(self):
+        from io import StringIO
+        from django.core.management import call_command
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Walk-in', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Kikombe',
+            amount=Decimal('80'), is_paid=True,
+        )
+        before = list(BarTabEntry.objects.values_list('id', 'amount_paid', 'debt_collected_amount', 'is_paid'))
+
+        out = StringIO()
+        call_command('audit_money_path_integrity', business='Backfill Audit', stdout=out)
+        output = out.getvalue()
+        self.assertIn('clean, nothing to reconcile', output)
+
+        after = list(BarTabEntry.objects.values_list('id', 'amount_paid', 'debt_collected_amount', 'is_paid'))
+        self.assertEqual(before, after, 'the audit must be strictly read-only')
+
+    def test_audit_flags_a_legacy_entry_missing_debt_collected_amount(self):
+        from io import StringIO
+        from django.core.management import call_command
+        self._legacy_debt_paid_entry()
+        out = StringIO()
+        call_command('audit_money_path_integrity', business='Backfill Audit', stdout=out)
+        output = out.getvalue()
+        self.assertIn('(C)', output)
+        self.assertIn('backfill_debt_collected_amount', output)
+
+    def test_audit_flags_a_revoked_entry_left_with_a_stale_amount_paid(self):
+        """Reproduces the pre-fix stored shape directly (the fixed code can no
+        longer produce it) and confirms the audit surfaces it."""
+        from io import StringIO
+        from django.core.management import call_command
+        tab, entry, txn = self._legacy_debt_paid_entry()
+        entry.debt_collected_amount = Decimal('0')
+        entry.is_paid = False          # revoked...
+        entry.amount_paid = Decimal('80')  # ...but amount_paid left stale
+        entry.save(update_fields=['is_paid', 'amount_paid', 'debt_collected_amount'])
+        from core.models import TabPaymentRevocation
+        TabPaymentRevocation.objects.create(
+            business=self.biz, tab=tab, entry=entry,
+            item_description='Kikombe', amount=Decimal('80'),
+            previous_payment_method='cash', reason='kosa', revoked_by=self.owner,
+        )
+        self.assertEqual(entry.remaining_amount(), Decimal('0'))
+
+        out = StringIO()
+        call_command('audit_money_path_integrity', business='Backfill Audit', stdout=out)
+        output = out.getvalue()
+        self.assertIn('(A)', output)
+        self.assertIn('stale amount_paid', output)
