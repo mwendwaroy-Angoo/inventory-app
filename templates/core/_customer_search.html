@@ -1,11 +1,11 @@
 {% load i18n %}
-{# 2026-08-23 (Roy, items 5+6) — one customer search, surfaced in several
+{% comment %} 2026-08-23 (Roy, items 5+6) — one customer search, surfaced in several
    places. Include this partial wherever staff need to answer "can you search
    for me in your system?". Open to EVERY staff member by deliberate decision
    (see core/customer_profile_views.py's module docstring). Self-contained:
    its own markup, styles and JS, so it can be dropped into the dashboard and
    into each counter board without any shared-bundle plumbing — matching this
-   app's established per-template convention. #}
+   app's established per-template convention. {% endcomment %}
 <div class="cs-wrap" style="margin-bottom:1rem;">
     <div style="position:relative;">
         <input type="text" id="csInput" autocomplete="off"

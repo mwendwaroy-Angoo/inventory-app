@@ -41991,3 +41991,162 @@ class OwnerConsumptionLimitTest(TestCase):
         })
         self.owner_profile.refresh_from_db()
         self.assertIsNone(self.owner_profile.consumption_limit_amount)
+
+
+class TemplateCommentLeakTest(TestCase):
+    """2026-08-23 live report (Roy, screenshot of a CUSTOMER-FACING receipt):
+    a developer comment was rendering as literal text on the public receipt
+    page, right above the total.
+
+    Root cause: Django's {# ... #} comment syntax is SINGLE-LINE ONLY. A
+    {# that is not closed on the same line is not a comment at all — the
+    template engine emits it verbatim. Six such comments shipped in this
+    session's own work, plus one pre-existing since 2026-08-21 that had been
+    leaking on the kitchen viability page unnoticed.
+
+    This scans every template in the project rather than the handful that
+    were fixed, so the same mistake can never reach a customer again —
+    multi-line commentary must use {% comment %}...{% endcomment %}."""
+
+    def test_no_multiline_hash_comments_anywhere_in_templates(self):
+        import glob
+        import os
+        offenders = []
+        for path in glob.glob(os.path.join('templates', '**', '*.html'), recursive=True):
+            with open(path, encoding='utf-8') as fh:
+                src = fh.read()
+            idx = 0
+            while True:
+                start = src.find('{#', idx)
+                if start == -1:
+                    break
+                close = src.find('#}', start)
+                line_end = src.find('\n', start)
+                if close == -1 or (line_end != -1 and close > line_end):
+                    line_no = src[:start].count('\n') + 1
+                    offenders.append(f'{path}:{line_no}')
+                    idx = start + 2
+                else:
+                    idx = close + 2
+        self.assertEqual(
+            offenders, [],
+            'Django {# #} comments are single-line only — a multi-line one renders '
+            'as literal text to the user. Use {% comment %}...{% endcomment %}. '
+            f'Offenders: {offenders}',
+        )
+
+
+class PartialPaidTransferAmountTest(TestCase):
+    """2026-08-23 live report (Roy): "debt tab transfer is not transferring
+    partial debt payment of an item, it is transferring the whole item price
+    when the customer whom the debt is being transferred from had paid
+    partially."
+
+    BarTabEntry.amount is the ORIGINAL price; amount_paid is what has since
+    been collected. is_paid only flips once the WHOLE amount is covered, so a
+    partly-paid entry is still is_paid=False with a real balance smaller than
+    `amount` — and both transfer paths quoted `amount`, over-stating what the
+    destination customer was agreeing to take on."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Partial Transfer Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='pt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='pt_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='County Brandy',
+            material_no='PT-01', unit='Pcs', selling_price=Decimal('300'),
+            cost_price=Decimal('150'),
+        )
+
+    def _tab(self, name, status='OPEN'):
+        return BarTab.objects.create(
+            business=self.biz, customer_name=name, status=status,
+            source='bar', store=self.store,
+        )
+
+    def _entry(self, tab, amount, amount_paid=Decimal('0')):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount,
+            payment_method='credit', recipient=tab.customer_name,
+        )
+        return BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='County Brandy',
+            amount=amount, amount_paid=amount_paid, is_paid=False,
+        )
+
+    def test_remaining_amount_accounts_for_a_partial_payment(self):
+        tab = self._tab('Roy')
+        entry = self._entry(tab, Decimal('300'), amount_paid=Decimal('100'))
+        self.assertEqual(entry.remaining_amount(), Decimal('200'))
+
+    def test_remaining_amount_is_the_full_price_when_nothing_was_paid(self):
+        tab = self._tab('Roy')
+        entry = self._entry(tab, Decimal('300'))
+        self.assertEqual(entry.remaining_amount(), Decimal('300'))
+
+    def test_full_item_transfer_moves_only_the_unpaid_remainder(self):
+        """The literal reported bug: Roy paid 100 of a 300 item, so Bosco is
+        agreeing to 200 — not 300."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('300'), amount_paid=Decimal('100'))
+
+        _e, transfer = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='', dest_tab_id=bosco.id, staff_user=self.staff,
+        )
+        self.assertEqual(transfer.amount, Decimal('200'))
+
+    def test_whole_tab_transfer_also_uses_the_remainder(self):
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        self._entry(roy, Decimal('300'), amount_paid=Decimal('100'))
+        self._entry(roy, Decimal('80'))
+
+        _batch, reqs = TabTransferRequest.propose_whole_tab_locked(
+            source_tab_id=roy.id, dest_tab_id=bosco.id,
+            business=self.biz, staff_user=self.staff,
+        )
+        self.assertEqual(sorted(r.amount for r in reqs), [Decimal('80'), Decimal('200')])
+
+    def test_fully_paid_off_entry_cannot_be_transferred(self):
+        """amount_paid covering the whole amount means there is nothing left
+        to hand to anybody, even if is_paid was never flipped."""
+        roy = self._tab('Roy')
+        bosco = self._tab('Bosco')
+        entry = self._entry(roy, Decimal('300'), amount_paid=Decimal('300'))
+        with self.assertRaises(ValueError):
+            BarTabEntry.split_and_transfer_locked(
+                entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+                paid_method='', dest_tab_id=bosco.id, staff_user=self.staff,
+            )
+
+    def test_accepting_leaves_the_destination_owing_only_the_remainder(self):
+        """End-to-end: the debt ledger itself must agree with the quoted
+        figure once the transfer is accepted."""
+        from core.debt_views import _get_customer_debt_data
+        roy = self._tab('Roy')
+        bosco_cust = Customer.objects.create(
+            business=self.biz, name='Bosco', credit_approved=True,
+        )
+        bosco = BarTab.objects.create(
+            business=self.biz, customer_name='Bosco', status='SETTLED',
+            source='bar', store=self.store, customer=bosco_cust,
+        )
+        entry = self._entry(roy, Decimal('300'), amount_paid=Decimal('100'))
+        self._entry(bosco, Decimal('50'))  # makes Bosco a debt-converted tab
+
+        _e, transfer = BarTabEntry.split_and_transfer_locked(
+            entry_id=entry.id, business=self.biz, paid_amount=Decimal('0'),
+            paid_method='', dest_tab_id=bosco.id, staff_user=self.staff,
+        )
+        transfer.accept()
+
+        data = _get_customer_debt_data(bosco_cust, self.biz, scope='all')
+        # 50 already on Bosco's own tab + the 200 remainder he just took on.
+        self.assertEqual(data['outstanding'], 250.0)

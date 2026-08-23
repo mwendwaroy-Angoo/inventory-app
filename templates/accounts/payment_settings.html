@@ -637,9 +637,9 @@
 <!-- CUP CONFIG — Bar cup consumption (K6.C)                                -->
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <div class="row">
-  {# 2026-08-23 (Roy): per-owner ceiling on Mmiliki Alichukua draws. Held on
+  {% comment %} 2026-08-23 (Roy): per-owner ceiling on Mmiliki Alichukua draws. Held on
      the acting owner's own profile, so several owners can each carry their
-     own setting. Blank = no limit at all (the default). #}
+     own setting. Blank = no limit at all (the default). {% endcomment %}
   {% if user.userprofile.is_owner %}
   <div class="col-12">
     <div class="card mb-4">

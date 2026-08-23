@@ -5376,6 +5376,19 @@ class BarTabEntry(models.Model):
         verbose_name = 'Bar Tab Entry'
         verbose_name_plural = 'Bar Tab Entries'
 
+    def remaining_amount(self):
+        """What is genuinely still owed on this entry.
+
+        2026-08-23 (Roy): amount is the ORIGINAL price and amount_paid is
+        what has since been collected against it. is_paid only flips once
+        the WHOLE amount is covered, so a partly-paid entry is still
+        is_paid=False with a real balance smaller than `amount` — reading
+        `amount` alone therefore over-states what is owed. One definition,
+        used by every transfer path, so a partial payment can never be
+        silently ignored in one place and honoured in another.
+        """
+        return max(Decimal('0'), (self.amount or Decimal('0')) - (self.amount_paid or Decimal('0')))
+
     def __str__(self):
         status = 'paid' if self.is_paid else 'open'
         return f"{self.tab.customer_name} — {self.description} KES {self.amount} ({status})"
@@ -5496,9 +5509,23 @@ class BarTabEntry(models.Model):
                 # (2026-07-25 audit finding).
                 if TabTransferRequest.objects.filter(entry_id=entry.id, status='PENDING').exists():
                     raise ValueError('Kiingilio hiki tayari kina ombi la uhamisho linalosubiri.')
+                # 2026-08-23 live report (Roy): "debt tab transfer is not
+                # transferring partial debt payment of an item, it is
+                # transferring the whole item price when the customer whom
+                # the debt is being transferred from had paid partially."
+                # entry.amount is the ORIGINAL price; entry.amount_paid is
+                # what has since been collected against it (is_paid only
+                # flips once the WHOLE amount is covered, so a partly-paid
+                # entry is still is_paid=False here). The amount actually
+                # changing hands is the remainder, and quoting the original
+                # over-states what the destination customer is agreeing to —
+                # in the pending banner, the SMS, and the staff drawer alike.
+                _remaining = entry.remaining_amount()
+                if _remaining <= 0:
+                    raise ValueError('Kiingilio hiki hakina deni lililobaki.')
                 transfer = TabTransferRequest.objects.create(
                     business=business, entry=entry,
-                    source_tab=entry.tab, dest_tab=dest_tab, amount=entry.amount,
+                    source_tab=entry.tab, dest_tab=dest_tab, amount=_remaining,
                     paid_amount=Decimal('0'), requested_by=staff_user, note=entry.description,
                 )
                 return entry, transfer
@@ -6050,7 +6077,7 @@ class TabTransferRequest(models.Model):
             for e in entries:
                 tfr = TabTransferRequest.objects.create(
                     business=business, entry=e,
-                    source_tab=source_tab, dest_tab=dest_tab, amount=e.amount,
+                    source_tab=source_tab, dest_tab=dest_tab, amount=e.remaining_amount(),
                     paid_amount=Decimal('0'), requested_by=staff_user, note=e.description,
                     batch_id=batch_id,
                 )

@@ -520,9 +520,9 @@
             <span class="total-amount">KES {{ receipt.total|floatformat:"0" }}</span>
         </div>
 
-        {# 2026-08-23 (Roy): this customer also owes money on a separate,
+        {% comment %} 2026-08-23 (Roy): this customer also owes money on a separate,
            debt-converted tab. Linked from here rather than shown as another
-           confusing row in the wall-QR search results. #}
+           confusing row in the wall-QR search results. {% endcomment %}
         {% if other_debt %}
         <a href="{{ other_debt.url }}"
            style="display:flex; align-items:center; justify-content:space-between; gap:.6rem;

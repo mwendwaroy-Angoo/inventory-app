@@ -194,11 +194,11 @@
             <td class="status-{{ r.status|lower }}">{{ r.status }}</td>
             <td>KES {{ r.cost_total|floatformat:0 }}</td>
             {% if r.is_raw_material %}
-            {# 2026-08-21 live report (Roy): a raw-material receipt always
+            {% comment %} 2026-08-21 live report (Roy): a raw-material receipt always
                shows revenue=0/profit=-100% for itself, structurally —
                not a fact about how the sack performed. See Historia ya
                Batch above for the real per-batch numbers this raw item
-               fed. #}
+               fed. {% endcomment %}
             <td colspan="3" style="color:#888;font-style:italic;font-size:.78rem;">
               Malighafi — angalia Historia ya Batch hapo juu kwa faida halisi
             </td>
