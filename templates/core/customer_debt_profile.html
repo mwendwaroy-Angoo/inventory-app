@@ -66,6 +66,27 @@
             {% if customer.phone %}<span>📞 {{ customer.phone }}</span>{% endif %}
             {% if customer.location %}<span class="ms-3">📍 {{ customer.location }}</span>{% endif %}
         </div>
+        <!-- 2026-08-23 (Roy): the "Send Reminder" button is gated on
+             customer.phone, but nothing on this page could ever SET one — so
+             for any customer without a number the whole reminder feature was
+             permanently invisible. Open to all staff: taking down a number at
+             the counter is an everyday act, not an owner decision. -->
+        <form method="post" action="{% url 'update_customer_phone' customer.id %}"
+              class="d-flex gap-2 align-items-center mt-2" style="max-width:22rem;">
+            {% csrf_token %}
+            <input type="text" name="phone" value="{{ customer.phone }}"
+                   placeholder="07XX XXX XXX"
+                   class="form-control form-control-sm"
+                   style="background:rgba(255,255,255,0.05); border-color:#333; color:var(--pearl); font-size:0.8rem;">
+            <button type="submit" class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem; white-space:nowrap;">
+                💾 {% trans 'Hifadhi' %}
+            </button>
+        </form>
+        {% if not customer.phone %}
+        <div style="color:#ff9800; font-size:0.75rem; margin-top:0.3rem;">
+            {% trans 'Ongeza nambari ili uweze kumtumia kikumbusha cha deni.' %}
+        </div>
+        {% endif %}
     </div>
     <div class="d-flex gap-2 align-items-center flex-wrap">
         <!-- Credit approval toggle (owner only) -->
@@ -84,6 +105,13 @@
             {% endif %}
         </form>
         {% endif %}
+
+        <!-- Full customer journey (2026-08-23) — every purchase with who
+             served it and who recorded it, plus payment history. -->
+        <a href="{% url 'customer_journey' customer.id %}"
+           class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem;">
+            🧭 {% trans 'Safari ya Mteja' %}
+        </a>
 
         <!-- Send reminder -->
         {% if outstanding > 0 and customer.phone %}

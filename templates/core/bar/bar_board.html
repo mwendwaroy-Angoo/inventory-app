@@ -1698,6 +1698,11 @@
     </h5>
     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
   </div>
+  {# 2026-08-23 (Roy, item 5): customer search inside the tabs drawer — the
+     one place staff are already looking a customer up. All staff. #}
+  <div style="margin:0.5rem 0.75rem 0;">
+    {% include "core/_customer_search.html" %}
+  </div>
   <!-- Receipt banner shown after tab settlement -->
   <div id="tabReceiptBanner" style="display:none; margin:0.5rem 0.75rem 0;
        padding:0.55rem 0.75rem; background:rgba(201,168,76,0.12);

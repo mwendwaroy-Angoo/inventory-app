@@ -1,0 +1,87 @@
+{% load i18n %}
+{# 2026-08-23 (Roy, items 5+6) — one customer search, surfaced in several
+   places. Include this partial wherever staff need to answer "can you search
+   for me in your system?". Open to EVERY staff member by deliberate decision
+   (see core/customer_profile_views.py's module docstring). Self-contained:
+   its own markup, styles and JS, so it can be dropped into the dashboard and
+   into each counter board without any shared-bundle plumbing — matching this
+   app's established per-template convention. #}
+<div class="cs-wrap" style="margin-bottom:1rem;">
+    <div style="position:relative;">
+        <input type="text" id="csInput" autocomplete="off"
+               placeholder="{% trans 'Tafuta mteja kwa jina...' %}"
+               style="width:100%; padding:.6rem .85rem; border-radius:10px;
+                      background:rgba(255,255,255,0.05); border:1px solid #333;
+                      color:#f0ece4; font-size:.9rem;">
+        <div id="csResults"
+             style="display:none; position:absolute; top:calc(100% + .3rem); left:0; right:0;
+                    background:#2a2a2a; border:1px solid #3a3a3a; border-radius:10px;
+                    max-height:19rem; overflow-y:auto; z-index:2000;
+                    box-shadow:0 8px 24px rgba(0,0,0,.5);"></div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var input = document.getElementById('csInput');
+    var box = document.getElementById('csResults');
+    if (!input || !box) return;
+    var timer = null;
+
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+    function money(n) {
+        return 'KES ' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    }
+
+    function render(rows) {
+        if (!rows.length) {
+            box.innerHTML = '<div style="padding:.7rem .85rem;color:#b0b0b0;font-size:.82rem;">'
+                + '{% trans "Hakuna mteja aliyepatikana." %}</div>';
+            box.style.display = 'block';
+            return;
+        }
+        box.innerHTML = rows.map(function (r) {
+            var owes = r.outstanding > 0
+                ? '<span style="color:#f87171;font-weight:700;">' + money(r.outstanding) + '</span>'
+                : '<span style="color:#6ee7b7;">{% trans "hana deni" %}</span>';
+            var flags = '';
+            if (r.is_owner_alias) flags += ' <span style="color:#c9a84c;font-size:.7rem;">🏠</span>';
+            if (r.is_defaulter) flags += ' <span style="color:#c0395a;font-size:.7rem;">⚠️</span>';
+            return '<a href="' + esc(r.journey_url) + '" '
+                + 'style="display:block;padding:.55rem .85rem;border-bottom:1px solid #333;'
+                + 'text-decoration:none;color:#f0ece4;">'
+                + '<div style="display:flex;justify-content:space-between;gap:.6rem;align-items:baseline;">'
+                + '<span style="font-weight:600;">' + esc(r.name) + flags + '</span>'
+                + owes
+                + '</div>'
+                + '<div style="font-size:.72rem;color:#b0b0b0;margin-top:.1rem;">'
+                + (r.phone ? esc(r.phone) : '{% trans "hakuna simu" %}')
+                + (r.score_label ? ' · ' + esc(r.score_label) : '')
+                + '</div></a>';
+        }).join('');
+        box.style.display = 'block';
+    }
+
+    input.addEventListener('input', function () {
+        var q = input.value.trim();
+        if (timer) clearTimeout(timer);
+        if (q.length < 2) { box.style.display = 'none'; return; }
+        timer = setTimeout(function () {
+            fetch('/customers/lookup/?q=' + encodeURIComponent(q), {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            })
+                .then(function (r) { return r.json(); })
+                .then(function (d) { render(d.results || []); })
+                .catch(function () { box.style.display = 'none'; });
+        }, 250);
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!box.contains(e.target) && e.target !== input) box.style.display = 'none';
+    });
+})();
+</script>

@@ -254,6 +254,16 @@ class Customer(models.Model):
         help_text='UBA §9.3 (Salon) — missed appointments. A repeat no-show can be required '
                   'to leave a booking deposit (PaymentPlan kind=BOOKING).'
     )
+    ledger_token = models.CharField(
+        max_length=32, blank=True, default='', db_index=True,
+        help_text='2026-08-23 (Roy): stable public token for this customer\'s own '
+                  'transaction+payment ledger page, embedded as an "Angalia historia yako" '
+                  'link in their debt-reminder SMS. Generated lazily on first use (see '
+                  'core.customer_profile.ensure_ledger_token) so no migration has to '
+                  'backfill every existing customer. Same security model as a receipt '
+                  'token — the unguessable URL is the proof of identity, and it only ever '
+                  'reaches that customer\'s own phone.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -2793,6 +2803,63 @@ class CustomerDebtPayment(models.Model):
 
     def __str__(self):
         return f"{self.customer.name} paid KES {self.amount_paid:,.2f} on {self.paid_at.strftime('%d %b %Y')}"
+
+
+class DebtReminderLog(models.Model):
+    """One row per debt reminder actually sent to a customer.
+
+    2026-08-23 live request (Roy): "a rule that forces an automatic reminder
+    to get sent before a customer be flagged as a defaulter, but also a
+    manual prompt option for when necessity arises."
+
+    Two jobs, and it needs to exist for both:
+      - the AUDIT trail — a customer must never be able to say "nobody ever
+        told me", and the owner must be able to see exactly when they were
+        told and what the balance was at the time;
+      - the ENFORCEMENT check — the two places that flag a defaulter
+        (approve_write_off, void_tab) look here first, and fire a reminder
+        automatically if none was ever sent, so the flag can never land on
+        someone who was never actually asked to pay.
+
+    `trigger` distinguishes a reminder a person deliberately sent from one
+    the system fired on its own at flag time — they read very differently to
+    an owner reviewing the trail later.
+    """
+    TRIGGER_CHOICES = [
+        ('manual',    _('Sent by staff')),
+        ('auto_flag', _('Auto-sent before defaulter flag')),
+    ]
+
+    business = models.ForeignKey(
+        'accounts.Business', on_delete=models.CASCADE, related_name='debt_reminders',
+    )
+    customer = models.ForeignKey(
+        Customer, on_delete=models.CASCADE, related_name='debt_reminders',
+    )
+    sent_at = models.DateTimeField(auto_now_add=True)
+    sent_by = models.ForeignKey(
+        'auth.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='debt_reminders_sent',
+    )
+    trigger = models.CharField(max_length=12, choices=TRIGGER_CHOICES, default='manual')
+    outstanding_at_send = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    phone = models.CharField(max_length=20, blank=True)
+    delivered = models.BooleanField(
+        default=False,
+        help_text='False when the reminder could not be sent at all (no phone on file, '
+                  'unnormalisable number, or the SMS gateway rejected it). Logged either '
+                  'way — "we tried and could not reach them" is itself part of the trail, '
+                  'and a missing phone must never block a business decision.',
+    )
+    note = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ['-sent_at']
+        verbose_name = 'Debt Reminder'
+        verbose_name_plural = 'Debt Reminders'
+
+    def __str__(self):
+        return f"Reminder to {self.customer.name} — KES {self.outstanding_at_send:,.0f} ({self.trigger})"
 
 
 # ────────────────────────────────────────────────

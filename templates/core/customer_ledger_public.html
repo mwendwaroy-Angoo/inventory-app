@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>{% if not_found %}Haipatikani{% else %}Historia yako — {{ business.name }}{% endif %}</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --onyx: #1a1a1a; --onyx-card: #2a2a2a; --gold: #c9a84c;
+            --pearl: #f0ece4; --raspberry: #c0395a;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 1rem; background: var(--onyx); color: var(--pearl);
+            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        .wrap { max-width: 640px; margin: 0 auto; }
+        h1 { font-family: 'Playfair Display', serif; font-size: 1.4rem; margin: 0 0 0.15rem; color: var(--gold); }
+        .sub { color: #b0b0b0; font-size: 0.85rem; margin-bottom: 1.1rem; }
+        .card {
+            background: var(--onyx-card); border: 1px solid #333; border-radius: 12px;
+            padding: 1rem 1.15rem; margin-bottom: 1rem;
+        }
+        .stats { display: flex; flex-wrap: wrap; gap: 1.25rem; }
+        .s-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: #b0b0b0; }
+        .s-val { font-size: 1.2rem; font-weight: 700; }
+        .sec-title {
+            font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--gold); margin-bottom: 0.6rem;
+        }
+        .row {
+            display: flex; flex-wrap: wrap; gap: 0.35rem 0.85rem; align-items: baseline;
+            padding: 0.5rem 0; border-bottom: 1px solid #383838; font-size: 0.85rem;
+        }
+        .row:last-child { border-bottom: none; }
+        .when { color: #b0b0b0; font-size: 0.76rem; min-width: 9rem; }
+        .item { flex: 1; min-width: 8rem; }
+        .amt { font-weight: 700; color: var(--gold); white-space: nowrap; }
+        .covered { font-size: 0.73rem; color: #b0b0b0; width: 100%; padding-left: 0.4rem; }
+        .pill {
+            font-size: 0.64rem; padding: 0.05rem 0.4rem; border-radius: 10px;
+            border: 1px solid #444; color: #b0b0b0; white-space: nowrap;
+        }
+        .foot { text-align: center; color: #777; font-size: 0.72rem; margin: 1.5rem 0 0.5rem; }
+        .empty { color: #b0b0b0; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+{% if not_found %}
+    <div class="card" style="text-align:center;">
+        <div style="font-size:2rem;">🔒</div>
+        <h1>Haipatikani</h1>
+        <div class="sub">Kiungo hiki si sahihi au kimeisha muda wake.</div>
+    </div>
+{% else %}
+    <h1>Historia yako</h1>
+    <div class="sub">{{ customer.name }} · {{ business.name }}</div>
+
+    <div class="card">
+        <div class="stats">
+            {% if debt %}
+            <div>
+                <div class="s-label">Deni la sasa</div>
+                <div class="s-val" style="color:{% if debt.outstanding > 0 %}#f87171{% else %}#6ee7b7{% endif %};">
+                    KES {{ debt.outstanding|floatformat:0 }}
+                </div>
+            </div>
+            <div>
+                <div class="s-label">Umeshalipa</div>
+                <div class="s-val" style="color:#6ee7b7;">KES {{ debt.total_paid|floatformat:0 }}</div>
+            </div>
+            {% endif %}
+            <div>
+                <div class="s-label">Jumla ya manunuzi</div>
+                <div class="s-val" style="color:var(--gold);">KES {{ summary.total_spend|floatformat:0 }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="sec-title">🧾 Ulichonunua ({{ history|length }})</div>
+        {% for r in history %}
+        <div class="row">
+            <span class="when">{{ r.date|date:"d M Y" }} · {{ r.time }}</span>
+            <span class="item">
+                {{ r.item }}
+                {% if r.payment_method %}<span class="pill">{{ r.payment_method }}</span>{% endif %}
+                {% if r.is_paid is False %}<span class="pill" style="color:#f87171;border-color:rgba(248,113,113,.4);">bado</span>{% endif %}
+            </span>
+            <span class="amt">KES {{ r.amount|floatformat:0 }}</span>
+        </div>
+        {% empty %}
+        <div class="empty">Hakuna manunuzi yaliyorekodiwa bado.</div>
+        {% endfor %}
+    </div>
+
+    <div class="card">
+        <div class="sec-title">💵 Malipo yako ({{ payments|length }})</div>
+        {% for p in payments %}
+        <div class="row">
+            <span class="when">{{ p.date|date:"d M Y" }} · {{ p.time }}</span>
+            <span class="item">{{ p.method }}</span>
+            <span class="amt" style="color:#6ee7b7;">KES {{ p.amount|floatformat:0 }}</span>
+            {% if p.covered_items %}
+            <span class="covered">
+                ↳ Ililipia: {% for ci in p.covered_items %}{{ ci.item }} (KES {{ ci.applied|floatformat:0 }}{% if not ci.full %}, sehemu{% endif %}){% if not forloop.last %} · {% endif %}{% endfor %}
+            </span>
+            {% endif %}
+        </div>
+        {% empty %}
+        <div class="empty">Hakuna malipo yaliyorekodiwa bado.</div>
+        {% endfor %}
+    </div>
+
+    <div class="foot">
+        Ukiona kitu ambacho hakikubaliani na kumbukumbu zako, tafadhali ongea na {{ business.name }}.<br>
+        Powered by Duka Mwecheche
+    </div>
+{% endif %}
+</div>
+</body>
+</html>

@@ -1459,21 +1459,61 @@ def send_debt_reminder(request, customer_id):
             messages.error(request, _('Fungua shift yako kwanza kabla ya kutuma kikumbusha.'))
             return redirect('customer_debt_profile', customer_id=customer_id)
 
+    ok, detail, _log = fire_debt_reminder(
+        business, customer, scope=scope, sent_by=request.user,
+        trigger='manual', base_url=request.build_absolute_uri('/').rstrip('/'),
+    )
+    if ok:
+        messages.success(request, detail)
+    else:
+        messages.warning(request, detail)
+    return redirect('customer_debt_profile', customer_id=customer_id)
+
+
+def fire_debt_reminder(business, customer, scope='all', sent_by=None,
+                       trigger='manual', base_url=''):
+    """Send one debt-reminder SMS and log it. Returns (ok, message, log_or_None).
+
+    2026-08-23 (Roy): extracted out of send_debt_reminder()'s view body so the
+    SAME code path serves both the manual "Send Reminder" button and the
+    automatic reminder the defaulter-flagging paths fire before flagging
+    anybody (see require_reminder_before_flagging). A view-free signature —
+    no `request` — is what makes that possible; `base_url` replaces
+    request.build_absolute_uri() for the embedded links.
+
+    ALWAYS writes a DebtReminderLog row, including when nothing could be
+    sent (no phone, bad number, gateway refused). "We tried and could not
+    reach them" is itself part of the accountability trail, and a missing
+    phone must never silently look the same as never having tried.
+    """
+    from .models import DebtReminderLog
+    from core.customer_profile import ensure_ledger_token
+    from core.notifications import normalize_ke_phone, send_sms_notification
+
     data = _get_customer_debt_data(customer, business, scope)
+    outstanding = Decimal(str(data['outstanding']))
+
+    def _log(delivered, note):
+        return DebtReminderLog.objects.create(
+            business=business, customer=customer, sent_by=sent_by,
+            trigger=trigger, outstanding_at_send=outstanding,
+            phone=(customer.phone or ''), delivered=delivered, note=note[:200],
+        )
 
     if data['outstanding'] <= 0:
-        messages.info(request, _('%(customer)s has no outstanding balance.') % {'customer': customer.name})
-        return redirect('customer_debt_profile', customer_id=customer_id)
+        return False, f'{customer.name} hana deni lolote kwa sasa.', None
 
     if not customer.phone:
-        messages.error(request, _('%(customer)s does not have a phone number on file.') % {'customer': customer.name})
-        return redirect('customer_debt_profile', customer_id=customer_id)
+        return False, (
+            f'{customer.name} hana nambari ya simu — ongeza nambari yake hapa chini '
+            f'ili uweze kutuma kikumbusha.'
+        ), _log(False, 'Hakuna nambari ya simu')
 
-    from core.notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
     normalized_phone = normalize_ke_phone(customer.phone)
     if not normalized_phone:
-        messages.error(request, _('Could not send reminder — invalid phone number format: %(phone)s') % {'phone': customer.phone})
-        return redirect('customer_debt_profile', customer_id=customer_id)
+        return False, (
+            f'Nambari ya simu si sahihi: {customer.phone}'
+        ), _log(False, f'Nambari si sahihi: {customer.phone}')
 
     outstanding_str = f"KES {data['outstanding']:,.0f}"
     window = business.credit_window_days or 30
@@ -1494,30 +1534,58 @@ def send_debt_reminder(request, customer_id):
         if _receipt_all_tab_ids(_r):
             latest_tab_rcpt = _r
             break
-    if latest_tab_rcpt:
-        pay_url = request.build_absolute_uri(f'/r/{latest_tab_rcpt.token}/')
-        pay_link_suffix = f" Lipa hapa: {pay_url}"
+    if latest_tab_rcpt and base_url:
+        pay_link_suffix = f" Lipa hapa: {base_url}/r/{latest_tab_rcpt.token}/"
+
+    # 2026-08-23 (Roy): "it can ride along inside the reminder SMS but as an
+    # embedded link i.e. (Access your payment History) which routes the
+    # customer to another ledger showing his/her historical, transactional
+    # ledger" — so the customer can always check the figure being quoted at
+    # them against their own itemised record, rather than being asked to
+    # take it on trust.
+    ledger_suffix = ''
+    if base_url:
+        ledger_suffix = f" Historia yako: {base_url}/ledger/{ensure_ledger_token(customer)}/"
 
     msg = (
         f"{business.name}: {customer.name}, bado una deni la {outstanding_str}. "
-        f"Tafadhali lipa ndani ya siku {window}. Asante.{pay_link_suffix}"
+        f"Tafadhali lipa ndani ya siku {window}. Asante."
+        f"{pay_link_suffix}{ledger_suffix}"
     )
 
     ok, _detail = send_sms_notification(msg, normalized_phone)
     if ok:
-        messages.success(
-            request,
-            _('Reminder sent to %(customer)s (%(phone)s).')
-            % {'customer': customer.name, 'phone': customer.phone}
-        )
-    else:
-        messages.warning(
-            request,
-            _('Reminder could not be sent to %(phone)s — check your Africa\'s Talking account balance and settings.')
-            % {'phone': customer.phone}
-        )
+        return True, f'Kikumbusha kimetumwa kwa {customer.name} ({customer.phone}).', _log(True, '')
+    return False, (
+        f'Kikumbusha hakikutumwa kwa {customer.phone} — angalia salio la Africa\'s Talking.'
+    ), _log(False, 'SMS gateway ilikataa')
 
-    return redirect('customer_debt_profile', customer_id=customer_id)
+
+def require_reminder_before_flagging(business, customer, sent_by=None, base_url=''):
+    """Make sure this customer has been asked to pay at least once before they
+    get flagged as a defaulter — firing a reminder right now if they never
+    have been (2026-08-23, Roy's own enforcement rule).
+
+    Deliberately NON-BLOCKING. It sends and logs; it never refuses to let the
+    flag happen. A customer with no phone on file genuinely cannot be
+    reminded, and refusing to let the business record a real bad debt over a
+    missing phone number would be a worse outcome than the flag landing
+    without a reminder — the DebtReminderLog row records exactly which of the
+    two happened either way. Never raises: a reminder failing must not take
+    down the write-off/void it is attached to.
+    """
+    from .models import DebtReminderLog
+    try:
+        if DebtReminderLog.objects.filter(business=business, customer=customer).exists():
+            return None
+        _ok, _msg, log = fire_debt_reminder(
+            business, customer, sent_by=sent_by,
+            trigger='auto_flag', base_url=base_url,
+        )
+        return log
+    except Exception:
+        logger.exception('Auto-reminder before defaulter flag failed for customer %s', customer.id)
+        return None
 
 
 # ── K4: Receipt meta helpers + statement view ─────────────────────────────────
@@ -2366,6 +2434,13 @@ def _execute_write_off_approval(wo, approver, self_service=False):
     if not is_mistake and customer_name and customer_name != '—':
         cust_obj = Customer.objects.filter(business=wo.transaction.business, name=customer_name).first()
         if cust_obj:
+            # 2026-08-23 (Roy): nobody gets flagged a defaulter without having
+            # been asked to pay at least once. Non-blocking — see
+            # require_reminder_before_flagging()'s own docstring.
+            require_reminder_before_flagging(
+                wo.transaction.business, cust_obj, sent_by=request.user,
+                base_url=request.build_absolute_uri('/').rstrip('/'),
+            )
             Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
 
     # Remove any Haki deduction the manager may have already created (owner overrides)

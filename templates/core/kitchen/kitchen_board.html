@@ -1711,6 +1711,11 @@
     <h6 class="offcanvas-title" style="color:#c9a84c;">🍽 Food Tabs</h6>
     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
   </div>
+  {# 2026-08-23 (Roy, item 5): customer search inside the tabs drawer — the
+     one place staff are already looking a customer up. All staff. #}
+  <div style="margin:0.5rem 0.75rem 0;">
+    {% include "core/_customer_search.html" %}
+  </div>
   <!-- Recent Payments — find and undo a mistaken settlement even after the
        tab has fully closed (2026-07-25 live request). -->
   <div style="margin:0.5rem 0.75rem 0;">

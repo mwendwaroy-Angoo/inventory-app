@@ -327,6 +327,15 @@
     </div>
     {% endif %}
 
+    <!-- 2026-08-23 (Roy, item 6): customer search on the dashboard, for ALL
+         staff — "customers have been asking for one simple thing, 'can you
+         search for me in your system?' and I have never been able to do
+         that." Read-only; acting on debt is still station-scoped as before. -->
+    <div class="mb-3">
+        <div class="section-title">🔎 {% trans 'Tafuta Mteja' %}</div>
+        {% include "core/_customer_search.html" %}
+    </div>
+
     <!-- Owner Quick Actions -->
     {% if user.userprofile.is_owner_or_manager %}
     <div class="owner-actions">

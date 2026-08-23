@@ -41268,3 +41268,330 @@ class TabTransferSettledDestinationTest(TestCase):
 
         transfer.refresh_from_db()
         self.assertEqual(transfer.status, 'CANCELLED')
+
+
+class CustomerProfilingTest(TestCase):
+    """2026-08-23 live request (Roy), items 1 + 2 + 5/6: a customer's full
+    journey (date, time, item, served by, recorded by), a payment history
+    that says which items each payment went towards, an all-staff search,
+    and a public ledger the customer reaches from their reminder SMS."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Profiling Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='cp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(
+            username='cp_staff', password='x', first_name='Susan', last_name='N',
+        )
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff, business=self.biz, role='staff',
+        )
+        self.waiter = User.objects.create_user(
+            username='cp_waiter', password='x', first_name='Dush', last_name='M',
+        )
+        UserProfile.objects.create(user=self.waiter, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='CP-01', unit='Pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('150'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Roy', credit_approved=True,
+        )
+
+    def _sale(self, amount, payment_method='credit', recipient='Roy',
+              recorded_by=None, tab=None, description='Tusker'):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount,
+            payment_method=payment_method, recipient=recipient,
+            recorded_by=recorded_by or self.staff,
+        )
+        if tab is not None:
+            BarTabEntry.objects.create(
+                tab=tab, transaction=txn, description=description,
+                amount=amount, is_paid=False,
+            )
+        return txn
+
+    # ── Item 1: transaction history ──────────────────────────────────────
+    def test_history_carries_date_time_item_served_by_and_recorded_by(self):
+        from core.customer_profile import customer_transaction_history
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN',
+            source='bar', store=self.store, served_by=self.waiter,
+        )
+        self._sale(Decimal('250'), tab=tab, description='Tusker Baridi',
+                   recorded_by=self.staff)
+
+        rows = customer_transaction_history(self.biz, self.customer)
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r['item'], 'Tusker Baridi')
+        self.assertEqual(r['served_by'], 'Dush M')
+        self.assertEqual(r['recorded_by'], 'Susan N')
+        self.assertEqual(r['amount'], 250.0)
+        self.assertIsNotNone(r['date'])
+        self.assertTrue(r['time'])
+
+    def test_history_finds_sales_through_all_three_identity_links(self):
+        """recipient, tab.customer FK, and tab.customer_name each reach real
+        history that the other two alone would miss."""
+        from core.customer_profile import customer_transaction_history
+        # (a) plain credit sale — recipient only, no tab
+        self._sale(Decimal('100'), recipient='Roy')
+        # (b) tab linked by FK, with a DIFFERENT recipient string
+        tab_fk = BarTab.objects.create(
+            business=self.biz, customer_name='R.', status='OPEN',
+            source='bar', store=self.store, customer=self.customer,
+        )
+        self._sale(Decimal('200'), recipient='', tab=tab_fk)
+        # (c) tab matched only by typed name, no FK
+        tab_name = BarTab.objects.create(
+            business=self.biz, customer_name='roy', status='OPEN',
+            source='bar', store=self.store,
+        )
+        self._sale(Decimal('300'), recipient='', tab=tab_name)
+
+        rows = customer_transaction_history(self.biz, self.customer)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(sorted(r['amount'] for r in rows), [100.0, 200.0, 300.0])
+
+    def test_history_excludes_voided_and_internal_tag_transactions(self):
+        from core.customer_profile import customer_transaction_history
+        self._sale(Decimal('250'))
+        void = self._sale(Decimal('999'))
+        void.payment_method = 'void'
+        void.save(update_fields=['payment_method'])
+        svq = self._sale(Decimal('500'), payment_method='cash')
+        svq.invoice_no = '[SVQ]'
+        svq.save(update_fields=['invoice_no'])
+
+        rows = customer_transaction_history(self.biz, self.customer)
+        self.assertEqual([r['amount'] for r in rows], [250.0])
+
+    def test_summary_totals_and_first_last_seen(self):
+        from core.customer_profile import customer_summary
+        self._sale(Decimal('100'))
+        self._sale(Decimal('250'))
+        s = customer_summary(self.biz, self.customer)
+        self.assertEqual(s['txn_count'], 2)
+        self.assertEqual(s['total_spend'], 350.0)
+        self.assertIsNotNone(s['first_seen'])
+        self.assertIsNotNone(s['last_seen'])
+
+    def test_journey_page_reachable_by_ordinary_staff(self):
+        """Deliberate widening (Roy's explicit call): any staff member can
+        answer 'can you search for me in your system?'."""
+        self._sale(Decimal('250'))
+        self.client.force_login(self.staff)
+        resp = self.client.get(f'/customers/{self.customer.id}/journey/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Roy')
+
+    def test_journey_is_business_scoped(self):
+        other_biz = Business.objects.create(name='Other Biz')
+        other_cust = Customer.objects.create(business=other_biz, name='Stranger')
+        self.client.force_login(self.staff)
+        resp = self.client.get(f'/customers/{other_cust.id}/journey/')
+        self.assertEqual(resp.status_code, 404)
+
+    # ── Item 2: payment history with items covered ───────────────────────
+    def test_payment_history_reconstructs_which_items_each_payment_covered(self):
+        from core.customer_profile import customer_payment_history
+        t1 = self._sale(Decimal('100'), description='Beer A')
+        t2 = self._sale(Decimal('200'), description='Beer B')
+        Transaction.objects.filter(id=t1.id).update(date=timezone.localdate() - timedelta(days=2))
+        Transaction.objects.filter(id=t2.id).update(date=timezone.localdate() - timedelta(days=1))
+        CustomerDebtPayment.objects.create(
+            customer=self.customer, business=self.biz,
+            amount_paid=Decimal('150'), payment_method='cash', source='bar',
+        )
+        rows = customer_payment_history(self.biz, self.customer)
+        self.assertEqual(len(rows), 1)
+        covered = rows[0]['covered_items']
+        # FIFO: fully covers the older 100, partially covers the 200.
+        self.assertEqual(len(covered), 2)
+        self.assertEqual(covered[0]['applied'], 100.0)
+        self.assertTrue(covered[0]['full'])
+        self.assertEqual(covered[1]['applied'], 50.0)
+        self.assertFalse(covered[1]['full'])
+
+    def test_payment_beyond_all_debt_is_surfaced_not_silently_dropped(self):
+        from core.customer_profile import customer_payment_history
+        self._sale(Decimal('100'))
+        CustomerDebtPayment.objects.create(
+            customer=self.customer, business=self.biz,
+            amount_paid=Decimal('250'), payment_method='cash', source='bar',
+        )
+        rows = customer_payment_history(self.biz, self.customer)
+        self.assertEqual(rows[0]['unapplied'], 150.0)
+
+    # ── Item 2: the reminder button's missing half ───────────────────────
+    def test_staff_can_save_a_customer_phone(self):
+        """The Send Reminder button is gated on customer.phone but nothing
+        could ever set one — this is what made the feature reachable."""
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/customers/{self.customer.id}/phone/',
+                                {'phone': '0712345678'})
+        self.assertEqual(resp.status_code, 302)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.phone, '0712345678')
+
+    def test_invalid_phone_is_rejected_without_saving(self):
+        self.client.force_login(self.staff)
+        self.client.post(f'/customers/{self.customer.id}/phone/', {'phone': 'not-a-number'})
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.phone, '')
+
+    # ── Item 5/6: all-staff search ───────────────────────────────────────
+    def test_lookup_api_returns_standing_for_all_staff(self):
+        self._sale(Decimal('250'))
+        self.client.force_login(self.staff)
+        resp = self.client.get('/customers/lookup/?q=Ro')
+        self.assertEqual(resp.status_code, 200)
+        results = resp.json()['results']
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['name'], 'Roy')
+        self.assertEqual(results[0]['outstanding'], 250.0)
+        self.assertIn('journey_url', results[0])
+
+    def test_lookup_api_is_business_scoped(self):
+        other_biz = Business.objects.create(name='Other Lookup Biz')
+        Customer.objects.create(business=other_biz, name='Royston')
+        self.client.force_login(self.staff)
+        results = self.client.get('/customers/lookup/?q=Roy').json()['results']
+        self.assertEqual([r['name'] for r in results], ['Roy'])
+
+    def test_dashboard_carries_the_search_box_for_ordinary_staff(self):
+        self.client.force_login(self.staff)
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'csInput')
+
+    # ── Item 2: public ledger ────────────────────────────────────────────
+    def test_public_ledger_is_reachable_by_token_without_login(self):
+        from core.customer_profile import ensure_ledger_token
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN',
+            source='bar', store=self.store, served_by=self.waiter,
+        )
+        self._sale(Decimal('250'), tab=tab, description='Tusker Baridi')
+        token = ensure_ledger_token(self.customer)
+        resp = self.client.get(f'/ledger/{token}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Tusker Baridi')
+        self.assertContains(resp, 'Roy')
+
+    def test_public_ledger_rejects_an_unknown_token(self):
+        resp = self.client.get('/ledger/deadbeefdeadbeefdeadbeefdeadbeef/')
+        self.assertEqual(resp.status_code, 404)
+
+    def test_ledger_token_is_stable_across_calls(self):
+        from core.customer_profile import ensure_ledger_token
+        a = ensure_ledger_token(self.customer)
+        b = ensure_ledger_token(self.customer)
+        self.assertEqual(a, b)
+        self.assertTrue(a)
+
+
+class DebtReminderEnforcementTest(TestCase):
+    """2026-08-23 (Roy): "a rule that forces an automatic reminder to get sent
+    before a customer be flagged as a defaulter, but also a manual prompt
+    option for when necessity arises." Non-blocking by design — it sends and
+    logs, it never refuses to let the business record a real bad debt."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Reminder Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rem_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='rem_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.staff, status='OPEN')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='REM-01', unit='Pcs', selling_price=Decimal('250'),
+            cost_price=Decimal('150'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Roy', phone='0712345678', credit_approved=True,
+        )
+
+    def _debt(self, amount=Decimal('250')):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=amount,
+            payment_method='credit', recipient='Roy', recorded_by=self.staff,
+        )
+
+    def test_reminder_logs_and_embeds_the_ledger_link(self):
+        from core.debt_views import fire_debt_reminder
+        from core.models import DebtReminderLog
+        self._debt()
+        with patch('core.notifications.send_sms_notification', return_value=(True, 'ok')) as m:
+            ok, msg, log = fire_debt_reminder(
+                self.biz, self.customer, sent_by=self.staff,
+                base_url='https://example.test',
+            )
+        self.assertTrue(ok)
+        self.assertIsNotNone(log)
+        self.assertTrue(log.delivered)
+        self.assertEqual(log.trigger, 'manual')
+        self.assertEqual(float(log.outstanding_at_send), 250.0)
+        sent_text = m.call_args[0][0]
+        self.assertIn('/ledger/', sent_text)
+        self.assertEqual(DebtReminderLog.objects.count(), 1)
+
+    def test_missing_phone_logs_an_undelivered_attempt_rather_than_nothing(self):
+        from core.debt_views import fire_debt_reminder
+        from core.models import DebtReminderLog
+        self.customer.phone = ''
+        self.customer.save(update_fields=['phone'])
+        self._debt()
+        ok, msg, log = fire_debt_reminder(self.biz, self.customer)
+        self.assertFalse(ok)
+        self.assertIsNotNone(log)
+        self.assertFalse(log.delivered)
+        self.assertEqual(DebtReminderLog.objects.count(), 1)
+
+    def test_no_reminder_when_there_is_nothing_owed(self):
+        from core.debt_views import fire_debt_reminder
+        from core.models import DebtReminderLog
+        ok, msg, log = fire_debt_reminder(self.biz, self.customer)
+        self.assertFalse(ok)
+        self.assertIsNone(log)
+        self.assertEqual(DebtReminderLog.objects.count(), 0)
+
+    def test_flagging_a_defaulter_auto_sends_a_reminder_first(self):
+        from core.debt_views import require_reminder_before_flagging
+        from core.models import DebtReminderLog
+        self._debt()
+        with patch('core.notifications.send_sms_notification', return_value=(True, 'ok')):
+            require_reminder_before_flagging(self.biz, self.customer, sent_by=self.owner)
+        log = DebtReminderLog.objects.get()
+        self.assertEqual(log.trigger, 'auto_flag')
+
+    def test_no_duplicate_auto_reminder_when_one_was_already_sent(self):
+        from core.debt_views import fire_debt_reminder, require_reminder_before_flagging
+        from core.models import DebtReminderLog
+        self._debt()
+        with patch('core.notifications.send_sms_notification', return_value=(True, 'ok')):
+            fire_debt_reminder(self.biz, self.customer, sent_by=self.staff)
+            require_reminder_before_flagging(self.biz, self.customer, sent_by=self.owner)
+        self.assertEqual(DebtReminderLog.objects.count(), 1)
+        self.assertEqual(DebtReminderLog.objects.get().trigger, 'manual')
+
+    def test_enforcement_never_blocks_when_the_customer_has_no_phone(self):
+        """A missing phone must never stop the business recording a real bad
+        debt — it logs the failed attempt and lets the flag proceed."""
+        from core.debt_views import require_reminder_before_flagging
+        from core.models import DebtReminderLog
+        self.customer.phone = ''
+        self.customer.save(update_fields=['phone'])
+        self._debt()
+        require_reminder_before_flagging(self.biz, self.customer, sent_by=self.owner)
+        self.assertEqual(DebtReminderLog.objects.count(), 1)
+        self.assertFalse(DebtReminderLog.objects.get().delivered)

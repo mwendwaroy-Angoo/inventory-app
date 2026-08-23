@@ -3763,6 +3763,14 @@ def void_tab(request, tab_id):
             business=up.business, name=tab.customer_name
         ).first()
         if cust_obj:
+            # 2026-08-23 (Roy): nobody gets flagged a defaulter without having
+            # been asked to pay at least once — fires one automatically if no
+            # reminder was ever sent. Non-blocking; never raises.
+            from core.debt_views import require_reminder_before_flagging
+            require_reminder_before_flagging(
+                up.business, cust_obj, sent_by=request.user,
+                base_url=request.build_absolute_uri('/').rstrip('/'),
+            )
             Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
 
     return JsonResponse({'ok': True, 'reason': reason})

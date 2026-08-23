@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ customer.name }} — Safari ya Mteja{% endblock %}
+
+{% block extra_css %}
+<style>
+    .cj-card {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid #2a2a2a;
+        border-radius: 12px;
+        padding: 1rem 1.15rem;
+        margin-bottom: 1rem;
+    }
+    .cj-stats { display: flex; flex-wrap: wrap; gap: 1.25rem; }
+    .cj-stat-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: #b0b0b0; }
+    .cj-stat-val { font-size: 1.15rem; font-weight: 700; color: var(--pearl); }
+    .cj-section-title {
+        font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--gold); margin-bottom: 0.6rem;
+    }
+    .cj-row {
+        display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline;
+        padding: 0.5rem 0; border-bottom: 1px solid #242424; font-size: 0.85rem;
+    }
+    .cj-row:last-child { border-bottom: none; }
+    .cj-when { color: #b0b0b0; font-size: 0.78rem; min-width: 9.5rem; }
+    .cj-item { color: var(--pearl); flex: 1; min-width: 8rem; }
+    .cj-amt { font-weight: 700; color: var(--gold); white-space: nowrap; }
+    .cj-who { font-size: 0.72rem; color: #b0b0b0; width: 100%; }
+    .cj-pill {
+        font-size: 0.66rem; padding: 0.05rem 0.4rem; border-radius: 10px;
+        border: 1px solid #333; color: #b0b0b0; white-space: nowrap;
+    }
+    .cj-covered { font-size: 0.74rem; color: #b0b0b0; width: 100%; padding-left: 0.4rem; }
+    .cj-scroll { max-height: 32rem; overflow-y: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex align-items-start justify-content-between flex-wrap gap-2">
+    <div>
+        <h1 class="page-title mb-1">🧭 {{ customer.name }}</h1>
+        <div style="color:#b0b0b0; font-size:0.85rem;">
+            {% if customer.phone %}📞 {{ customer.phone }}{% else %}<span style="color:#ff9800;">Hakuna nambari ya simu</span>{% endif %}
+            {% if customer.is_owner_alias %} · <span style="color:var(--gold);">🏠 {% trans 'Huyu ni mmiliki' %}</span>{% endif %}
+            {% if customer.is_defaulter %} · <span style="color:#c0395a;">⚠️ {% trans 'Defaulter' %}</span>{% endif %}
+        </div>
+    </div>
+    <a href="{% url 'customer_debt_profile' customer.id %}" class="btn btn-sm btn-outline-secondary" style="font-size:0.78rem;">
+        💳 {% trans 'Deni' %}
+    </a>
+</div>
+
+<div class="cj-card">
+    <div class="cj-stats">
+        <div>
+            <div class="cj-stat-label">{% trans 'Jumla ya manunuzi' %}</div>
+            <div class="cj-stat-val" style="color:var(--gold);">KES {{ summary.total_spend|floatformat:0 }}</div>
+        </div>
+        <div>
+            <div class="cj-stat-label">{% trans 'Manunuzi' %}</div>
+            <div class="cj-stat-val">{{ summary.txn_count }}</div>
+        </div>
+        {% if debt %}
+        <div>
+            <div class="cj-stat-label">{% trans 'Deni la sasa' %}</div>
+            <div class="cj-stat-val" style="color:{% if debt.outstanding > 0 %}#f87171{% else %}#6ee7b7{% endif %};">
+                KES {{ debt.outstanding|floatformat:0 }}
+            </div>
+        </div>
+        {% endif %}
+        <div>
+            <div class="cj-stat-label">{% trans 'Mara ya kwanza' %}</div>
+            <div class="cj-stat-val" style="font-size:0.95rem;">{{ summary.first_seen|date:"d M Y"|default:"—" }}</div>
+        </div>
+        <div>
+            <div class="cj-stat-label">{% trans 'Mara ya mwisho' %}</div>
+            <div class="cj-stat-val" style="font-size:0.95rem;">{{ summary.last_seen|date:"d M Y"|default:"—" }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="cj-card">
+    <div class="cj-section-title">🧾 {% trans 'Historia ya Manunuzi' %} ({{ history|length }})</div>
+    {% if history %}
+    <div class="cj-scroll">
+        {% for r in history %}
+        <div class="cj-row">
+            <span class="cj-when">{{ r.date|date:"d M Y" }} · {{ r.time }}</span>
+            <span class="cj-item">
+                {% if r.station == 'kitchen' %}🍽{% else %}🍺{% endif %} {{ r.item }}
+                {% if r.payment_method %}<span class="cj-pill">{{ r.payment_method }}</span>{% endif %}
+                {% if r.is_paid is False %}<span class="cj-pill" style="color:#f87171; border-color:rgba(248,113,113,.4);">{% trans 'bado' %}</span>{% endif %}
+            </span>
+            <span class="cj-amt">KES {{ r.amount|floatformat:0 }}</span>
+            <span class="cj-who">
+                {% if r.served_by %}{% trans 'Aliyehudumia' %}: {{ r.served_by }}{% endif %}
+                {% if r.served_by and r.recorded_by %} · {% endif %}
+                {% if r.recorded_by %}{% trans 'Aliyeandika' %}: {{ r.recorded_by }}{% endif %}
+                {% if not r.served_by and not r.recorded_by %}<span style="color:#666;">{% trans 'hakuna kumbukumbu ya mtumishi' %}</span>{% endif %}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div style="color:#b0b0b0; font-size:0.85rem;">{% trans 'Hakuna manunuzi yaliyorekodiwa bado.' %}</div>
+    {% endif %}
+</div>
+
+<div class="cj-card">
+    <div class="cj-section-title">💵 {% trans 'Historia ya Malipo ya Deni' %} ({{ payments|length }})</div>
+    {% if payments %}
+    <div style="font-size:0.74rem; color:#b0b0b0; margin-bottom:0.5rem;">
+        {% trans 'Vitu vilivyolipiwa vinakadiriwa kwa mpangilio wa deni la zamani kwanza (FIFO) — ndio jinsi mfumo hulipa madeni.' %}
+    </div>
+    <div class="cj-scroll">
+        {% for p in payments %}
+        <div class="cj-row">
+            <span class="cj-when">{{ p.date|date:"d M Y" }} · {{ p.time }}</span>
+            <span class="cj-item">
+                {{ p.method }}{% if p.source %} <span class="cj-pill">{{ p.source }}</span>{% endif %}
+                {% if p.recorded_by %}<span class="cj-pill">{{ p.recorded_by }}</span>{% endif %}
+            </span>
+            <span class="cj-amt" style="color:#6ee7b7;">KES {{ p.amount|floatformat:0 }}</span>
+            {% if p.covered_items %}
+            <span class="cj-covered">
+                ↳ {% for ci in p.covered_items %}{{ ci.item }} (KES {{ ci.applied|floatformat:0 }}{% if not ci.full %}, sehemu{% endif %}){% if not forloop.last %} · {% endif %}{% endfor %}
+            </span>
+            {% endif %}
+            {% if p.unapplied %}
+            <span class="cj-covered" style="color:#fbbf24;">
+                ↳ KES {{ p.unapplied|floatformat:0 }} {% trans 'haijalinganishwa na deni lolote' %}
+            </span>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div style="color:#b0b0b0; font-size:0.85rem;">{% trans 'Hakuna malipo ya deni yaliyorekodiwa.' %}</div>
+    {% endif %}
+</div>
+{% endblock %}

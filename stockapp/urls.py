@@ -288,6 +288,12 @@ from core.restricted_items_views import (
     request_sale_approval, pending_approvals,
     decide_approval, approval_status,
 )
+from core.customer_profile_views import (
+    customer_journey,
+    customer_ledger_public,
+    customer_lookup_api,
+    update_customer_phone,
+)
 from core.debt_views import (
     debt_dashboard,
     customer_debt_profile,
@@ -659,6 +665,11 @@ urlpatterns = [
     path("debt/write-offs/pending/", pending_write_offs, name="pending_write_offs"),
     path("debt/<int:customer_id>/clear-defaulter/", clear_defaulter, name="clear_defaulter"),
     path("debt/customers/search/", customer_search_api, name="customer_search_api"),
+    # 2026-08-23 (Roy) — customer profiling / journey / all-staff search
+    path("customers/<int:customer_id>/journey/", customer_journey, name="customer_journey"),
+    path("customers/<int:customer_id>/phone/", update_customer_phone, name="update_customer_phone"),
+    path("customers/lookup/", customer_lookup_api, name="customer_lookup_api"),
+    path("ledger/<str:token>/", customer_ledger_public, name="customer_ledger_public"),
     path("debt/customers/debtors/", debtors_list_api, name="debtors_list_api"),
     path("debt/customers/correct/", customer_identity_correct, name="customer_identity_correct"),
     path("debt/<int:customer_id>/merge/", merge_customer, name="merge_customer"),
