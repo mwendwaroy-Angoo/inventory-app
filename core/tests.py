@@ -41595,3 +41595,70 @@ class DebtReminderEnforcementTest(TestCase):
         require_reminder_before_flagging(self.biz, self.customer, sent_by=self.owner)
         self.assertEqual(DebtReminderLog.objects.count(), 1)
         self.assertFalse(DebtReminderLog.objects.get().delivered)
+
+    def test_write_off_approval_fires_the_auto_reminder_end_to_end(self):
+        """Regression lock for a real bug this integration introduced and the
+        suite caught: the enforcement call was placed inside
+        _execute_write_off_approval(wo, approver), which has no `request` in
+        scope — NameError on every approval. Same class of bug CLAUDE.md
+        already documents for _create_transactions_for_order. This walks the
+        real HTTP path rather than calling the helper directly, so an
+        out-of-scope name can never slip through again."""
+        from core.models import DebtReminderLog, WriteOffRequest
+        txn = self._debt()
+        wo = WriteOffRequest.objects.create(
+            transaction=txn, requested_by=self.staff,
+            reason='Hataki kulipa', status='pending',
+            customer_name_cache='Roy',
+        )
+        self.client.force_login(self.owner)
+        with patch('core.notifications.send_sms_notification', return_value=(True, 'ok')):
+            resp = self.client.post(f'/debt/write-off/{wo.id}/approve/')
+        self.assertIn(resp.status_code, (200, 302))
+        self.customer.refresh_from_db()
+        self.assertTrue(self.customer.is_defaulter)
+        log = DebtReminderLog.objects.filter(customer=self.customer).first()
+        self.assertIsNotNone(log, 'approval must auto-send a reminder before flagging')
+        self.assertEqual(log.trigger, 'auto_flag')
+
+    def test_void_tab_fires_the_auto_reminder_before_flagging(self):
+        """Same ordering trap as the write-off path: void_tab neutralises
+        every entry before it flags, so a reminder fired next to the flag
+        would always see a reduced balance.
+
+        Note void_tab only ever operates on an OPEN tab, and an open tab's
+        balance is deliberately NOT debt by this app's definition
+        (_get_customer_debt_data excludes tab_entry__tab__status='OPEN') —
+        so the reminder is about whatever REAL converted debt the customer
+        already carries, which is exactly the balance the defaulter flag is
+        about to be justified by."""
+        from core.models import DebtReminderLog
+        # Real, already-converted debt sitting on this customer.
+        self._debt(Decimal('250'))
+        # A separate OPEN tab that is now being voided.
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN',
+            source='bar', store=self.store, customer=self.customer,
+        )
+        tab_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('80'),
+            payment_method='credit', recipient='Roy', recorded_by=self.staff,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=tab_txn, description='Tusker',
+            amount=Decimal('80'), is_paid=False,
+        )
+        self.client.force_login(self.owner)
+        with patch('core.notifications.send_sms_notification', return_value=(True, 'ok')):
+            resp = self.client.post(f'/bar/tabs/{tab.id}/void/', {
+                'reason': 'Hataki kulipa',
+                'idempotency_token': str(__import__('uuid').uuid4()),
+            })
+        self.assertEqual(resp.status_code, 200)
+        self.customer.refresh_from_db()
+        self.assertTrue(self.customer.is_defaulter)
+        log = DebtReminderLog.objects.filter(customer=self.customer).first()
+        self.assertIsNotNone(log, 'void must auto-send a reminder before flagging')
+        self.assertEqual(log.trigger, 'auto_flag')
+        self.assertEqual(float(log.outstanding_at_send), 250.0)

@@ -3723,6 +3723,32 @@ def void_tab(request, tab_id):
         is_paid=False, transaction__payment_method='credit'
     ).exists()
 
+    # 2026-08-23 (Roy): "a rule that forces an automatic reminder to get sent
+    # before a customer be flagged as a defaulter." Resolved and fired HERE,
+    # before the void loop below — for exactly the same reason had_credit is
+    # computed up here: once the loop has voided every entry the balance is
+    # gone, so fire_debt_reminder() would see less (or nothing) outstanding.
+    #
+    # Note this void only ever runs on an OPEN tab, and an open tab's balance
+    # is deliberately NOT debt by this app's own definition
+    # (_get_customer_debt_data excludes tab_entry__tab__status='OPEN'), so the
+    # reminder here is about whatever REAL converted debt the customer already
+    # carries — which is precisely the history the defaulter flag about to be
+    # set is meant to reflect. A customer with no other debt simply gets no
+    # reminder (and a logged, undelivered attempt), which is correct: there is
+    # nothing yet to remind them about.
+    _flag_customer = None
+    if had_credit and tab.customer_name:
+        _flag_customer = Customer.objects.filter(
+            business=up.business, name=tab.customer_name,
+        ).first()
+        if _flag_customer is not None:
+            from core.debt_views import require_reminder_before_flagging
+            require_reminder_before_flagging(
+                up.business, _flag_customer, sent_by=request.user,
+                base_url=request.build_absolute_uri('/').rstrip('/'),
+            )
+
     from django.db import transaction as db_txn
 
     now = timezone.now()
@@ -3763,14 +3789,6 @@ def void_tab(request, tab_id):
             business=up.business, name=tab.customer_name
         ).first()
         if cust_obj:
-            # 2026-08-23 (Roy): nobody gets flagged a defaulter without having
-            # been asked to pay at least once — fires one automatically if no
-            # reminder was ever sent. Non-blocking; never raises.
-            from core.debt_views import require_reminder_before_flagging
-            require_reminder_before_flagging(
-                up.business, cust_obj, sent_by=request.user,
-                base_url=request.build_absolute_uri('/').rstrip('/'),
-            )
             Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
 
     return JsonResponse({'ok': True, 'reason': reason})

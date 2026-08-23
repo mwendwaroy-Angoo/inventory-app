@@ -2247,7 +2247,10 @@ def request_write_off(request, txn_id):
         # through _execute_write_off_approval() (the same code approve_write_off
         # uses) so a self-executed erase is indistinguishable in its effect
         # from an approved one — only who/when differs.
-        result = _execute_write_off_approval(wo, request.user, self_service=True)
+        result = _execute_write_off_approval(
+            wo, request.user, self_service=True,
+            base_url=request.build_absolute_uri('/').rstrip('/'),
+        )
         return JsonResponse({
             'ok': True,
             'request_id': wo.id,
@@ -2375,7 +2378,7 @@ def _can_approve_debt_action(up, wo):
     return False
 
 
-def _execute_write_off_approval(wo, approver, self_service=False):
+def _execute_write_off_approval(wo, approver, self_service=False, base_url=''):
     """Shared execution core for approve_write_off — also called directly by
     request_write_off() for the self-service 'erase_mistake' path (Business.
     debt_erase_requires_approval=False), so a self-executed erase produces
@@ -2388,6 +2391,26 @@ def _execute_write_off_approval(wo, approver, self_service=False):
     amount = float(txn.revenue())
     reviewer_name = approver.get_full_name() or approver.username
     is_mistake = wo.request_type == WriteOffRequest.TYPE_ERASE_MISTAKE
+
+    # 2026-08-23 (Roy): "a rule that forces an automatic reminder to get sent
+    # before a customer be flagged as a defaulter." Fired HERE, before the
+    # void below — not next to the flag itself further down, where it looks
+    # like it belongs. By that point the write-off has already neutralised
+    # the transaction, so _get_customer_debt_data() correctly reports nothing
+    # outstanding and fire_debt_reminder() rightly declines to send: the
+    # enforcement would silently never fire at all. Caught by its own
+    # end-to-end test. Skipped for erase_mistake, which never flags anybody
+    # (it was the business's own data-entry error, not the customer's debt).
+    _flag_customer = None
+    if not is_mistake and customer_name and customer_name != '—':
+        _flag_customer = Customer.objects.filter(
+            business=wo.transaction.business, name=customer_name,
+        ).first()
+        if _flag_customer is not None:
+            require_reminder_before_flagging(
+                wo.transaction.business, _flag_customer,
+                sent_by=approver, base_url=base_url,
+            )
 
     # Execute the void
     txn.payment_method = 'void'
@@ -2431,17 +2454,8 @@ def _execute_write_off_approval(wo, approver, self_service=False):
     # "written off, uncollectable" path invisible to future credit decisions.
     # Never fair to flag the customer for a data-entry mistake that wasn't
     # their fault — skipped entirely for the erase_mistake type.
-    if not is_mistake and customer_name and customer_name != '—':
-        cust_obj = Customer.objects.filter(business=wo.transaction.business, name=customer_name).first()
-        if cust_obj:
-            # 2026-08-23 (Roy): nobody gets flagged a defaulter without having
-            # been asked to pay at least once. Non-blocking — see
-            # require_reminder_before_flagging()'s own docstring.
-            require_reminder_before_flagging(
-                wo.transaction.business, cust_obj, sent_by=request.user,
-                base_url=request.build_absolute_uri('/').rstrip('/'),
-            )
-            Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)
+    if _flag_customer is not None:
+        Customer.objects.filter(pk=_flag_customer.pk).update(is_defaulter=True)
 
     # Remove any Haki deduction the manager may have already created (owner overrides)
     SalaryDeduction.objects.filter(write_off=wo).delete()
@@ -2523,7 +2537,10 @@ def approve_write_off(request, req_id):
     if wo.status == WriteOffRequest.STATUS_REJECTED:
         return JsonResponse({'ok': False, 'error': 'Ombi hili lilikataliwa — haliwezi kuidhinishwa tena.'}, status=400)
 
-    result = _execute_write_off_approval(wo, request.user)
+    result = _execute_write_off_approval(
+        wo, request.user,
+        base_url=request.build_absolute_uri('/').rstrip('/'),
+    )
 
     return JsonResponse({
         'ok': True,
