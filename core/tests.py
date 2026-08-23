@@ -43445,14 +43445,12 @@ class MoneyPathBackfillAndAuditTest(TestCase):
         self.assertIn('(C)', output)
         self.assertIn('backfill_debt_collected_amount', output)
 
-    def test_audit_flags_a_revoked_entry_left_with_a_stale_amount_paid(self):
-        """Reproduces the pre-fix stored shape directly (the fixed code can no
-        longer produce it) and confirms the audit surfaces it."""
-        from io import StringIO
-        from django.core.management import call_command
+    def _revoked_entry_with_stale_amount_paid(self):
+        """Reproduces the pre-fix stored shape directly — the fixed code can no
+        longer produce it."""
         tab, entry, txn = self._legacy_debt_paid_entry()
         entry.debt_collected_amount = Decimal('0')
-        entry.is_paid = False          # revoked...
+        entry.is_paid = False              # revoked...
         entry.amount_paid = Decimal('80')  # ...but amount_paid left stale
         entry.save(update_fields=['is_paid', 'amount_paid', 'debt_collected_amount'])
         from core.models import TabPaymentRevocation
@@ -43461,10 +43459,65 @@ class MoneyPathBackfillAndAuditTest(TestCase):
             item_description='Kikombe', amount=Decimal('80'),
             previous_payment_method='cash', reason='kosa', revoked_by=self.owner,
         )
-        self.assertEqual(entry.remaining_amount(), Decimal('0'))
+        return tab, entry, txn
+
+    def test_audit_defers_check_A_while_legacy_rows_are_unbackfilled(self):
+        """2026-08-24 live run (Monsoon Inn) — the audit reported a revoked
+        Dallas entry as owing KES 50, while the backfill dry-run simultaneously
+        said that same entry's 50 was genuinely debt-tracker-collected. The two
+        findings directly contradicted each other, and acting on the audit's
+        version would have RE-CREATED a debt the customer had already cleared.
+
+        Root cause: check (A) compares amount_paid against debt_collected_
+        amount, which is 0 on every row predating migration 0175 — so against
+        un-backfilled data it flags every legitimately debt-paid revoked entry.
+        Verified from the pre-2026-08-24 source that no counter-settle path
+        ever wrote amount_paid, so on legacy data the honest answer is "cannot
+        tell yet", never a finding."""
+        from io import StringIO
+        from django.core.management import call_command
+        self._revoked_entry_with_stale_amount_paid()
 
         out = StringIO()
         call_command('audit_money_path_integrity', business='Backfill Audit', stdout=out)
         output = out.getvalue()
-        self.assertIn('(A)', output)
+        self.assertIn('not assessable yet', output)
+        self.assertNotIn(
+            'stale amount_paid —', output,
+            'must not emit a contradictory (A) finding while (C) is outstanding',
+        )
+
+    def test_check_A_self_resolves_once_the_backfill_has_run(self):
+        """The live Monsoon Inn case end to end: the single (A) finding was
+        purely an artefact of (C) not having run. After the backfill it must
+        report clean, with the entry correctly reading as fully covered."""
+        from io import StringIO
+        from django.core.management import call_command
+        _tab, entry, _txn = self._revoked_entry_with_stale_amount_paid()
+
+        call_command('backfill_debt_collected_amount', stdout=StringIO())
+        entry.refresh_from_db()
+        self.assertEqual(entry.debt_collected_amount, Decimal('80'))
+
+        out = StringIO()
+        call_command('audit_money_path_integrity', business='Backfill Audit', stdout=out)
+        output = out.getvalue()
+        self.assertIn('(A) ✓', output)
+        self.assertIn('clean, nothing to reconcile', output)
+
+    def test_a_genuinely_stale_revoke_is_still_caught_after_backfill(self):
+        """The check must keep its teeth once (C) is clean — a revoked entry
+        whose amount_paid genuinely exceeds what the debt tracker collected
+        (only producible by the pre-fix code) is still a real finding."""
+        from io import StringIO
+        from django.core.management import call_command
+        _tab, entry, _txn = self._revoked_entry_with_stale_amount_paid()
+        # Debt tracker only ever collected 30 of it; the other 50 is stale.
+        entry.debt_collected_amount = Decimal('30')
+        entry.save(update_fields=['debt_collected_amount'])
+
+        out = StringIO()
+        call_command('audit_money_path_integrity', business='Backfill Audit', stdout=out)
+        output = out.getvalue()
+        self.assertIn('(A) 1 revoked entr', output)
         self.assertIn('stale amount_paid', output)

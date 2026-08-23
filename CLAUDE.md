@@ -8416,3 +8416,39 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   (`MoneyPathBackfillAndAuditTest`) including a direct lock that the
   backfill never touches an ordinary counter settle and that the audit
   is strictly read-only. No migrations.
+- Fix: the audit's own check (A) contradicted the backfill on live data
+  (2026-08-24, from Roy's real run across all 16 businesses). 15 of 16
+  came back completely clean; Monsoon Inn reported 1 finding under (A)
+  ("tab #390 Bosire — Dallas, amount_paid=50, should be 0 → owes KES 50")
+  while the backfill's own dry-run simultaneously listed that SAME entry
+  as "amount_paid=50 → debt_collected_amount 0 -> 50.00", i.e. genuinely
+  collected by the debt tracker. The two directly contradicted each
+  other, and acting on the audit's version — zeroing amount_paid — would
+  have RE-CREATED a KES 50 debt the customer had already cleared.
+  **The backfill was right, the audit check was wrong.** Root cause:
+  check (A) asks "is amount_paid higher than what the debt tracker
+  collected?" by comparing against `debt_collected_amount`, which is 0 on
+  every row predating migration 0175 — so run against un-backfilled data
+  it flags EVERY legitimately debt-paid revoked entry. Re-verified
+  directly from the pre-2026-08-24 source (`git show 94aaba4` on both
+  `keg_views.settle_tab`'s own loop and
+  `models.settle_entries_amount_locked`'s fully-covered branch) that no
+  counter-settle path ever wrote `amount_paid` — only the debt tracker's
+  FIFO did — so on legacy data the honest answer is "cannot tell yet",
+  never a finding. Fixed by evaluating (C) FIRST and gating (A) behind
+  it: while a business still has un-backfilled rows, (A) prints "not
+  assessable yet — run backfill_debt_collected_amount first, then re-run"
+  instead of a misleading finding, and keeps its full teeth once (C) is
+  clean. Also confirmed while tracing this that the backfill is not
+  merely defensive: without `debt_collected_amount` populated,
+  `_reconcile()` counts a debt-tracker-settled transaction's whole
+  `sale_amount` as cash/mpesa in the shift where the ORIGINAL SALE
+  happened (its `created_at` never moves) on top of the
+  `CustomerDebtPayment` counted in `debt_recovered_*` — so running it
+  retroactively corrects historical shift/till figures that a later debt
+  payment had silently inflated, 44 entries / KES 6,240 on Monsoon Inn.
+  3 new tests (`test_audit_defers_check_A_while_legacy_rows_are_
+  unbackfilled`, `test_check_A_self_resolves_once_the_backfill_has_run`
+  reproducing the live Monsoon Inn case end to end, and
+  `test_a_genuinely_stale_revoke_is_still_caught_after_backfill` locking
+  in that the check keeps working once (C) is clean). No migrations.

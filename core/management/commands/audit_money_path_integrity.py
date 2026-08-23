@@ -42,38 +42,62 @@ class Command(BaseCommand):
             findings = 0
             self.stdout.write(self.style.WARNING(f"\n=== [{business.name}] ==="))
 
-            # ── (A) Revoked entries left with a stale amount_paid ──────────
-            revoked_entry_ids = set(
-                TabPaymentRevocation.objects.filter(business=business)
-                .values_list('entry_id', flat=True)
+            # (C) is evaluated FIRST because (A) depends on it — see below.
+            legacy_qs = BarTabEntry.objects.filter(
+                tab__business=business, amount_paid__gt=0, debt_collected_amount=0,
+            ).filter(
+                Q(transaction__payment_method='credit') | Q(transaction__was_credit=True),
+                transaction__type='Issue',
             )
-            stale = []
-            if revoked_entry_ids:
-                for entry in BarTabEntry.objects.filter(
-                    id__in=revoked_entry_ids, is_paid=False, amount_paid__gt=0,
-                ).select_related('tab', 'transaction'):
-                    # Post-fix, a revoked entry's amount_paid should be exactly
-                    # what the debt tracker collected. Anything above that is
-                    # the stale counter portion the old code left behind.
-                    expected = entry.debt_collected_amount or 0
-                    if entry.amount_paid > expected:
-                        stale.append((entry, expected))
-            if stale:
-                findings += len(stale)
-                self.stdout.write(self.style.ERROR(
-                    f"  (A) {len(stale)} revoked entr(ies) with a stale amount_paid "
-                    f"— these currently read as owing less than they should:"
-                ))
-                for entry, expected in stale:
-                    self.stdout.write(
-                        f"      tab #{entry.tab_id} ({entry.tab.customer_name}) — "
-                        f"{entry.description}: amount={entry.amount} "
-                        f"amount_paid={entry.amount_paid} (should be {expected}) "
-                        f"→ showing KES {entry.remaining_amount()} owed instead of "
-                        f"KES {(entry.amount or 0) - expected}"
-                    )
+            legacy = legacy_qs.count()
+
+            # ── (A) Revoked entries left with a stale amount_paid ──────────
+            # DEPENDS ON (C): this check asks "is amount_paid higher than what
+            # the debt tracker collected?", and debt_collected_amount is 0 on
+            # every row predating migration 0175. Run against un-backfilled
+            # data it therefore flags every legitimately debt-paid revoked
+            # entry as stale — a false positive that, if acted on by zeroing
+            # amount_paid, would RE-CREATE a debt the customer already
+            # cleared. Verified from the pre-2026-08-24 source that no
+            # counter-settle path ever wrote amount_paid (only the debt
+            # tracker's own FIFO did), so on legacy data the honest answer is
+            # "cannot tell yet — backfill first", never a finding.
+            if legacy:
+                self.stdout.write(
+                    "  (A) — not assessable yet: run backfill_debt_collected_amount "
+                    "first (see C below), then re-run this audit. Every legacy "
+                    "amount_paid came from the debt tracker, so it would report "
+                    "false positives against un-backfilled rows."
+                )
             else:
-                self.stdout.write("  (A) ✓ no revoked entries with a stale amount_paid")
+                revoked_entry_ids = set(
+                    TabPaymentRevocation.objects.filter(business=business)
+                    .values_list('entry_id', flat=True)
+                )
+                stale = []
+                if revoked_entry_ids:
+                    for entry in BarTabEntry.objects.filter(
+                        id__in=revoked_entry_ids, is_paid=False, amount_paid__gt=0,
+                    ).select_related('tab', 'transaction'):
+                        expected = entry.debt_collected_amount or 0
+                        if entry.amount_paid > expected:
+                            stale.append((entry, expected))
+                if stale:
+                    findings += len(stale)
+                    self.stdout.write(self.style.ERROR(
+                        f"  (A) {len(stale)} revoked entr(ies) with a stale amount_paid "
+                        f"— these currently read as owing less than they should:"
+                    ))
+                    for entry, expected in stale:
+                        self.stdout.write(
+                            f"      tab #{entry.tab_id} ({entry.tab.customer_name}) — "
+                            f"{entry.description}: amount={entry.amount} "
+                            f"amount_paid={entry.amount_paid} (should be {expected}) "
+                            f"→ showing KES {entry.remaining_amount()} owed instead of "
+                            f"KES {(entry.amount or 0) - expected}"
+                        )
+                else:
+                    self.stdout.write("  (A) ✓ no revoked entries with a stale amount_paid")
 
             # ── (B) Receipt-STK debt payments never applied to any entry ───
             # Those payments carry a distinctive notes prefix written by
@@ -121,12 +145,7 @@ class Command(BaseCommand):
                 self.stdout.write("  (B) ✓ no unapplied receipt-STK debt payments detected")
 
             # ── (C) Legacy rows missing debt_collected_amount ──────────────
-            legacy = BarTabEntry.objects.filter(
-                tab__business=business, amount_paid__gt=0, debt_collected_amount=0,
-            ).filter(
-                Q(transaction__payment_method='credit') | Q(transaction__was_credit=True),
-                transaction__type='Issue',
-            ).count()
+            # (counted above, before (A), which depends on it)
             if legacy:
                 findings += legacy
                 self.stdout.write(self.style.ERROR(
