@@ -1857,6 +1857,94 @@ class Transaction(models.Model):
             return all_ids
 
     @classmethod
+    def revert_direct_sale_to_tab_locked(cls, txn_id, business, split_amount, customer_name):
+        """Undo a direct sale that was mistakenly recorded as fully paid,
+        when only PART of it was genuinely collected (2026-08-24 live
+        request, Roy — "the staff who was on shift yesterday sold whitecap
+        but the customer paid only half, the rest she told the next staff
+        on shift that the customer will come and pay the rest, but now
+        that staff put it in the system as if the item was paid whole... I
+        need the staff to be able to revert (tengua) the sale, it comes
+        back to tabs or goes to tab with the name of the staff who sold it
+        initially for the partial amount to be set and the receipt should
+        adjust itself too").
+
+        Deliberately built on split_payment_method_locked() (new_method=
+        'credit') rather than duplicating its money-correctness logic —
+        `split_amount` here is what's STILL OWED (not what was paid): the
+        ALREADY-collected portion stays on the sale's ORIGINAL payment
+        method untouched (a real till figure must never move), and the
+        owed remainder is split off as an ordinary 'credit' transaction
+        dated to the ORIGINAL sale's own created_at (same backdate-
+        preserving behaviour every other correction in this app already
+        has). This is the distinguishing feature over the pre-existing
+        "🤝 Deni" button
+        (split_transaction_payment_method) — which stops at a bare
+        Customer-attributed credit line — by additionally wrapping that
+        split-off remainder in a real BarTab/BarTabEntry, so it shows up
+        in the tabs drawer exactly like any other open tab, not just the
+        debt tracker.
+
+        served_by is deliberately the ORIGINAL selling staff (orig_txn.
+        recorded_by), never whoever is performing this correction — the
+        whole point is the tab reads as if that staffer opened it
+        themselves at the time of sale. split_payment_method_locked()'s
+        own default (staff_user=None → recorded_by=txn.recorded_by)
+        already preserves the same attribution on the new transaction, so
+        nothing extra is needed there.
+
+        Reuses this app's established auto-detect-by-name convention (see
+        the anonymous-tab and cross-counter-merge features, and Customer.
+        merge_locked): searches for an already-OPEN tab under this exact
+        customer name on the SAME station before creating a new one, so
+        reverting a second item for the same customer lands on their
+        existing tab instead of fragmenting into two. Station (bar vs
+        kitchen) is inferred the same way correct_transaction_payment_
+        method/split_transaction_payment_method already do — from the
+        item's own store — matching the same permission gate the view
+        layer checks before calling this.
+
+        Raises ValueError (via split_payment_method_locked, or its own
+        blank-name check) — never partially applies. Returns
+        (orig_txn, new_txn, tab, entry).
+        """
+        customer_name = (customer_name or '').strip()
+        if not customer_name:
+            raise ValueError('Jina la mteja linahitajika.')
+
+        from django.db import transaction as _db_txn
+        with _db_txn.atomic():
+            orig_txn, new_txn = cls.split_payment_method_locked(
+                txn_id=txn_id, business=business, split_amount=split_amount,
+                new_method='credit', recipient=customer_name,
+            )
+
+            try:
+                is_kitchen = bool(orig_txn.item.store.is_kitchen)
+            except Exception:
+                is_kitchen = False
+            source = 'kitchen' if is_kitchen else 'bar'
+
+            tab = BarTab.objects.select_for_update().filter(
+                business=business, customer_name__iexact=customer_name,
+                status='OPEN', source=source,
+            ).first()
+            if not tab:
+                tab = BarTab.create_with_credentials(
+                    business=business, store=orig_txn.item.store,
+                    customer_name=customer_name, source=source,
+                    served_by=orig_txn.recorded_by,
+                )
+
+            entry = BarTabEntry.objects.create(
+                tab=tab, transaction=new_txn,
+                description=orig_txn.item.description,
+                amount=new_txn.sale_amount,
+                is_paid=False,
+            )
+            return orig_txn, new_txn, tab, entry
+
+    @classmethod
     def payment_split_breakdown(cls, txn_ids, business):
         """Sum revenue per payment_method across the given transaction ids —
         2026-07-30 live report: "split payments are working well... but the

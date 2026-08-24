@@ -2274,6 +2274,113 @@ def split_transaction_payment_method(request, txn_id):
     })
 
 
+@login_required
+@require_POST
+def revert_direct_sale_to_tab(request, txn_id):
+    """Revert a direct sale mistakenly recorded as fully paid, when only
+    PART of it was genuinely collected (2026-08-24 live request, Roy — a
+    Whitecap sold on one shift, the customer paid only half and told the
+    NEXT staff on shift they'd come back for the rest, but that staff
+    entered it as if it were paid in full). "🤝 Deni" (split_transaction_
+    payment_method) already covers splitting a direct sale into a paid
+    portion + a debt-tracker credit line for a named customer — this is
+    its sibling for when the correction should surface as a real TAB in
+    the tabs drawer instead, attributed to whichever staff ACTUALLY made
+    the original sale, not whoever is fixing the record now.
+
+    Staff types how much was GENUINELY collected (paid_amount) — the still
+    -owed remainder is derived here, server-side, from the transaction's
+    own live revenue(), never trusted from the client.
+    """
+    up = _get_up(request)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Auth required'}, status=403)
+
+    if not getattr(up, 'is_owner_or_manager', False):
+        from core.shift_views import get_active_staff_shift
+        if get_active_staff_shift(up, up.business) is False:
+            return JsonResponse(
+                {'ok': False, 'shift_required': True, 'error': 'Fungua shift kwanza.'},
+                status=403,
+            )
+
+    from core.idempotency import claim_checkout_token
+    idem_token = (request.POST.get('idempotency_token') or '').strip()
+    if not claim_checkout_token(up.business_id, idem_token):
+        return JsonResponse({'ok': False, 'error': 'Ombi hili tayari limetumwa.', 'duplicate': True}, status=409)
+
+    txn = get_object_or_404(
+        Transaction.objects.select_related('item__store', 'recorded_by'),
+        id=txn_id, business=up.business, type='Issue', tab_entry__isnull=True,
+    )
+    try:
+        is_kitchen = bool(txn.item.store.is_kitchen)
+    except Exception:
+        is_kitchen = False
+    if ('kitchen' if is_kitchen else 'bar') not in _allowed_tab_sources(up):
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kurekebisha mauzo haya.'}, status=403)
+
+    if txn.payment_method not in ('cash', 'mpesa'):
+        return JsonResponse({'ok': False, 'error': 'Muamala huu hauwezi kurejeshwa kwenye tab.'}, status=400)
+
+    customer_name = (request.POST.get('customer_name') or '').strip()
+    paid_amount_raw = (request.POST.get('paid_amount') or '').strip()
+    reason = (request.POST.get('reason') or '').strip()
+
+    if not customer_name:
+        return JsonResponse({'ok': False, 'error': 'Jina la mteja linahitajika.'}, status=400)
+
+    try:
+        paid_amount = float(Decimal(paid_amount_raw))
+    except (InvalidOperation, ValueError):
+        return JsonResponse({'ok': False, 'error': 'Ingiza kiasi sahihi kilicholipwa.'}, status=400)
+
+    # revenue() returns a plain float (never Decimal) — mixing the two
+    # raises TypeError (this app's own documented gotcha), so everything
+    # here stays float until it's handed to the model layer, which itself
+    # converts to Decimal only where the DB field actually requires it.
+    original_total = float(txn.revenue())
+    owed_amount = round(original_total - paid_amount, 2)
+    if paid_amount < 0 or owed_amount <= 0 or owed_amount >= original_total:
+        return JsonResponse(
+            {'ok': False, 'error': 'Kiasi kilicholipwa lazima kiwe kati ya 0 na jumla ya mauzo.'},
+            status=400,
+        )
+
+    if txn.recorded_by:
+        original_seller = txn.recorded_by.get_full_name() or txn.recorded_by.username
+    else:
+        original_seller = 'asiyejulikana'
+    sale_when = timezone.localtime(txn.created_at).strftime('%d %b %Y, %H:%M')
+    item_name = txn.item.description
+
+    try:
+        orig_txn, new_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=txn.id, business=up.business,
+            split_amount=owed_amount, customer_name=customer_name,
+        )
+    except ValueError as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+
+    who = request.user.get_full_name() or request.user.username
+    when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    message = (
+        f'↩️ {who} amerejesha "{item_name}" (iliyouzwa na {original_seller}, '
+        f'tarehe {sale_when}) kwenye tab ya {tab.customer_name} — '
+        f'KES {float(new_txn.revenue()):,.0f} bado inadaiwa, '
+        f'KES {float(orig_txn.revenue()):,.0f} tayari ililipwa — {when}.'
+        + (f' Sababu: {reason}' if reason else '')
+    )
+    _notify_direct_correction(up.business, message, request.user, source=('kitchen' if is_kitchen else 'bar'))
+
+    return JsonResponse({
+        'ok': True, 'message': message,
+        'tab_id': tab.id, 'entry_id': entry.id,
+        'remaining_amount': float(orig_txn.revenue()),
+        'owed_amount': float(new_txn.revenue()),
+    })
+
+
 def _reverse_stock_movement_envelope(txn):
     """Reverse the source envelope's own counters for a Transaction whose
     stock effect is about to be fully undone (qty zeroed) because the item

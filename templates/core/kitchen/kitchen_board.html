@@ -3576,7 +3576,13 @@
             '<button onclick="window.kbSplitDirectPayment(' + e.id + ',\'' + e.payment_method + '\',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
             'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
             '<button onclick="window.kbSplitToDebt(' + e.id + ',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
-            'style="background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.25);border-radius:4px;color:#e29aab;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🤝 Deni</button>';
+            'style="background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.25);border-radius:4px;color:#e29aab;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🤝 Deni</button>' +
+            // 2026-08-24 live request (Roy) — shift-handover mixup: sale
+            // recorded fully paid, customer actually only paid part.
+            // Unlike 🤝 Deni (bare debt-tracker line) this creates a real
+            // TAB, attributed to whoever ACTUALLY made the sale.
+            '<button onclick="window.kbRevertDirectSaleToTab(' + e.id + ',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
+            'style="background:rgba(93,168,240,.06);border:1px solid rgba(93,168,240,.25);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">↩️ Tengua→Tab</button>';
         }
         // 2026-08-16 live request (Roy): exchange offered regardless of
         // payment method — no cash moves, so a credit sale is exchangeable
@@ -3802,6 +3808,44 @@
         if (d.ok) {
           showToast(d.message || '✓ Deni limeandikwa');
           window.kbLoadRecentPayments();
+        } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
+        else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
+      })
+      .catch(function(){ showToast('Hitilafu ya mtandao'); });
+  };
+
+  // 2026-08-24 live request (Roy) — revert a mistakenly-fully-paid direct
+  // sale: staff types how much was GENUINELY collected, the rest becomes
+  // an ordinary tab entry attributed to the ORIGINAL selling staff.
+  window.kbRevertDirectSaleToTab = function (txnId, totalAmount, desc) {
+    var amtStr = prompt(
+      '"' + desc + '" — jumla KES ' + Math.round(totalAmount) + '.\n' +
+      'Ni KES ngapi ZILIZOLIPWA KWELI na mteja? (Ile iliyobaki itaenda kwenye tab yake)',
+      ''
+    );
+    if (amtStr === null) return;
+    var amt = parseFloat(amtStr);
+    if (isNaN(amt) || amt < 0 || amt >= totalAmount) {
+      showToast('Kiasi kilicholipwa lazima kiwe kati ya 0 na KES ' + Math.round(totalAmount) + '.');
+      return;
+    }
+    var name = prompt('Jina la mteja (tab itafunguliwa/kuongezwa kwa jina hili)?', '');
+    if (!name || !name.trim()) { showToast('Jina la mteja linahitajika.'); return; }
+    var fd = new URLSearchParams();
+    fd.append('paid_amount', amt);
+    fd.append('customer_name', name.trim());
+    fd.append('reason', 'Mauzo yaliyorekodiwa kimakosa kama yamelipwa yote');
+    fd.append('idempotency_token', (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
+    fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
+    fetch('/bar/transactions/' + txnId + '/revert-to-tab/', {
+      method: 'POST', credentials: 'same-origin', body: fd
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) {
+          showToast(d.message || '✓ Imerejeshwa kwenye tab');
+          window.kbLoadRecentPayments();
+          if (typeof loadFoodTabs === 'function') loadFoodTabs();
         } else if (d.shift_required) { showToast('Fungua shift kwanza.'); }
         else { showToast('Hitilafu: ' + (d.error || 'Jaribu tena')); }
       })

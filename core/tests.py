@@ -43521,3 +43521,247 @@ class MoneyPathBackfillAndAuditTest(TestCase):
         output = out.getvalue()
         self.assertIn('(A) 1 revoked entr', output)
         self.assertIn('stale amount_paid', output)
+
+
+class RevertDirectSaleToTabTest(TestCase):
+    """2026-08-24 live request (Roy): "the staff who was on shift yesterday
+    sold whitecap but the customer paid only half, the rest she told the
+    next staff on shift that the customer will come and pay the rest, but
+    now that staff put it in the system as if the item was paid whole... I
+    need the staff to be able to revert (tengua) the sale, it comes back
+    to tabs or goes to tab with the name of the staff who sold it initially
+    for the partial amount to be set and the receipt should adjust itself
+    too."
+
+    Distinct from the pre-existing "🤝 Deni" button (split_transaction_
+    payment_method / DirectSalePaymentSplitToDebtTest) — that stops at a
+    bare debt-tracker credit line; this wraps the still-owed remainder in
+    a real BarTab/BarTabEntry, served_by the ORIGINAL selling staff.
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Revert To Tab Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rtt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        # The staffer who ACTUALLY made the original sale (yesterday's shift).
+        self.original_seller = User.objects.create_user(username='rtt_seller', password='x')
+        UserProfile.objects.create(user=self.original_seller, business=self.biz, role='staff')
+        # A DIFFERENT staffer performing the correction (next shift).
+        self.corrector = User.objects.create_user(username='rtt_corrector', password='x')
+        UserProfile.objects.create(user=self.corrector, business=self.biz, role='staff')
+        Shift.objects.create(business=self.biz, staff=self.corrector, status='OPEN', station='bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Whitecap',
+            material_no='RTT-1', unit='Pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('60'),
+        )
+        self.sale_when = timezone.now() - timedelta(days=1)
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='mpesa',
+            recorded_by=self.original_seller, created_at=self.sale_when,
+        )
+
+    # ── Model layer ──────────────────────────────────────────────────
+    def test_model_requires_customer_name(self):
+        with self.assertRaises(ValueError):
+            Transaction.revert_direct_sale_to_tab_locked(
+                txn_id=self.txn.id, business=self.biz,
+                split_amount=Decimal('50'), customer_name='  ',
+            )
+
+    def test_model_splits_paid_portion_and_creates_owed_tab_entry(self):
+        orig, new_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=self.txn.id, business=self.biz,
+            split_amount=Decimal('50'), customer_name='Bosco',
+        )
+        orig.refresh_from_db()
+        self.assertEqual(orig.payment_method, 'mpesa')
+        self.assertEqual(float(orig.sale_amount), 50.0, 'the genuinely-paid half must stay on mpesa')
+        self.assertEqual(new_txn.payment_method, 'credit')
+        self.assertEqual(float(new_txn.sale_amount), 50.0)
+        # Owed half preserves the ORIGINAL (backdated) sale time.
+        self.assertEqual(new_txn.created_at, self.sale_when)
+        self.assertEqual(tab.customer_name, 'Bosco')
+        self.assertEqual(tab.status, 'OPEN')
+        self.assertEqual(tab.source, 'bar')
+        self.assertEqual(
+            tab.served_by_id, self.original_seller.id,
+            'the tab must be attributed to whoever ACTUALLY sold it, not the corrector',
+        )
+        self.assertEqual(entry.tab_id, tab.id)
+        self.assertEqual(entry.transaction_id, new_txn.id)
+        self.assertFalse(entry.is_paid)
+        self.assertEqual(entry.amount, Decimal('50.00'))
+        self.assertEqual(tab.unpaid_total(), Decimal('50.00'))
+
+    def test_model_reuses_an_already_open_tab_for_the_same_customer(self):
+        """Auto-detect-by-name (same convention as every other tab-creating
+        feature in this app) — reverting a SECOND item for the same
+        customer must land on their existing tab, not fragment into two."""
+        _, _, tab1, _ = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=self.txn.id, business=self.biz,
+            split_amount=Decimal('50'), customer_name='Bosco',
+        )
+        txn2 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='cash',
+            recorded_by=self.original_seller,
+        )
+        _, _, tab2, _ = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=txn2.id, business=self.biz,
+            split_amount=Decimal('30'), customer_name='bosco',  # case-insensitive
+        )
+        self.assertEqual(tab1.id, tab2.id)
+        self.assertEqual(tab1.entries.count(), 2)
+        self.assertEqual(tab1.unpaid_total(), Decimal('80.00'))
+
+    def test_model_rejects_a_credit_transaction(self):
+        credit_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Someone',
+        )
+        with self.assertRaises(ValueError):
+            Transaction.revert_direct_sale_to_tab_locked(
+                txn_id=credit_txn.id, business=self.biz,
+                split_amount=Decimal('50'), customer_name='Bosco',
+            )
+
+    # ── View layer ───────────────────────────────────────────────────
+    def test_view_reverts_and_returns_tab_info(self):
+        self.client.force_login(self.corrector)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '50', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['remaining_amount'], 50.0)
+        self.assertEqual(data['owed_amount'], 50.0)
+        tab = BarTab.objects.get(id=data['tab_id'])
+        self.assertEqual(tab.served_by_id, self.original_seller.id)
+        self.assertIn('Bosco', tab.customer_name)
+
+    def test_view_rejects_blank_customer_name(self):
+        self.client.force_login(self.corrector)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '50', 'customer_name': '',
+            'idempotency_token': 'rtt-tok-2',
+        })
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        self.assertEqual(BarTab.objects.filter(business=self.biz).count(), 0)
+
+    def test_view_rejects_paid_amount_at_or_above_total(self):
+        self.client.force_login(self.corrector)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '100', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-3',
+        })
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        self.assertEqual(BarTab.objects.filter(business=self.biz).count(), 0)
+
+    def test_view_rejects_negative_paid_amount(self):
+        self.client.force_login(self.corrector)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '-5', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-4',
+        })
+        data = resp.json()
+        self.assertFalse(data['ok'])
+
+    def test_view_blocks_staff_with_no_open_shift(self):
+        no_shift_staff = User.objects.create_user(username='rtt_noshift', password='x')
+        UserProfile.objects.create(user=no_shift_staff, business=self.biz, role='staff')
+        self.client.force_login(no_shift_staff)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '50', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-5',
+        })
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        self.assertTrue(data.get('shift_required'))
+
+    def test_view_owner_bypasses_shift_gate(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '50', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-6',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+
+    def test_view_idempotency_blocks_duplicate_submission(self):
+        self.client.force_login(self.corrector)
+        common_token = 'rtt-dup-token'
+        resp1 = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '50', 'customer_name': 'Bosco', 'idempotency_token': common_token,
+        })
+        self.assertTrue(resp1.json()['ok'])
+        self.assertEqual(BarTab.objects.filter(business=self.biz).count(), 1)
+        resp2 = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '50', 'customer_name': 'Bosco', 'idempotency_token': common_token,
+        })
+        data2 = resp2.json()
+        self.assertFalse(data2['ok'])
+        self.assertTrue(data2.get('duplicate'))
+        self.assertEqual(BarTab.objects.filter(business=self.biz).count(), 1)
+
+    def test_view_station_scoping_blocks_kitchen_only_staffer(self):
+        kitchen_staff = User.objects.create_user(username='rtt_kitchen', password='x')
+        UserProfile.objects.create(user=kitchen_staff, business=self.biz, role='kitchen')
+        Shift.objects.create(business=self.biz, staff=kitchen_staff, status='OPEN', station='kitchen')
+        self.client.force_login(kitchen_staff)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '50', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-7',
+        })
+        data = resp.json()
+        self.assertFalse(data['ok'])
+        self.assertEqual(resp.status_code, 403)
+
+    def test_view_cross_business_isolation(self):
+        other_biz = Business.objects.create(name='Other Biz RTT')
+        other_owner = User.objects.create_user(username='rtt_other_owner', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        self.client.force_login(other_owner)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '50', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-8',
+        })
+        self.assertEqual(resp.status_code, 404)
+
+    def test_view_rejects_a_tab_linked_transaction(self):
+        """A sale already on a tab has no direct-sale correction path here —
+        the tab's own mechanisms (settle/revoke/transfer) apply instead."""
+        tab = BarTab.objects.create(business=self.biz, customer_name='X', status='OPEN', source='bar')
+        BarTabEntry.objects.create(
+            tab=tab, transaction=self.txn, description='Whitecap', amount=Decimal('100'), is_paid=False,
+        )
+        self.client.force_login(self.corrector)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '50', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-9',
+        })
+        self.assertEqual(resp.status_code, 404)
+
+    # ── Receipt reflection (2026-08-21 _live_direct_lines mechanism) ───
+    def test_receipt_shows_both_paid_and_owed_lines_after_revert(self):
+        receipt = Receipt.objects.create(
+            business=self.biz, customer_name='Bosco',
+            lines=[{'name': 'Whitecap', 'qty': 1, 'subtotal': 100.0, 'txn_id': self.txn.id}],
+            total=Decimal('100'), payment_method='mpesa',
+            token='rtt-receipt-token-1', receipt_number=1,
+        )
+        Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=self.txn.id, business=self.biz,
+            split_amount=Decimal('50'), customer_name='Bosco',
+        )
+        from core.receipt_views import _live_direct_lines
+        live_lines = _live_direct_lines(receipt)
+        self.assertIsNotNone(live_lines)
+        self.assertEqual(len(live_lines), 2)
+        subtotals = sorted(float(l['subtotal']) for l in live_lines)
+        self.assertEqual(subtotals, [50.0, 50.0])

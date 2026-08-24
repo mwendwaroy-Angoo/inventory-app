@@ -8452,3 +8452,52 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   reproducing the live Monsoon Inn case end to end, and
   `test_a_genuinely_stale_revoke_is_still_caught_after_backfill` locking
   in that the check keeps working once (C) is clean). No migrations.
+- Revert a mistakenly-fully-paid direct sale to a tab (2026-08-24), live
+  request: "the staff who was on shift yesterday sold whitecap but the
+  customer paid only half, the rest she told the next staff on shift that
+  the customer will come and pay the rest, but now that staff put it in
+  the system as if the item was paid whole... I need the staff to be able
+  to revert (tengua) the sale, it comes back to tabs or goes to tab with
+  the name of the staff who sold it initially for the partial amount to
+  be set and the receipt should adjust itself too in the receipts
+  section." Distinct from the pre-existing "🤝 Deni" button
+  (`split_transaction_payment_method`, 2026-08-12) — that only ever splits
+  a direct sale into a paid portion + a bare debt-tracker credit line;
+  this instead wraps the still-owed remainder in a real `BarTab`/
+  `BarTabEntry` visible in the tabs drawer, attributed to whoever
+  ACTUALLY made the original sale, not whoever is fixing the record now.
+  New `Transaction.revert_direct_sale_to_tab_locked()` (`core/models.py`)
+  is deliberately built ON TOP of `split_payment_method_locked()` rather
+  than duplicating its money-correctness logic — the genuinely-collected
+  portion stays on the sale's original payment method untouched (a real
+  till figure must never move), the owed remainder splits off as an
+  ordinary 'credit' transaction dated to the ORIGINAL sale's own
+  `created_at` (same backdate-preserving behaviour every other correction
+  in this app already has) — then wraps that split-off transaction in a
+  `BarTabEntry` on a `BarTab` resolved via this app's established
+  auto-detect-by-name convention (an already-OPEN tab under the exact
+  customer name on the same station is reused, never duplicated), with
+  `served_by` set to `orig_txn.recorded_by` (the original seller) rather
+  than the correcting staffer. New `revert_direct_sale_to_tab` view
+  (`core/keg_views.py`) mirrors `split_transaction_payment_method`'s exact
+  permission shape (shift-gated for non-owner/manager, station-scoped via
+  `_allowed_tab_sources`, `claim_checkout_token` idempotency guard) —
+  staff types how much was GENUINELY collected, the server derives the
+  owed remainder from the transaction's own live `revenue()`, never
+  trusting a client-computed figure. "The receipt should adjust itself"
+  needed zero extra code — since the new transaction is `split_from` the
+  original (2026-08-21's own mechanism), the existing `_live_direct_lines()`
+  live-recompute already synthesizes both the reduced paid line and the
+  new owed line on the customer's receipt automatically, exactly as it
+  already does for the "🤝 Deni" button. New "↩️ Tengua→Tab" button added
+  to the "🕐 Malipo ya Hivi Karibuni" panel's direct-sales section in all
+  three tabs drawers (`bar_board.html`, `kitchen_board.html`,
+  `quick_sell.html`), next to the existing "🤝 Deni" button, per the
+  tabs-drawer-parity rule. 15 new tests (`RevertDirectSaleToTabTest`) —
+  model-layer paid/owed split and served_by attribution, auto-detect-by-
+  name tab reuse, credit-transaction rejection, the full view permission
+  matrix (shift gate, owner bypass, station scoping, idempotency,
+  cross-business isolation, tab-linked-transaction rejection), and the
+  receipt self-correction regression lock via `_live_direct_lines()`. No
+  migrations (reuses existing fields end to end). 2399 tests pass (core +
+  accounts).

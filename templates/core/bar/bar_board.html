@@ -3597,6 +3597,12 @@
               'style="background:rgba(93,168,240,.1);border:1px solid rgba(93,168,240,.3);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">✂️ Gawanya</button>' +
               (e.payment_method !== 'credit' ? '<button onclick="window.splitToDebt(' + e.id + ',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
               'style="background:rgba(192,57,90,.06);border:1px solid rgba(192,57,90,.25);border-radius:4px;color:#e29aab;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">🤝 Deni</button>' : '') +
+              // 2026-08-24 live request (Roy) — a shift-handover mixup: sale
+              // recorded as fully paid, customer actually only paid part;
+              // unlike 🤝 Deni (bare debt-tracker credit line) this creates
+              // a real TAB, attributed to whoever ACTUALLY made the sale.
+              (e.payment_method !== 'credit' ? '<button onclick="window.revertDirectSaleToTab(' + e.id + ',' + e.amount + ',\'' + e.description.replace(/'/g, "\\'") + '\')" ' +
+              'style="background:rgba(93,168,240,.06);border:1px solid rgba(93,168,240,.25);border-radius:4px;color:#5da8f0;font-size:.68rem;padding:.1rem .35rem;cursor:pointer;white-space:nowrap;">↩️ Tengua→Tab</button>' : '') +
               // 2026-08-16 live request (Roy): "customer paid for an item,
               // later decided to exchange it for a different item of the
               // same value" — no cash moves, so this is offered regardless
@@ -3800,6 +3806,48 @@
         if (d.ok) {
           showToast(d.message || '✓ Deni limeandikwa');
           window.loadRecentPayments();
+        } else if (d.shift_required) {
+          showToast('Fungua shift kwanza.');
+        } else {
+          showToast('Hitilafu: ' + (d.error || 'Jaribu tena.'));
+        }
+      })
+      .catch(function () { showToast('Hitilafu ya mtandao.'); });
+  };
+
+  // 2026-08-24 live request (Roy) — "the staff who was on shift yesterday
+  // sold whitecap but the customer paid only half, the rest she told the
+  // next staff... will come and pay the rest, but now that staff put it in
+  // the system as if the item was paid whole... revert the sale, it comes
+  // back to tabs... with the name of the staff who sold it initially."
+  // Sibling of splitToDebt — staff enters how much was GENUINELY collected
+  // (not the owed amount); the server derives the remainder and wraps it
+  // in a real BarTab, served_by the ORIGINAL seller, not whoever is fixing
+  // this now.
+  window.revertDirectSaleToTab = function (txnId, totalAmount, desc) {
+    var amtStr = prompt(
+      '"' + desc + '" — jumla KES ' + Math.round(totalAmount) + '.\n' +
+      'Ni KES ngapi ZILIZOLIPWA KWELI na mteja? (Ile iliyobaki itaenda kwenye tab yake)',
+      ''
+    );
+    if (amtStr === null) return;
+    var amt = parseFloat(amtStr);
+    if (isNaN(amt) || amt < 0 || amt >= totalAmount) {
+      showToast('Kiasi kilicholipwa lazima kiwe kati ya 0 na KES ' + Math.round(totalAmount) + '.');
+      return;
+    }
+    var name = prompt('Jina la mteja (tab itafunguliwa/kuongezwa kwa jina hili)?', '');
+    if (!name || !name.trim()) { showToast('Jina la mteja linahitajika.'); return; }
+    post('/bar/transactions/' + txnId + '/revert-to-tab/', {
+      paid_amount: amt, customer_name: name.trim(), reason: 'Mauzo yaliyorekodiwa kimakosa kama yamelipwa yote',
+      idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.ok) {
+          showToast(d.message || '✓ Imerejeshwa kwenye tab');
+          window.loadRecentPayments();
+          window.loadTabs();
         } else if (d.shift_required) {
           showToast('Fungua shift kwanza.');
         } else {
