@@ -8501,3 +8501,54 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   receipt self-correction regression lock via `_live_direct_lines()`. No
   migrations (reuses existing fields end to end). 2399 tests pass (core +
   accounts).
+- Fix: "↩️ Tengua→Tab" silently rejected `paid_amount=0` (2026-08-25, live
+  report same day, minutes after deploy): Roy tapped the new button, was
+  asked how much the customer paid, but "the staff who claimed it was
+  paid for never confirmed the mode of payment used for the half/partial
+  payment" — so he entered 0. Nothing happened. Root cause: the original
+  design only supported a KNOWN partial split — `revert_direct_sale_to_
+  tab_locked()`'s validation required `0 < owed_amount < original_total`,
+  which a `paid_amount=0` submission structurally can never satisfy
+  (`owed_amount` would equal the full total, tripping the `>= original_
+  total` guard) — the server correctly rejected it with a 400, but this
+  wasn't the right behavior: Roy's real need, confirmed in his follow-up,
+  was a THIRD case beyond "known partial paid/owed split" — "the other
+  staff who raised this concern simply wanted me to revert it to go to
+  tabs so that the staff who put it gets to sort it out on their own...
+  did not want any problem to fall onto her but to the right person."
+  When NOTHING about the payment can be confirmed, the whole sale should
+  revert to one open, unresolved tab entry — not be forced into a
+  fabricated 50/50-style split. Reworked `Transaction.revert_direct_
+  sale_to_tab_locked()`: renamed its parameter from `split_amount` (owed)
+  to `paid_amount` (what was genuinely collected, matching what the UI
+  already asks) and gave `paid_amount<=0` its own branch — no sibling
+  transaction is created at all; the original transaction's own `payment_
+  method` flips straight to 'credit' and IT becomes the tab entry,
+  carrying the full original amount, still attributed to `orig recorded_
+  by` for `served_by`. A known partial split (`paid_amount>0`) still
+  routes through `split_payment_method_locked()` exactly as before — this
+  is additive, not a behavior change for the already-working case (a
+  50/50 split test's numbers are unaffected, since paid+owed still sum to
+  the total either way). `revert_direct_sale_to_tab()` (`core/keg_views.
+  py`) relaxed its own validation to accept 0 as genuinely valid (was
+  incorrectly folded into the "invalid amount" rejection), and its
+  message/response building now branches on whether anything was
+  confirmed collected (`paid_txn is None` → "hakuna kilichothibitishwa
+  kulipwa — jumla yote inarejeshwa" instead of naming a paid amount).
+  All three tabs drawers' prompts (`bar_board.html`, `kitchen_board.html`,
+  `quick_sell.html`) now default to `'0'` and explicitly explain the
+  sentinel ("Weka 0 kama hakuna kilichothibitishwa — jumla yote itarudi
+  kwenye tab bila kujulikana") rather than leaving 0 looking like a
+  mistake to avoid. Diagnosed via a full render+`node --check` pass of
+  all three boards' rendered JS against a real bar-type `BusinessType`
+  fixture (ruled out a template-rendering/syntax bug entirely — none
+  existed; a bar-type business is required for this JS block to render
+  at all, a red herring from an earlier synthetic test business lacking
+  one) before concluding the actual bug was the 0-rejection itself, from
+  Roy's own account of exactly what he entered. 5 new/updated tests
+  (`test_model_zero_paid_reverts_the_whole_sale_unresolved`,
+  `test_model_blank_paid_amount_treated_as_zero`,
+  `test_view_zero_paid_amount_reverts_whole_sale_to_tab` — the literal
+  reported scenario reproduced end to end — plus the pre-existing partial
+  -split tests updated for the renamed parameter). No migrations. 2402
+  tests pass (core + accounts).

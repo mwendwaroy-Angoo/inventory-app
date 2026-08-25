@@ -1857,41 +1857,56 @@ class Transaction(models.Model):
             return all_ids
 
     @classmethod
-    def revert_direct_sale_to_tab_locked(cls, txn_id, business, split_amount, customer_name):
+    def revert_direct_sale_to_tab_locked(cls, txn_id, business, paid_amount, customer_name):
         """Undo a direct sale that was mistakenly recorded as fully paid,
-        when only PART of it was genuinely collected (2026-08-24 live
-        request, Roy — "the staff who was on shift yesterday sold whitecap
-        but the customer paid only half, the rest she told the next staff
-        on shift that the customer will come and pay the rest, but now
-        that staff put it in the system as if the item was paid whole... I
+        when only PART of it — or NONE of it, per the 2026-08-25 follow-up
+        below — was genuinely collected (2026-08-24 live request, Roy —
+        "the staff who was on shift yesterday sold whitecap but the
+        customer paid only half, the rest she told the next staff on
+        shift that the customer will come and pay the rest, but now that
+        staff put it in the system as if the item was paid whole... I
         need the staff to be able to revert (tengua) the sale, it comes
         back to tabs or goes to tab with the name of the staff who sold it
         initially for the partial amount to be set and the receipt should
         adjust itself too").
 
-        Deliberately built on split_payment_method_locked() (new_method=
-        'credit') rather than duplicating its money-correctness logic —
-        `split_amount` here is what's STILL OWED (not what was paid): the
+        `paid_amount` is what was GENUINELY collected already — the
         ALREADY-collected portion stays on the sale's ORIGINAL payment
         method untouched (a real till figure must never move), and the
-        owed remainder is split off as an ordinary 'credit' transaction
-        dated to the ORIGINAL sale's own created_at (same backdate-
-        preserving behaviour every other correction in this app already
-        has). This is the distinguishing feature over the pre-existing
-        "🤝 Deni" button
-        (split_transaction_payment_method) — which stops at a bare
-        Customer-attributed credit line — by additionally wrapping that
-        split-off remainder in a real BarTab/BarTabEntry, so it shows up
-        in the tabs drawer exactly like any other open tab, not just the
-        debt tracker.
+        rest is split off as an ordinary 'credit' transaction dated to
+        the ORIGINAL sale's own created_at (same backdate-preserving
+        behaviour every other correction in this app already has), via
+        split_payment_method_locked() — no need to duplicate its money-
+        correctness logic.
 
-        served_by is deliberately the ORIGINAL selling staff (orig_txn.
+        2026-08-25 follow-up, same live report, second half: "the staff
+        who claimed it was paid for never confirmed the mode of payment
+        used for the half/partial payment... the other staff who raised
+        this concern simply wanted me to revert it to go to tabs so that
+        the staff who put it gets to sort it out on their own." A
+        genuinely UNKNOWN split (not just a known-zero payment) needs the
+        SAME outcome — the whole sale becomes one unresolved tab entry,
+        nothing pinned down yet. `paid_amount=0` (or falsy) is the
+        sentinel for this: no split happens at all — the original
+        transaction's OWN payment_method flips straight to 'credit' and
+        it becomes the tab entry itself, so no `paid_txn` is returned
+        for anyone to have collected. The original UI wording covers
+        both readings at once ("staff types how much was GENUINELY
+        collected" — zero is a genuine, valid answer to that question
+        whether it means "confirmed nothing" or "unconfirmed, don't
+        pretend to know").
+
+        This is the distinguishing feature over the pre-existing "🤝 Deni"
+        button (split_transaction_payment_method) — which stops at a bare
+        Customer-attributed credit line — by additionally wrapping the
+        remainder in a real BarTab/BarTabEntry, so it shows up in the
+        tabs drawer exactly like any other open tab, not just the debt
+        tracker.
+
+        served_by is deliberately the ORIGINAL selling staff (txn.
         recorded_by), never whoever is performing this correction — the
         whole point is the tab reads as if that staffer opened it
-        themselves at the time of sale. split_payment_method_locked()'s
-        own default (staff_user=None → recorded_by=txn.recorded_by)
-        already preserves the same attribution on the new transaction, so
-        nothing extra is needed there.
+        themselves at the time of sale.
 
         Reuses this app's established auto-detect-by-name convention (see
         the anonymous-tab and cross-counter-merge features, and Customer.
@@ -1904,9 +1919,10 @@ class Transaction(models.Model):
         item's own store — matching the same permission gate the view
         layer checks before calling this.
 
-        Raises ValueError (via split_payment_method_locked, or its own
-        blank-name check) — never partially applies. Returns
-        (orig_txn, new_txn, tab, entry).
+        Raises ValueError — never partially applies. Returns
+        (paid_txn_or_None, owed_txn, tab, entry). paid_txn is None
+        whenever nothing was confirmed collected (paid_amount was 0/None)
+        — the whole sale reverted, unresolved.
         """
         customer_name = (customer_name or '').strip()
         if not customer_name:
@@ -1914,13 +1930,42 @@ class Transaction(models.Model):
 
         from django.db import transaction as _db_txn
         with _db_txn.atomic():
-            orig_txn, new_txn = cls.split_payment_method_locked(
-                txn_id=txn_id, business=business, split_amount=split_amount,
-                new_method='credit', recipient=customer_name,
+            txn = cls.objects.select_for_update().select_related('item__store').get(
+                pk=txn_id, business=business,
             )
+            # tab_entry is a reverse OneToOne accessor, no _id shortcut exists.
+            try:
+                has_tab_entry = txn.tab_entry is not None
+            except Exception:
+                has_tab_entry = False
+            if txn.type != 'Issue' or has_tab_entry:
+                raise ValueError('Muamala huu hauwezi kurejeshwa — si mauzo ya moja kwa moja.')
+            if txn.payment_method not in ('cash', 'mpesa'):
+                raise ValueError('Njia ya malipo ya sasa haiwezi kurejeshwa.')
+
+            original_total = float(txn.revenue())
+            paid_amount = float(paid_amount or 0)
+            if paid_amount < 0 or paid_amount >= original_total:
+                raise ValueError('Kiasi kilicholipwa lazima kiwe kati ya 0 na jumla ya mauzo.')
+
+            if paid_amount > 0:
+                owed_amount = round(original_total - paid_amount, 2)
+                paid_txn, owed_txn = cls.split_payment_method_locked(
+                    txn_id=txn.id, business=business, split_amount=owed_amount,
+                    new_method='credit', recipient=customer_name,
+                )
+            else:
+                # Nothing confirmed collected — the WHOLE sale reverts,
+                # unresolved. No sibling transaction: the original one
+                # simply becomes the tab's own credit entry.
+                paid_txn = None
+                txn.payment_method = 'credit'
+                txn.recipient = customer_name
+                txn.save(update_fields=['payment_method', 'recipient'])
+                owed_txn = txn
 
             try:
-                is_kitchen = bool(orig_txn.item.store.is_kitchen)
+                is_kitchen = bool(owed_txn.item.store.is_kitchen)
             except Exception:
                 is_kitchen = False
             source = 'kitchen' if is_kitchen else 'bar'
@@ -1931,18 +1976,18 @@ class Transaction(models.Model):
             ).first()
             if not tab:
                 tab = BarTab.create_with_credentials(
-                    business=business, store=orig_txn.item.store,
+                    business=business, store=owed_txn.item.store,
                     customer_name=customer_name, source=source,
-                    served_by=orig_txn.recorded_by,
+                    served_by=owed_txn.recorded_by,
                 )
 
             entry = BarTabEntry.objects.create(
-                tab=tab, transaction=new_txn,
-                description=orig_txn.item.description,
-                amount=new_txn.sale_amount,
+                tab=tab, transaction=owed_txn,
+                description=owed_txn.item.description,
+                amount=owed_txn.sale_amount,
                 is_paid=False,
             )
-            return orig_txn, new_txn, tab, entry
+            return paid_txn, owed_txn, tab, entry
 
     @classmethod
     def payment_split_breakdown(cls, txn_ids, business):

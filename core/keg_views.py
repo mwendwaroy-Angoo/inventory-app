@@ -2278,19 +2278,28 @@ def split_transaction_payment_method(request, txn_id):
 @require_POST
 def revert_direct_sale_to_tab(request, txn_id):
     """Revert a direct sale mistakenly recorded as fully paid, when only
-    PART of it was genuinely collected (2026-08-24 live request, Roy — a
-    Whitecap sold on one shift, the customer paid only half and told the
-    NEXT staff on shift they'd come back for the rest, but that staff
-    entered it as if it were paid in full). "🤝 Deni" (split_transaction_
-    payment_method) already covers splitting a direct sale into a paid
-    portion + a debt-tracker credit line for a named customer — this is
-    its sibling for when the correction should surface as a real TAB in
-    the tabs drawer instead, attributed to whichever staff ACTUALLY made
-    the original sale, not whoever is fixing the record now.
+    PART of it — or NONE of it — was genuinely collected (2026-08-24 live
+    request, Roy — a Whitecap sold on one shift, the customer paid only
+    half and told the NEXT staff on shift they'd come back for the rest,
+    but that staff entered it as if it were paid in full). "🤝 Deni"
+    (split_transaction_payment_method) already covers splitting a direct
+    sale into a paid portion + a debt-tracker credit line for a named
+    customer — this is its sibling for when the correction should surface
+    as a real TAB in the tabs drawer instead, attributed to whichever
+    staff ACTUALLY made the original sale, not whoever is fixing the
+    record now.
 
     Staff types how much was GENUINELY collected (paid_amount) — the still
     -owed remainder is derived here, server-side, from the transaction's
-    own live revenue(), never trusted from the client.
+    own live revenue(), never trusted from the client. 0 is a valid,
+    meaningful answer (2026-08-25 follow-up, same live report: "the staff
+    who claimed it was paid for never confirmed the mode of payment used
+    for the half/partial payment... [she] simply wanted me to revert it
+    to go to tabs so that the staff who put it gets to sort it out on
+    their own") — it means nothing has been confirmed collected at all,
+    so the WHOLE sale reverts to the tab unresolved rather than being
+    split into a paid/owed pair. See Transaction.revert_direct_sale_to_
+    tab_locked()'s own docstring for the full mechanism.
     """
     up = _get_up(request)
     if not up:
@@ -2333,17 +2342,18 @@ def revert_direct_sale_to_tab(request, txn_id):
     try:
         paid_amount = float(Decimal(paid_amount_raw))
     except (InvalidOperation, ValueError):
-        return JsonResponse({'ok': False, 'error': 'Ingiza kiasi sahihi kilicholipwa.'}, status=400)
+        return JsonResponse({'ok': False, 'error': 'Ingiza kiasi sahihi kilicholipwa (0 ikiwa hakuna kilichothibitishwa).'}, status=400)
 
     # revenue() returns a plain float (never Decimal) — mixing the two
     # raises TypeError (this app's own documented gotcha), so everything
     # here stays float until it's handed to the model layer, which itself
     # converts to Decimal only where the DB field actually requires it.
+    # 0 is deliberately VALID here (2026-08-25) — see the model method's
+    # own docstring for why.
     original_total = float(txn.revenue())
-    owed_amount = round(original_total - paid_amount, 2)
-    if paid_amount < 0 or owed_amount <= 0 or owed_amount >= original_total:
+    if paid_amount < 0 or paid_amount >= original_total:
         return JsonResponse(
-            {'ok': False, 'error': 'Kiasi kilicholipwa lazima kiwe kati ya 0 na jumla ya mauzo.'},
+            {'ok': False, 'error': 'Kiasi kilicholipwa lazima kiwe kati ya 0 na jumla ya mauzo (chini yake).'},
             status=400,
         )
 
@@ -2355,20 +2365,23 @@ def revert_direct_sale_to_tab(request, txn_id):
     item_name = txn.item.description
 
     try:
-        orig_txn, new_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
+        paid_txn, owed_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
             txn_id=txn.id, business=up.business,
-            split_amount=owed_amount, customer_name=customer_name,
+            paid_amount=paid_amount, customer_name=customer_name,
         )
     except ValueError as e:
         return JsonResponse({'ok': False, 'error': str(e)}, status=400)
 
     who = request.user.get_full_name() or request.user.username
     when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+    if paid_txn is not None:
+        settled_note = f'KES {float(paid_txn.revenue()):,.0f} tayari ililipwa'
+    else:
+        settled_note = 'hakuna kilichothibitishwa kulipwa — jumla yote inarejeshwa'
     message = (
         f'↩️ {who} amerejesha "{item_name}" (iliyouzwa na {original_seller}, '
         f'tarehe {sale_when}) kwenye tab ya {tab.customer_name} — '
-        f'KES {float(new_txn.revenue()):,.0f} bado inadaiwa, '
-        f'KES {float(orig_txn.revenue()):,.0f} tayari ililipwa — {when}.'
+        f'KES {float(owed_txn.revenue()):,.0f} bado inadaiwa, {settled_note} — {when}.'
         + (f' Sababu: {reason}' if reason else '')
     )
     _notify_direct_correction(up.business, message, request.user, source=('kitchen' if is_kitchen else 'bar'))
@@ -2376,8 +2389,8 @@ def revert_direct_sale_to_tab(request, txn_id):
     return JsonResponse({
         'ok': True, 'message': message,
         'tab_id': tab.id, 'entry_id': entry.id,
-        'remaining_amount': float(orig_txn.revenue()),
-        'owed_amount': float(new_txn.revenue()),
+        'remaining_amount': float(paid_txn.revenue()) if paid_txn is not None else 0.0,
+        'owed_amount': float(owed_txn.revenue()),
     })
 
 

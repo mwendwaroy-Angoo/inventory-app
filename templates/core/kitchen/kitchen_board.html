@@ -3820,8 +3820,9 @@
   window.kbRevertDirectSaleToTab = function (txnId, totalAmount, desc) {
     var amtStr = prompt(
       '"' + desc + '" — jumla KES ' + Math.round(totalAmount) + '.\n' +
-      'Ni KES ngapi ZILIZOLIPWA KWELI na mteja? (Ile iliyobaki itaenda kwenye tab yake)',
-      ''
+      'Ni KES ngapi ZILIZOLIPWA KWELI na mteja? (Weka 0 kama hakuna kilichothibitishwa — ' +
+      'jumla yote itarudi kwenye tab bila kujulikana). Ile iliyobaki itaenda kwenye tab yake.',
+      '0'
     );
     if (amtStr === null) return;
     var amt = parseFloat(amtStr);

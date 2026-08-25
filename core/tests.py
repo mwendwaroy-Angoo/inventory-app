@@ -43568,21 +43568,21 @@ class RevertDirectSaleToTabTest(TestCase):
         with self.assertRaises(ValueError):
             Transaction.revert_direct_sale_to_tab_locked(
                 txn_id=self.txn.id, business=self.biz,
-                split_amount=Decimal('50'), customer_name='  ',
+                paid_amount=Decimal('50'), customer_name='  ',
             )
 
     def test_model_splits_paid_portion_and_creates_owed_tab_entry(self):
-        orig, new_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
+        paid_txn, owed_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
             txn_id=self.txn.id, business=self.biz,
-            split_amount=Decimal('50'), customer_name='Bosco',
+            paid_amount=Decimal('50'), customer_name='Bosco',
         )
-        orig.refresh_from_db()
-        self.assertEqual(orig.payment_method, 'mpesa')
-        self.assertEqual(float(orig.sale_amount), 50.0, 'the genuinely-paid half must stay on mpesa')
-        self.assertEqual(new_txn.payment_method, 'credit')
-        self.assertEqual(float(new_txn.sale_amount), 50.0)
+        paid_txn.refresh_from_db()
+        self.assertEqual(paid_txn.payment_method, 'mpesa')
+        self.assertEqual(float(paid_txn.sale_amount), 50.0, 'the genuinely-paid half must stay on mpesa')
+        self.assertEqual(owed_txn.payment_method, 'credit')
+        self.assertEqual(float(owed_txn.sale_amount), 50.0)
         # Owed half preserves the ORIGINAL (backdated) sale time.
-        self.assertEqual(new_txn.created_at, self.sale_when)
+        self.assertEqual(owed_txn.created_at, self.sale_when)
         self.assertEqual(tab.customer_name, 'Bosco')
         self.assertEqual(tab.status, 'OPEN')
         self.assertEqual(tab.source, 'bar')
@@ -43591,7 +43591,7 @@ class RevertDirectSaleToTabTest(TestCase):
             'the tab must be attributed to whoever ACTUALLY sold it, not the corrector',
         )
         self.assertEqual(entry.tab_id, tab.id)
-        self.assertEqual(entry.transaction_id, new_txn.id)
+        self.assertEqual(entry.transaction_id, owed_txn.id)
         self.assertFalse(entry.is_paid)
         self.assertEqual(entry.amount, Decimal('50.00'))
         self.assertEqual(tab.unpaid_total(), Decimal('50.00'))
@@ -43602,16 +43602,18 @@ class RevertDirectSaleToTabTest(TestCase):
         customer must land on their existing tab, not fragment into two."""
         _, _, tab1, _ = Transaction.revert_direct_sale_to_tab_locked(
             txn_id=self.txn.id, business=self.biz,
-            split_amount=Decimal('50'), customer_name='Bosco',
+            paid_amount=Decimal('50'), customer_name='Bosco',
         )
         txn2 = Transaction.objects.create(
             business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
             sale_amount=Decimal('80'), payment_method='cash',
             recorded_by=self.original_seller,
         )
+        # 50 paid (kept on cash) + 30 owed → total unpaid across the tab
+        # should be 50 (first sale) + 30 (second) = 80.
         _, _, tab2, _ = Transaction.revert_direct_sale_to_tab_locked(
             txn_id=txn2.id, business=self.biz,
-            split_amount=Decimal('30'), customer_name='bosco',  # case-insensitive
+            paid_amount=Decimal('50'), customer_name='bosco',  # case-insensitive
         )
         self.assertEqual(tab1.id, tab2.id)
         self.assertEqual(tab1.entries.count(), 2)
@@ -43625,8 +43627,41 @@ class RevertDirectSaleToTabTest(TestCase):
         with self.assertRaises(ValueError):
             Transaction.revert_direct_sale_to_tab_locked(
                 txn_id=credit_txn.id, business=self.biz,
-                split_amount=Decimal('50'), customer_name='Bosco',
+                paid_amount=Decimal('50'), customer_name='Bosco',
             )
+
+    # ── 2026-08-25 follow-up: paid_amount=0 — nothing confirmed collected,
+    # the WHOLE sale reverts to the tab unresolved (Roy: "the staff who
+    # claimed it was paid for never confirmed the mode of payment used
+    # for the half/partial payment... simply wanted me to revert it to go
+    # to tabs so that the staff who put it gets to sort it out"). ───────
+    def test_model_zero_paid_reverts_the_whole_sale_unresolved(self):
+        paid_txn, owed_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=self.txn.id, business=self.biz,
+            paid_amount=0, customer_name='Bosco',
+        )
+        self.assertIsNone(paid_txn, 'nothing was confirmed collected, so no paid_txn exists')
+        self.assertEqual(owed_txn.id, self.txn.id, 'no new sibling row — the original txn itself becomes the entry')
+        owed_txn.refresh_from_db()
+        self.assertEqual(owed_txn.payment_method, 'credit')
+        self.assertEqual(owed_txn.recipient, 'Bosco')
+        self.assertEqual(float(owed_txn.sale_amount), 100.0, 'the FULL original amount, nothing carved off')
+        self.assertEqual(entry.amount, Decimal('100.00'))
+        self.assertFalse(entry.is_paid)
+        self.assertEqual(tab.unpaid_total(), Decimal('100.00'))
+        self.assertEqual(tab.served_by_id, self.original_seller.id)
+        # No extra Transaction row was created for this business.
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), 1)
+
+    def test_model_blank_paid_amount_treated_as_zero(self):
+        """The view can pass None (blank POST field) — same full-revert
+        outcome as an explicit 0."""
+        paid_txn, owed_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=self.txn.id, business=self.biz,
+            paid_amount=None, customer_name='Bosco',
+        )
+        self.assertIsNone(paid_txn)
+        self.assertEqual(float(owed_txn.sale_amount), 100.0)
 
     # ── View layer ───────────────────────────────────────────────────
     def test_view_reverts_and_returns_tab_info(self):
@@ -43671,6 +43706,25 @@ class RevertDirectSaleToTabTest(TestCase):
         })
         data = resp.json()
         self.assertFalse(data['ok'])
+
+    def test_view_zero_paid_amount_reverts_whole_sale_to_tab(self):
+        """The literal live-reported failure: staff entered 0 (nothing
+        confirmed collected) and expected the WHOLE sale to land on a
+        tab — this must succeed, not be rejected as an invalid amount."""
+        self.client.force_login(self.corrector)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '0', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-zero-1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['remaining_amount'], 0.0)
+        self.assertEqual(data['owed_amount'], 100.0)
+        tab = BarTab.objects.get(id=data['tab_id'])
+        self.assertEqual(tab.unpaid_total(), Decimal('100.00'))
+        self.assertEqual(tab.served_by_id, self.original_seller.id)
+        self.txn.refresh_from_db()
+        self.assertEqual(self.txn.payment_method, 'credit')
 
     def test_view_blocks_staff_with_no_open_shift(self):
         no_shift_staff = User.objects.create_user(username='rtt_noshift', password='x')
@@ -43757,7 +43811,7 @@ class RevertDirectSaleToTabTest(TestCase):
         )
         Transaction.revert_direct_sale_to_tab_locked(
             txn_id=self.txn.id, business=self.biz,
-            split_amount=Decimal('50'), customer_name='Bosco',
+            paid_amount=Decimal('50'), customer_name='Bosco',
         )
         from core.receipt_views import _live_direct_lines
         live_lines = _live_direct_lines(receipt)
