@@ -8732,3 +8732,67 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   including regression locks that a no-op recount never notifies and
   that an owner correcting their own item never self-notifies). No
   migrations. 2418 tests pass (core + accounts).
+- Backfill for pre-fix reverted tabs + retroactive stock-take/Rekebisha
+  visibility (2026-08-25), same-day follow-up. Roy: "now that the sale is
+  no longer in recent sales and it disappeared before the fix is there a
+  way i can backfill so that the update works well and also could the
+  same happen for stock take done before your update?" **Part 1 — the
+  actual backfill**: the station-routing fix (`4f4638c`) only prevents
+  FUTURE mis-routed tabs; a `BarTab` already created via `revert_direct_
+  sale_to_tab_locked()` before that fix shipped still carries whatever
+  `source` it was given at the time (item-derived — 'bar'/'kitchen' —
+  regardless of which board's drawer the correction was actually made
+  from), permanently, until corrected by hand. There is no explicit
+  marker column distinguishing "this tab was created via a revert" from
+  an ordinary one — the only available breadcrumb is the correction's own
+  `_notify_direct_correction()` message, which always starts "↩️ {who}
+  amerejesha ... kwenye tab ya {customer}". New `diagnose_reverted_tab_
+  station` (read-only, `--business=NAME`) regex-parses that trail,
+  resolves each match against the business's current `BarTab`/
+  `BarTabEntry` state, and prints everything a human needs to decide —
+  tab id, CURRENT source, customer, item, amounts, dates — pointing at
+  the fix command rather than guessing which station is "correct" (only
+  a human who remembers which board the correction was made from can
+  know that for sure). New `fix_tab_station` (`--business=NAME --tab-id=
+  <id[,id...]> --station=<bar|kitchen|qs> [--dry-run]`) is the explicit,
+  per-tab correction — touches ONLY `BarTab.source`, a pure display-
+  routing field with zero effect on money/stock/debt, so always safe to
+  run once the right station is known. **Part 2 — "could the same happen
+  for stock take done before your update"**: answered directly rather
+  than assumed — NO, this is a structurally different kind of change from
+  the tab-routing bug. Both stock-take fixes shipped minutes earlier
+  (uncounted-items visibility, Rekebisha owner-notification) only changed
+  what's COMPUTED/NOTIFIED at the moment of a NEW action — neither one
+  ever wrote a wrong value or dropped/hid any data; every historical
+  `ShiftStockCount` row and every historical `[ADJ]`/`[ADJ-NOLOSS]`
+  Rekebisha `Transaction` has always been fully and correctly recorded,
+  visible in Transaction History exactly as it always was. Nothing
+  "disappeared" the way the tab did — there's nothing to REPAIR, only
+  something worth being able to look BACK at. Built two read-only
+  lookback reports to make that concrete rather than just asserted: (1)
+  `diagnose_stock_take_history` (`--business=NAME [--shift=N] [--limit=
+  N]`) reconstructs the EXACT SAME "which items were shown in the modal
+  but never got a count" answer for any PAST opening/closing stock take,
+  by comparing that shift's real, already-stored `ShiftStockCount` rows
+  against the same station-scoped item list `stock_take_api()`'s own GET
+  handler would have shown at the time (reuses the real `_shift_
+  station()` helper, not a hand-rolled guess, so a legacy pre-migration-
+  0132 shift with a blank `station` field resolves identically to
+  production); (2) `diagnose_rekebisha_history` (`--business=NAME`) lists
+  every historical `[ADJ]`/`[ADJ-NOLOSS]` correction made by a DELEGATED
+  (non-owner/manager) staffer — exactly the population the new
+  notification now covers going forward — so Roy can review what already
+  happened before the fix existed, with the "sio hasara halisi" flag
+  called out explicitly per row. 24 new tests
+  (`DiagnoseRevertedTabStationTest`, `FixTabStationTest`,
+  `DiagnoseStockTakeHistoryTest`, `DiagnoseRekebishaHistoryTest`) —
+  including business-scoping regression locks on every command (caught a
+  real test-authoring bug while writing them: a `name__icontains`
+  substring collision between two fixture business names made
+  `fix_tab_station` LOOK like it leaked cross-business when the bug was
+  actually in the test's own naming, not the command — fixed the fixture,
+  confirmed the command's substring-match convention, shared with every
+  other diagnostic command in this app, is intentional). All four
+  commands are read-only except `fix_tab_station`, which only ever
+  touches the one explicitly-named field on the one explicitly-named
+  tab(s). No migrations.

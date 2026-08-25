@@ -44090,3 +44090,304 @@ class RevertDirectSaleToTabTest(TestCase):
         self.assertEqual(len(live_lines), 2)
         subtotals = sorted(float(l['subtotal']) for l in live_lines)
         self.assertEqual(subtotals, [50.0, 50.0])
+
+
+class DiagnoseRevertedTabStationTest(TestCase):
+    """2026-08-25 live follow-up (Roy — "the sale is no longer in recent
+    sales and it disappeared before the fix, is there a way i can
+    backfill"): the station-routing fix only prevents FUTURE mis-routed
+    tabs; a tab already created via the buggy pre-fix path still carries
+    whatever source it got at the time, permanently. diagnose_reverted_
+    tab_station reconstructs candidates from the correction's own
+    notification trail (there is no explicit DB marker distinguishing a
+    reverted tab from an ordinary one)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Diag Revert Biz')
+        self.other_biz = Business.objects.create(name='Other Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='drt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.other_owner = User.objects.create_user(username='drt_other_owner', password='x')
+        UserProfile.objects.create(user=self.other_owner, business=self.other_biz, role='owner')
+
+    def _make_note(self, business, message):
+        from core.models import Notification
+        # The notification's own user must genuinely belong to `business` —
+        # the query filters on user__userprofile__business, so this picks
+        # the right fixture user rather than assuming self.owner.
+        user = self.other_owner if business == self.other_biz else self.owner
+        return Notification.objects.create(
+            user=user, title='🔄 Njia ya Malipo Imerekebishwa', message=message,
+        )
+
+    def test_finds_and_reports_a_mis_routed_tab(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bango', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=Item.objects.create(
+                business=self.biz, store=self.store, description='Whitecap',
+                material_no='DRT-1', unit='Pcs', selling_price=Decimal('100'),
+            ), type='Issue', qty=Decimal('-1'), payment_method='credit',
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Whitecap', amount=Decimal('100'), is_paid=False,
+        )
+        self._make_note(
+            self.biz,
+            '↩️ Roy amerejesha "Whitecap" (iliyouzwa na Susan, tarehe 24 Aug 2026, 14:30) '
+            'kwenye tab ya Bango — KES 100 bado inadaiwa, hakuna kilichothibitishwa kulipwa '
+            '— jumla yote inarejeshwa — 25 Aug 2026, 09:12.',
+        )
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_reverted_tab_station', business='Diag Revert', stdout=out)
+        output = out.getvalue()
+        self.assertIn(f'tab#{tab.id}', output)
+        self.assertIn("source SASA HIVI = 'bar'", output)
+        self.assertIn('Bango', output)
+        self.assertIn('fix_tab_station', output)
+
+    def test_no_revert_notifications_reports_nothing_to_review(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_reverted_tab_station', business='Diag Revert', stdout=out)
+        self.assertIn('nothing to review', out.getvalue())
+
+    def test_unrelated_notification_text_never_matches(self):
+        self._make_note(self.biz, 'Some other unrelated notification message entirely.')
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_reverted_tab_station', business='Diag Revert', stdout=out)
+        self.assertIn('nothing to review', out.getvalue())
+
+    def test_other_business_never_shown(self):
+        self._make_note(
+            self.other_biz,
+            '↩️ X amerejesha "Y" (iliyouzwa na Z, tarehe 1 Jan 2026, 00:00) '
+            'kwenye tab ya Other — KES 50 bado inadaiwa, — 1 Jan 2026, 00:00.',
+        )
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_reverted_tab_station', business='Diag Revert', stdout=out)
+        self.assertNotIn('Other', out.getvalue())
+
+    def test_command_is_read_only(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bango', status='OPEN', source='bar',
+        )
+        self._make_note(
+            self.biz,
+            '↩️ Roy amerejesha "Whitecap" (iliyouzwa na Susan, tarehe 24 Aug 2026, 14:30) '
+            'kwenye tab ya Bango — KES 100 bado inadaiwa, hakuna kilichothibitishwa kulipwa '
+            '— jumla yote inarejeshwa — 25 Aug 2026, 09:12.',
+        )
+        from io import StringIO
+        from django.core.management import call_command
+        call_command('diagnose_reverted_tab_station', business='Diag Revert', stdout=StringIO())
+        tab.refresh_from_db()
+        self.assertEqual(tab.source, 'bar', 'diagnose must never write anything')
+
+
+class FixTabStationTest(TestCase):
+    """The explicit, per-tab correction diagnose_reverted_tab_station points
+    to — sets BarTab.source only, nothing else, since that field has zero
+    effect on money/stock/debt, only which drawer displays the tab."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='FTS Biz')
+        self.other_biz = Business.objects.create(name='Unrelated Biz Entirely')
+        self.tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bango', status='OPEN', source='bar',
+        )
+        self.tab2 = BarTab.objects.create(
+            business=self.biz, customer_name='Buma', status='OPEN', source='bar',
+        )
+        self.other_tab = BarTab.objects.create(
+            business=self.other_biz, customer_name='Foreign', status='OPEN', source='bar',
+        )
+
+    def _run(self, **kwargs):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('fix_tab_station', business='FTS', stdout=out, **kwargs)
+        return out.getvalue()
+
+    def test_dry_run_previews_without_saving(self):
+        output = self._run(tab_id=str(self.tab.id), station='qs', dry_run=True)
+        self.assertIn('DRY RUN', output)
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.source, 'bar')
+
+    def test_real_run_corrects_source(self):
+        self._run(tab_id=str(self.tab.id), station='qs')
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.source, 'qs')
+
+    def test_already_correct_source_is_a_noop(self):
+        output = self._run(tab_id=str(self.tab.id), station='bar')
+        self.assertIn('already', output)
+        self.tab.refresh_from_db()
+        self.assertEqual(self.tab.source, 'bar')
+
+    def test_unknown_tab_id_reports_error_without_crashing(self):
+        output = self._run(tab_id='999999', station='qs')
+        self.assertIn('not found', output)
+
+    def test_comma_separated_multiple_ids_both_corrected(self):
+        self._run(tab_id=f'{self.tab.id},{self.tab2.id}', station='qs')
+        self.tab.refresh_from_db()
+        self.tab2.refresh_from_db()
+        self.assertEqual(self.tab.source, 'qs')
+        self.assertEqual(self.tab2.source, 'qs')
+
+    def test_cannot_touch_a_tab_from_a_different_business(self):
+        output = self._run(tab_id=str(self.other_tab.id), station='qs')
+        self.assertIn('not found', output)
+        self.other_tab.refresh_from_db()
+        self.assertEqual(self.other_tab.source, 'bar')
+
+
+class DiagnoseStockTakeHistoryTest(TestCase):
+    """2026-08-25 — the other half of Roy's "could the same happen for
+    stock take done before your update" question: nothing was ever lost
+    for a past stock take (the uncounted-items fix only changed what's
+    COMPUTED at submit time), so this reconstructs the identical answer
+    retroactively from the real, already-stored ShiftStockCount rows."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='DSH Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.staff = User.objects.create_user(username='dsh_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item1 = Item.objects.create(
+            business=self.biz, store=self.store, description='Counted Spirit',
+            material_no='DSH-1', unit='Pcs', selling_price=Decimal('100'),
+        )
+        self.item2 = Item.objects.create(
+            business=self.biz, store=self.store, description='Skipped Spirit',
+            material_no='DSH-2', unit='Pcs', selling_price=Decimal('80'),
+        )
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff, station='bar',
+            started_at=timezone.now() - timedelta(days=3), status='CLOSED',
+        )
+
+    def _run(self, **kwargs):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_stock_take_history', business='DSH', stdout=out, **kwargs)
+        return out.getvalue()
+
+    def test_flags_item_never_counted_in_a_past_closing_stock_take(self):
+        from core.models import ShiftStockCount
+        ShiftStockCount.objects.create(
+            shift=self.shift, item=self.item1, phase='closing',
+            book_balance=Decimal('5'), actual_count=Decimal('5'), recorded_by=self.staff,
+        )
+        output = self._run()
+        self.assertIn('NEVER counted', output)
+        self.assertIn('Skipped Spirit', output)
+        self.assertNotIn('Counted Spirit', output)  # only the uncounted one is named
+
+    def test_everything_counted_reports_clean(self):
+        from core.models import ShiftStockCount
+        for it in (self.item1, self.item2):
+            ShiftStockCount.objects.create(
+                shift=self.shift, item=it, phase='closing',
+                book_balance=Decimal('5'), actual_count=Decimal('5'), recorded_by=self.staff,
+            )
+        output = self._run()
+        self.assertIn('everything was counted', output)
+
+    def test_phase_never_done_at_all_is_skipped_not_flagged(self):
+        # No 'opening' ShiftStockCount rows exist for this shift at all —
+        # must be silently skipped, never reported as "everything uncounted".
+        from core.models import ShiftStockCount
+        ShiftStockCount.objects.create(
+            shift=self.shift, item=self.item1, phase='closing',
+            book_balance=Decimal('5'), actual_count=Decimal('5'), recorded_by=self.staff,
+        )
+        output = self._run()
+        self.assertNotIn('opening:', output)
+
+    def test_specific_shift_filter(self):
+        from core.models import ShiftStockCount
+        other_shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff, station='bar',
+            started_at=timezone.now() - timedelta(days=1), status='CLOSED',
+        )
+        ShiftStockCount.objects.create(
+            shift=other_shift, item=self.item1, phase='closing',
+            book_balance=Decimal('5'), actual_count=Decimal('5'), recorded_by=self.staff,
+        )
+        output = self._run(shift=self.shift.id)
+        self.assertNotIn(f'shift#{other_shift.id}', output)
+
+    def test_no_stock_count_history_at_all(self):
+        output = self._run()
+        self.assertIn('No shift with any recorded stock count', output)
+
+
+class DiagnoseRekebishaHistoryTest(TestCase):
+    """The other historical-visibility question — Rekebisha corrections
+    were always fully recorded in Transaction History, only the
+    notification to the owner was missing at the time. This retroactively
+    lists every delegated-staff correction the owner never saw a heads-up
+    about."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='DRH Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='drh_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='drh_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff', can_adjust_stock=True)
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Vodka',
+            material_no='DRH-1', unit='Btl', selling_price=Decimal('1500'),
+        )
+
+    def _run(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('diagnose_rekebisha_history', business='DRH', stdout=out)
+        return out.getvalue()
+
+    def test_lists_delegated_staff_correction(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Wastage', qty=Decimal('-2'),
+            invoice_no='[ADJ]', recorded_by=self.staff, recipient='Physical recount',
+        )
+        output = self._run()
+        self.assertIn('Vodka', output)
+        self.assertIn('drh_staff', output)
+        self.assertIn('Physical recount', output)
+
+    def test_no_real_loss_flag_shown(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Wastage', qty=Decimal('-2'),
+            invoice_no='[ADJ-NOLOSS]', recorded_by=self.staff,
+        )
+        output = self._run()
+        self.assertIn('SIO HASARA HALISI', output)
+
+    def test_owner_correction_excluded(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('3'),
+            invoice_no='[ADJ]', recorded_by=self.owner,
+        )
+        output = self._run()
+        self.assertIn('No delegated-staff Rekebisha corrections found', output)
+
+    def test_no_corrections_reports_clean(self):
+        output = self._run()
+        self.assertIn('No delegated-staff Rekebisha corrections found', output)
