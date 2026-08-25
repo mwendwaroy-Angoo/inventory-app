@@ -3243,6 +3243,7 @@ def stock_take_api(request, shift_id):
         # GET branch above — fixed to the real _shift_station() discriminator.
         _shift_is_kitchen = (_shift_station(shift) == 'kitchen')
         results = []
+        counted_item_ids = set()
         for entry in counts:
             try:
                 item_id      = int(entry.get('item_id', 0))
@@ -3265,6 +3266,7 @@ def stock_take_api(request, shift_id):
                         'recorded_by':  request.user,
                     }
                 )
+                counted_item_ids.add(item.id)
                 variance = float(actual) - float(book)
                 result_row = {
                     'name':       item.description,
@@ -3282,6 +3284,42 @@ def stock_take_api(request, shift_id):
                 results.append(result_row)
             except Exception:
                 continue
+
+        # 2026-08-25 (Roy — "ensure stock variance during staff stock take is
+        # accurate so that we catch this theft that has been happening"):
+        # investigated the quick modal's own frontend (submitStockTake() in
+        # bar_board.html/kitchen_board.html) and found a real, concrete gap
+        # in the CATCH-THEFT purpose specifically — only inputs the staffer
+        # actually typed a value into were ever included in `counts`; an
+        # item left blank was silently skipped with ZERO variance check run
+        # on it at all — no StockVarianceQuery, no notification, nothing.
+        # This is the exact blind spot a dishonest staffer could exploit:
+        # simply never count the one item they're worried about. Forcing
+        # every item to be entered was considered and rejected — it doesn't
+        # actually stop theft (a determined thief can just type the book
+        # balance and lie), and would add real friction to every ordinary
+        # shift-close on every business on the platform, a decision this
+        # app's own established design philosophy says is Roy's to make,
+        # not mine to impose unilaterally. Pure VISIBILITY instead: which
+        # items were shown in the modal but never got a count, surfaced
+        # plainly on the result panel — a pattern of the SAME item being
+        # skipped, especially by the same staffer, is itself a real signal
+        # an owner should be able to see, same as this app's other
+        # transparency-over-enforcement mechanisms (Cause-&-Effect Protocol).
+        # Scoped to opening/closing only — midshift is voluntary/spot-check
+        # by design and was never meant to be exhaustive.
+        uncounted_names = []
+        uncounted_count = 0
+        if phase in ('opening', 'closing'):
+            all_station_items = list(
+                Item.objects.filter(business=up.business, store__is_kitchen=_shift_is_kitchen)
+                .exclude(is_keg=True).exclude(is_produce=True)
+                .exclude(id__in=counted_item_ids)
+                .order_by('description')
+                .values_list('description', flat=True)
+            )
+            uncounted_count = len(all_station_items)
+            uncounted_names = all_station_items[:10]
 
         # 2026-08-22 (Roy — shift-change stock-imbalance accountability):
         # this quick modal used to be purely informational — a variance
@@ -3314,4 +3352,5 @@ def stock_take_api(request, shift_id):
         return JsonResponse({
             'ok': True, 'results': results,
             'variance_count': variance_count, 'auto_reconciled_count': auto_reconciled_count,
+            'uncounted_count': uncounted_count, 'uncounted_names': uncounted_names,
         })

@@ -6021,6 +6021,18 @@
           html += '<div style="margin-top:0.4rem; font-size:0.76rem; color:#6ee7b7;">ℹ️ Tofauti ' + d.auto_reconciled_count +
             ' zimeelezwa kiotomatiki na mfumo (mauzo halisi wakati wa mapumziko) — hakuna hatua inayohitajika.</div>';
         }
+        // 2026-08-25 — visibility for whatever was left blank: an item never
+        // counted gets no scrutiny at all, the exact blind spot theft can
+        // hide in. Never blocks submission — just says plainly what wasn't
+        // checked this time, so a pattern (same item, same staffer) becomes
+        // visible to the owner instead of invisible.
+        if (d.uncounted_count > 0) {
+          var ucNames = (d.uncounted_names || []).join(', ');
+          var ucMore = d.uncounted_count > (d.uncounted_names || []).length
+            ? ' na nyingine ' + (d.uncounted_count - d.uncounted_names.length) : '';
+          html += '<div style="margin-top:0.6rem; font-size:0.74rem; color:#b0b0b0;">⚠️ Haikuhesabiwa (' +
+            d.uncounted_count + '): ' + ucNames + ucMore + '.</div>';
+        }
         resEl.innerHTML = html;
         resEl.style.display = 'block';
       })

@@ -8657,3 +8657,78 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   tab_to_the_right_drawer`), plus a backward-compat regression lock for
   a client that never sends `station=` at all. No migrations. 2409 tests
   pass (core + accounts).
+- Stock-take accuracy + Rekebisha owner-visibility, "catch this theft"
+  audit (2026-08-25). Same-message follow-up to the tab-routing fix above:
+  "once this is fixed properly I need you to ensure that stock variance
+  during staff stock take is accurate so that we catch this theft that
+  has been happening and in regards to the cause and effect mapping, the
+  staff's track record should be impacted." Traced the full pipeline
+  first (`attribute_variance_shift`, `_gap_reconciled_variance`,
+  `_process_variance_row`, `run_accountability_stock_take`,
+  `_staff_contribution`'s `variance_loss_kes`, `compute_staff_
+  recognition`) and confirmed it intact and correctly wired from the
+  2026-08-22 sprint — no computational bug found there. Two genuine,
+  concrete gaps found by auditing the ACTUAL staff-facing surfaces
+  instead, both fixed. **(1) Silently-skippable items in the quick
+  "Hesabu Stock" modal**: `submitStockTake()` (both boards) only ever
+  included an input the staffer actually typed a value into — an item
+  left BLANK got literally zero scrutiny: no book-vs-actual comparison,
+  no `StockVarianceQuery`, no notification, nothing. This is the exact
+  blind spot a dishonest staffer could exploit — simply never count the
+  one item they're worried about. Forcing every item to be entered was
+  considered and rejected: it doesn't actually stop theft (a determined
+  thief can just type the book balance and lie) and would add real
+  friction to every ordinary shift-close on every business on the
+  platform — a decision this app's own established philosophy says is
+  Roy's to make, not mine to impose unilaterally. Fixed with pure
+  VISIBILITY instead: `stock_take_api()`'s POST handler (opening/closing
+  phases only — midshift stays voluntary/informational by design) now
+  computes which station-scoped, non-keg/non-produce items were shown in
+  the modal but never got a count, and returns `uncounted_count`/
+  `uncounted_names` (capped at 10) — surfaced on the result panel in both
+  `bar_board.html`/`kitchen_board.html` ("⚠️ Haikuhesabiwa (N): ...")
+  right alongside the existing variance/auto-reconciled lines. Never
+  blocks submission — a pattern (the same item, the same staffer, every
+  time) is now something Roy can actually see instead of something
+  invisible. **(2) Rekebisha (`adjust_stock_balance`) never notified the
+  owner at all, for either direction, whether triggered by the owner or
+  a `can_adjust_stock`-delegated staffer.** This is the single most
+  theft-relevant lever in the app — it PERMANENTLY reconciles the book
+  balance to whatever the person doing it claims the physical count is —
+  yet unlike every sibling loss-recording action (`record_breakage`,
+  `kitchen_wastage`, petty cash) it fired zero notification, ever. A
+  dishonest delegated staffer (the toggle was added 2026-08-11, and its
+  "not a real loss" judgment was widened to delegated staff on 2026-08-23
+  per Roy's own permission-parity principle) could recount their own
+  shortfall, correct the book down to match, optionally tick "sio hasara
+  halisi" to suppress it from every loss/P&L figure, and the owner would
+  never be told — completely erasing the evidence trail an independent
+  stock take would otherwise have caught. Fixed: `adjust_stock_balance()`
+  now sends an in-app + SMS notification to every owner/manager (title
+  "⚖️ Marekebisho ya Stock") whenever the correction was made by a
+  DELEGATED staffer specifically (never when the owner/manager corrects
+  their own item — that would just be noise about their own action) —
+  item, direction, amount, who, when, and whether "not a real loss" was
+  claimed, mirroring `record_breakage()`'s exact wording/notification
+  convention. **Deliberately NOT wired into `variance_loss_kes`/
+  `compute_staff_recognition`**: Rekebisha is the staffer's own
+  VOLUNTARY, HONEST self-correction — the opposite behaviour from theft —
+  and scoring it the same way an independent, unbiased stock-take-
+  discovered variance is scored would perversely teach staff to leave
+  the books wrong and hope nobody ever stock-takes it, worse for
+  detection, not better; Roy also explicitly said (2026-08-22, this same
+  file) not to add more raw metrics to that scoring rubric, and I
+  respected that standing instruction rather than walking it back
+  unilaterally for a related-sounding but distinct request. Also
+  deliberately NOT added: a minimum-variance noise-tolerance threshold —
+  considered (fractional preset/keg sales could in theory produce small
+  rounding differences) but ruled out after confirming `current_
+  balance()` stays pure Decimal arithmetic end to end with no float
+  conversion, so there's no real noise source to filter; suppressing
+  small variances would also work directly against the stated goal, the
+  wrong lever to pull unilaterally. 15 new tests (`StockTakeApi
+  AccountabilityTest` +5 for the uncounted-items visibility;
+  `AdjustStockPermissionTest` +5 for the Rekebisha notification,
+  including regression locks that a no-op recount never notifies and
+  that an owner correcting their own item never self-notifies). No
+  migrations. 2418 tests pass (core + accounts).

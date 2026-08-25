@@ -1011,6 +1011,65 @@ def adjust_stock_balance(request, item_id):
         direction_label = f'Ongezeko la {variance:g} {item.unit}'
 
     new_balance = item.current_balance()
+
+    # 2026-08-25 (Roy — "ensure stock variance during staff stock take is
+    # accurate so that we catch this theft that has been happening"): a
+    # genuine, concrete gap found while auditing the wider accountability
+    # pipeline for this ask. Rekebisha is the single most theft-relevant
+    # lever in the app — it PERMANENTLY reconciles the book balance to
+    # whatever the person doing it claims is the physical count — but,
+    # unlike every sibling loss-recording action (record_breakage,
+    # kitchen_wastage, petty cash), it has NEVER notified the owner at all,
+    # for either direction, owner-triggered or (since 2026-08-11)
+    # can_adjust_stock-delegated-staff-triggered. A dishonest delegated
+    # staffer could recount their own shortfall, correct the book down to
+    # match reality, optionally tick "not a real loss" (widened to
+    # delegated staff on 2026-08-23 per Roy's own permission-parity
+    # principle), and the owner would never be told — completely erasing
+    # the evidence trail an independent stock take would otherwise have
+    # caught, with zero visibility anywhere.
+    #
+    # Deliberately NOT wired into variance_loss_kes/compute_staff_
+    # recognition — Rekebisha is the staffer's own VOLUNTARY, HONEST
+    # self-correction (the opposite behaviour from theft); scoring it the
+    # same way an independent stock-take-discovered variance is scored
+    # would perversely teach staff to leave the books wrong and hope no
+    # one ever stock-takes it, which is worse for detection, not better.
+    # Roy also explicitly said (2026-08-22) not to add more raw metrics to
+    # that scoring rubric. Pure owner/manager VISIBILITY instead — only
+    # fires for a DELEGATED staffer's own correction (an owner/manager
+    # correcting their own item needs no notification about their own
+    # action); a repeated pattern (same item, same staffer, always just
+    # before a stock take) becomes something Roy can actually see.
+    if not is_owner:
+        from .models import Notification
+        from accounts.models import UserProfile as _UP
+        from core.notifications import normalize_ke_phone, send_sms_notification_async
+
+        reporter_name = request.user.get_full_name() or request.user.username
+        when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+        adj_message = (
+            f"⚖️ Rekebisha: {item.description} — {direction_label} (na {reporter_name}, "
+            f"{when}). Salio jipya: {new_balance:g} {item.unit}."
+        )
+        if no_real_loss:
+            adj_message += ' Imewekwa alama "sio hasara halisi" — haitahesabika kama hasara.'
+        if note:
+            adj_message += f' Sababu: {note}'
+
+        for om in _UP.objects.filter(
+            business=business, role__in=['owner', 'manager']
+        ).exclude(user=request.user).select_related('user'):
+            Notification.objects.create(
+                user=om.user, title='⚖️ Marekebisho ya Stock',
+                message=adj_message, notification_type='warning',
+                link_url='/stock/',
+            )
+            if om.phone:
+                normalized = normalize_ke_phone(om.phone)
+                if normalized:
+                    send_sms_notification_async(f"{business.name}: {adj_message}", normalized)
+
     return JsonResponse({
         'ok': True,
         'message': f'{item.description}: {direction_label}. Salio jipya: {new_balance:g} {item.unit}.',

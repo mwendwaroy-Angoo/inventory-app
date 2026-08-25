@@ -39280,6 +39280,89 @@ class AdjustStockPermissionTest(TestCase):
         txn = Transaction.objects.filter(item=self.item, type='Wastage').order_by('-id').first()
         self.assertEqual(txn.invoice_no, '[ADJ-NOLOSS]')
 
+    def test_delegated_staff_correction_notifies_owner(self):
+        """2026-08-25 (Roy — "ensure stock variance during staff stock take
+        is accurate so that we catch this theft that has been happening"):
+        Rekebisha is the single most theft-relevant lever in the app but
+        never notified the owner at all, for either direction, whether the
+        actor was the owner or a delegated staffer. A dishonest delegated
+        staffer could quietly correct their own shortfall with zero
+        visibility. This locks in that the owner now gets an in-app
+        notification whenever a DELEGATED staffer (never the owner
+        correcting their own item) performs a correction."""
+        from core.models import Notification
+        self.staff_profile.can_adjust_stock = True
+        self.staff_profile.save(update_fields=['can_adjust_stock'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '6', 'note': 'Physical recount',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        notes = Notification.objects.filter(user=self.owner, title='⚖️ Marekebisho ya Stock')
+        self.assertEqual(notes.count(), 1)
+        self.assertIn('Whisky 750ml', notes.first().message)
+        self.assertIn('asp_staff', notes.first().message)
+
+    def test_delegated_staff_no_real_loss_flagged_in_notification(self):
+        """The owner must be told when 'not a real loss' was ticked, since
+        that flag suppresses the correction from every loss/P&L figure —
+        exactly the kind of thing an owner needs visibility into, not
+        silence on."""
+        from core.models import Notification
+        self.staff_profile.can_adjust_stock = True
+        self.staff_profile.save(update_fields=['can_adjust_stock'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {
+            'actual_count': '6', 'no_real_loss': '1',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        note = Notification.objects.filter(user=self.owner, title='⚖️ Marekebisho ya Stock').first()
+        self.assertIsNotNone(note)
+        self.assertIn('sio hasara halisi', note.message)
+
+    def test_owner_correcting_own_item_does_not_self_notify(self):
+        """An owner/manager correcting their own item needs no notification
+        about their own action — this is pure visibility for DELEGATED
+        staff, not a general audit log of every correction."""
+        from core.models import Notification
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '7'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertEqual(
+            Notification.objects.filter(title='⚖️ Marekebisho ya Stock').count(), 0,
+        )
+
+    def test_no_change_never_notifies(self):
+        """A recount that exactly matches the book balance is a no-op —
+        must never fire a notification (or create a transaction) at all."""
+        from core.models import Notification
+        self.staff_profile.can_adjust_stock = True
+        self.staff_profile.save(update_fields=['can_adjust_stock'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '10'})
+        self.assertTrue(resp.json().get('no_change'))
+        self.assertEqual(
+            Notification.objects.filter(title='⚖️ Marekebisho ya Stock').count(), 0,
+        )
+
+    def test_surplus_correction_also_notifies(self):
+        """Both directions are worth owner visibility, not just shortages —
+        a surplus could equally be a red flag (unrecorded stock quietly
+        being 'found')."""
+        from core.models import Notification
+        self.staff_profile.can_adjust_stock = True
+        self.staff_profile.save(update_fields=['can_adjust_stock'])
+        self.client.force_login(self.staff)
+        self._open_shift(self.staff)
+        resp = self.client.post(f'/stock/items/{self.item.id}/adjust/', {'actual_count': '13'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertEqual(
+            Notification.objects.filter(user=self.owner, title='⚖️ Marekebisho ya Stock').count(), 1,
+        )
+
 
 class WaitressConvertToDebtPermissionTest(TestCase):
     """2026-08-11 live request (Roy): UserProfile.can_convert_tabs_to_debt
@@ -40666,6 +40749,76 @@ class StockTakeApiAccountabilityTest(TestCase):
         resp = self._post('opening', 6)
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json()['ok'])
+
+    def test_uncounted_item_surfaced_but_never_blocks_submission(self):
+        # 2026-08-25 — a real, concrete "catch theft" gap: only inputs the
+        # staffer actually typed a value into were ever checked at all — an
+        # item left blank got ZERO scrutiny. This is pure visibility, not a
+        # block: the submission still succeeds and the counted item's own
+        # variance is still processed normally.
+        second_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Uncounted Spirit',
+            material_no='STAAPI-02', unit='pcs', selling_price=Decimal('80'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=second_item, type='Receipt', qty=Decimal('5'),
+            created_at=timezone.now() - timedelta(days=1),
+        )
+        resp = self._post('closing', 6)  # only self.item is submitted
+        d = resp.json()
+        self.assertTrue(d['ok'])
+        self.assertEqual(d['variance_count'], 1)
+        self.assertEqual(d['uncounted_count'], 1)
+        self.assertIn('Uncounted Spirit', d['uncounted_names'])
+
+    def test_uncounted_zero_when_everything_counted(self):
+        second_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Second Item',
+            material_no='STAAPI-03', unit='pcs', selling_price=Decimal('80'),
+        )
+        import json, uuid
+        self.client.force_login(self.staff)
+        counts = json.dumps([
+            {'item_id': self.item.id, 'actual_count': 10},
+            {'item_id': second_item.id, 'actual_count': 0},
+        ])
+        resp = self.client.post(f'/bar/shift/{self.shift.id}/stock-take/', {
+            'counts': counts, 'phase': 'closing', 'idempotency_token': str(uuid.uuid4()),
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'])
+        self.assertEqual(d['uncounted_count'], 0)
+
+    def test_midshift_never_computes_uncounted_items(self):
+        # Midshift is a voluntary spot-check — never meant to be exhaustive,
+        # so it must never flag "uncounted" items either.
+        Item.objects.create(
+            business=self.biz, store=self.store, description='Skipped At Midshift',
+            material_no='STAAPI-04', unit='pcs', selling_price=Decimal('80'),
+        )
+        resp = self._post('midshift', 6)
+        d = resp.json()
+        self.assertTrue(d['ok'])
+        self.assertEqual(d['uncounted_count'], 0)
+
+    def test_uncounted_excludes_keg_and_produce_and_other_station(self):
+        Item.objects.create(
+            business=self.biz, store=self.store, description='Keg Item',
+            material_no='STAAPI-05', unit='L', is_keg=True, selling_price=Decimal('10'),
+        )
+        Item.objects.create(
+            business=self.biz, store=self.store, description='Produce Item',
+            material_no='STAAPI-06', unit='pcs', is_produce=True, selling_price=Decimal('10'),
+        )
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        Item.objects.create(
+            business=self.biz, store=kitchen_store, description='Kitchen Item',
+            material_no='STAAPI-07', unit='pcs', selling_price=Decimal('10'),
+        )
+        resp = self._post('closing', 6)  # bar shift, only self.item submitted
+        d = resp.json()
+        self.assertTrue(d['ok'])
+        self.assertEqual(d['uncounted_count'], 0)
 
 
 class VarianceLossKesAffirmationTest(TestCase):
