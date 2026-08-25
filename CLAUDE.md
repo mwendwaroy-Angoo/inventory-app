@@ -8796,3 +8796,78 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   commands are read-only except `fix_tab_station`, which only ever
   touches the one explicitly-named field on the one explicitly-named
   tab(s). No migrations.
+- Two more live audit findings, same-day (2026-08-25): "what have you
+  broken with petty cash that staff cannot see today's entries, only
+  previous ones" + "when an item sold mode of payment is reverted or
+  adjusted... does it effectively adjust everywhere the money touches and
+  displays... in real time?" **(1) Petty cash — confirmed via `git log
+  --follow`, PRE-EXISTING, not caused by anything shipped today.**
+  `petty_cash_list()`'s `entries[:100]` has had NO explicit `.order_by()`
+  since the line was first written, and `PettyCash` has no `Meta.
+  ordering` either — Django hands back whatever order the database
+  happens to return for an unordered query. SQLite (local dev) usually
+  returns roughly insertion order, masking the bug there; Postgres (this
+  app's real production database) makes NO such guarantee for an
+  unordered query at all. Once a business crosses 100 total petty cash
+  entries over its lifetime (Monsoon Inn's long history easily does),
+  `[:100]` can permanently slice an arbitrary/old subset while today's
+  newest entries never render — exactly the reported symptom. Fixed with
+  an explicit `.order_by('-created_at')`, matching every other list view
+  in this app. Swept every other `PettyCash.objects` queryset in the
+  codebase for the same missing-ordering-plus-slice shape — all others
+  are either `.count()`/`.aggregate()` (order-independent) or already
+  carry their own explicit `.order_by()` — this was the only instance.
+  **(2) Payment-method corrections — the MONEY side was already fully
+  live-correct everywhere (`_reconcile()`, `till_expected_cash()`, daily
+  sales, analytics, the debt tracker all read `Transaction.payment_
+  method`/`sale_amount` fresh on every call, no caching layer anywhere in
+  this app), confirmed by re-tracing rather than assumed. The DISPLAY
+  side had a real, concrete gap specific to `revert_direct_sale_to_tab`
+  (↩️ Tengua→Tab) — `correct_transaction_payment_method` (🔄 whole-amount
+  cash/mpesa swap) and `split_transaction_payment_method` (✂️ Gawanya)
+  were both already correctly reflected on the customer's own receipt via
+  `_live_direct_lines()` (2026-08-21), but that function's own docstring
+  named only VOID and split as things it handles — revert-to-tab was
+  never taught to it at all.** The whole-sale (`paid_amount<=0`) case
+  mutates the ORIGINAL transaction in place (`payment_method` -> 'credit',
+  never 'void'), so it hit neither the void-drop check nor the split-
+  child path — the line rendered on the ORIGINAL receipt exactly like a
+  normal, fully-paid, complete sale forever, with zero indication the
+  item now sits UNPAID on a (possibly different-named) customer's open
+  tab, and its full amount stayed counted in that receipt's own total.
+  The partial (`paid_amount>0`) case DOES route through the same
+  `split_payment_method_locked()` mechanism as Gawanya, so its split-
+  child WAS already picked up structurally — but the synthesized child
+  line carried no status marker at all, rendering identically to an
+  ordinary already-paid line, with nothing telling the reader that
+  portion is now owed elsewhere. Fixed: `_live_direct_lines()` now checks
+  every transaction it touches (both a line's own txn and any split
+  child) for a live `BarTabEntry` — while genuinely still unpaid, the
+  line gets `moved_to_tab` (the tab's customer name) instead of a plain
+  subtotal; if that tab entry has SINCE been settled through the ordinary
+  tab mechanisms, it flips to `is_paid=True` and displays/counts exactly
+  like any other paid line — money genuinely collected, just via a
+  different final path, self-healing the same way every other live-
+  recomputed state in this file already does. New shared
+  `_direct_lines_total()` (used by both `public_receipt()` and
+  `receipt_live_status()`, so the initial page load and the 20s live poll
+  can never disagree) excludes a still-unpaid `moved_to_tab` line from
+  the receipt's own total — it's not part of THIS completed sale anymore
+  until it's actually settled. `receipt_public.html`'s static render AND
+  its `renderLines()` JS (used by the live poll) both got the matching
+  visual branch and the same total-exclusion logic, so a page already
+  open in a browser self-heals within 20 seconds of the correction,
+  exactly matching Roy's own "in real time" framing. Confirmed already
+  correct and unaffected by this fix: `recent_settled_tabs_api`'s direct-
+  sales query already `tab_entry__isnull=True`-excludes a reverted sale,
+  so it correctly disappears from "🕐 Malipo ya Hivi Karibuni" the moment
+  it's reverted (already visible to Roy, matching his own report). 12 new
+  tests (`PettyCashAccountabilityTest` +1,
+  `RevertDirectSaleToTabReceiptDisplayTest` — whole-sale and partial
+  revert marking, the settle-later self-heal, two full HTTP round-trips
+  through `public_receipt()`/`receipt_live_status()`, and two regression
+  locks proving ordinary Gawanya and void behavior are byte-for-byte
+  unchanged) plus the full pre-existing `RevertDirectSaleToTabTest`/
+  `LiveDirectReceiptLinesTest`/`DirectSalePaymentSplitTest`/`ReceiptSplit
+  PaymentDisplayTest`/`VoidDirectTransactionTest` suites re-run and
+  confirmed passing unmodified. No migrations.

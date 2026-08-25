@@ -322,7 +322,26 @@ def petty_cash_list(request):
 
     business = up.business
     can_review = _can_review_petty_cash(up)
-    entries = PettyCash.objects.filter(business=business).select_related('recorded_by', 'reviewed_by')
+    # 2026-08-25 live report (Roy — "staff cannot see today's entries, only
+    # previous ones"): this queryset has NEVER had an explicit ordering,
+    # since it was first written — confirmed via git log, not something
+    # this session touched. PettyCash has no Meta.ordering either, so
+    # Django hands back whatever order the database happens to return for
+    # an unordered query — on SQLite that's typically insertion order
+    # (oldest-first), but on Postgres (this app's real production
+    # database) an unordered query's row order is genuinely undefined and
+    # can vary run to run. Either way, `entries[:100]` a few lines down
+    # then slices the FIRST 100 rows in THAT order — once a business
+    # accumulates more than 100 petty cash entries over its lifetime
+    # (Monsoon Inn's own long history easily crosses that), the newest
+    # ones — today's — fall outside the slice and silently never render,
+    # while old ones stay visible forever. Fixed to explicit newest-first,
+    # matching every other list view in this app.
+    entries = (
+        PettyCash.objects.filter(business=business)
+        .select_related('recorded_by', 'reviewed_by')
+        .order_by('-created_at')
+    )
 
     # 2026-07-26 (item 1) — staff now have somewhere to see, edit (while pending),
     # and respond to (once rejected) their OWN entries — previously this whole

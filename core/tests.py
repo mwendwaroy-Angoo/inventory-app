@@ -17055,6 +17055,38 @@ class PettyCashAccountabilityTest(TestCase):
         UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
         self.store = Store.objects.create(business=self.biz, name='Bar')
 
+    def test_todays_entries_still_visible_past_the_100_row_cap(self):
+        """2026-08-25 live report (Roy — "staff cannot see today's entries,
+        only previous ones"): petty_cash_list()'s `entries[:100]` had NO
+        explicit ordering, ever, since first written — Django hands back
+        whatever order the database happens to return for an unordered
+        query, which is NOT guaranteed to be insertion order (especially
+        on Postgres, this app's real production database). Once a business
+        crosses 100 total entries, an arbitrary/old subset can permanently
+        win the slice while today's newest entries never render. Fixed to
+        explicit newest-first. bulk_create (not .create()) is used
+        specifically because it does NOT apply auto_now_add — letting this
+        test stamp fully distinct, explicitly ascending created_at values
+        instead of ~105 entries all created within the same test-run
+        millisecond, which would make the bug impossible to reliably
+        reproduce here regardless of which way the fix goes."""
+        base = timezone.now() - timedelta(days=200)
+        old_entries = [
+            self.PettyCash(
+                business=self.biz, amount=Decimal('10'), reason='other',
+                recorded_by=self.staff, created_at=base + timedelta(hours=i),
+            )
+            for i in range(105)
+        ]
+        self.PettyCash.objects.bulk_create(old_entries)
+        todays_entry = self.PettyCash.objects.create(
+            business=self.biz, amount=Decimal('50'), reason='transport',
+            description="TODAY'S REAL ENTRY", recorded_by=self.staff,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/petty-cash/')
+        self.assertIn(todays_entry, list(resp.context['entries']))
+
     def test_mismatch_warning_when_petty_cash_exceeds_shift_cash(self):
         shift = Shift.objects.create(
             business=self.biz, store=self.store, staff=self.staff,
@@ -44391,3 +44423,159 @@ class DiagnoseRekebishaHistoryTest(TestCase):
     def test_no_corrections_reports_clean(self):
         output = self._run()
         self.assertIn('No delegated-staff Rekebisha corrections found', output)
+
+
+class RevertDirectSaleToTabReceiptDisplayTest(TestCase):
+    """2026-08-25 live audit (Roy: "when an item sold mode of payment is
+    reverted or adjusted... does it effectively adjust everywhere the money
+    touches and displays... in real time?"). Traced _live_direct_lines()
+    and found a real gap: a revert_direct_sale_to_tab correction was
+    invisible to it entirely — the whole-sale case mutates the ORIGINAL
+    transaction in place (payment_method -> 'credit', not 'void'), so it
+    hit neither the void-drop check nor the split-child path, and rendered
+    on the original receipt exactly like a normal, fully-paid, complete
+    sale forever, with no indication the item now sits UNPAID on a
+    (possibly different-named) customer's open tab. The partial case DID
+    route through the same split mechanism as Gawanya, but its synthesized
+    child line carried no status marker either, looking identical to an
+    ordinary paid line. Fixed: any transaction (parent or split child) that
+    now has a live BarTabEntry is marked `moved_to_tab` (with the tab's
+    customer name) while still unpaid, excluded from the receipt's own
+    total, and self-heals to `is_paid=True` (counted normally again) once
+    that tab entry is later settled through the ordinary tab mechanisms."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='RTT Receipt Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rttr_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.seller = User.objects.create_user(username='rttr_seller', password='x')
+        UserProfile.objects.create(user=self.seller, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Whitecap',
+            material_no='RTTR-1', unit='Pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('60'),
+        )
+
+    def _make_receipt_and_txn(self, sale_amount=Decimal('100')):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=sale_amount, payment_method='mpesa', recorded_by=self.seller,
+        )
+        receipt = Receipt.objects.create(
+            business=self.biz, customer_name='Walk-in',
+            lines=[{'name': 'Whitecap', 'qty': 1, 'subtotal': float(sale_amount), 'txn_id': txn.id}],
+            total=sale_amount, payment_method='mpesa',
+            token='rttr-tok', receipt_number=1,
+        )
+        return receipt, txn
+
+    def test_whole_sale_revert_marks_line_moved_to_tab(self):
+        """The zero-paid (paid_amount<=0) revert case — no split at all,
+        the original transaction is mutated in place. Before this fix,
+        _live_direct_lines() returned None here (nothing it recognised as
+        changed), so the stale static line kept showing as a normal,
+        fully-paid sale."""
+        from core.receipt_views import _live_direct_lines, _direct_lines_total
+        receipt, txn = self._make_receipt_and_txn()
+        Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=txn.id, business=self.biz, paid_amount=0, customer_name='Bosco',
+        )
+        live_lines = _live_direct_lines(receipt)
+        self.assertIsNotNone(live_lines, 'must now detect the moved line as a real change')
+        self.assertEqual(len(live_lines), 1)
+        self.assertEqual(live_lines[0]['moved_to_tab'], 'Bosco')
+        self.assertNotIn('is_paid', live_lines[0])
+        self.assertEqual(_direct_lines_total(live_lines), 0.0, 'not part of this receipt\'s own total until settled')
+
+    def test_partial_revert_marks_only_the_owed_child_line(self):
+        """The paid_amount>0 case — routes through the same split
+        mechanism as Gawanya. The PAID portion must display and count
+        normally; only the split-off OWED child gets moved_to_tab."""
+        from core.receipt_views import _live_direct_lines, _direct_lines_total
+        receipt, txn = self._make_receipt_and_txn()
+        Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=txn.id, business=self.biz, paid_amount=40, customer_name='Bosco',
+        )
+        live_lines = _live_direct_lines(receipt)
+        self.assertIsNotNone(live_lines)
+        self.assertEqual(len(live_lines), 2)
+        paid_line = next(l for l in live_lines if 'moved_to_tab' not in l)
+        owed_line = next(l for l in live_lines if 'moved_to_tab' in l)
+        self.assertEqual(paid_line['subtotal'], 40.0)
+        self.assertEqual(owed_line['moved_to_tab'], 'Bosco')
+        self.assertEqual(owed_line['subtotal'], 60.0)
+        # Total counts the genuinely-paid 40 but not the still-owed 60.
+        self.assertEqual(_direct_lines_total(live_lines), 40.0)
+
+    def test_line_self_heals_to_paid_once_the_tab_entry_is_settled(self):
+        """Once Bosco's tab entry for this item is later settled through
+        the ordinary tab mechanisms, the ORIGINAL receipt must reflect
+        that too — money genuinely collected, just via a different final
+        path — matching every other live-recomputed state in this file."""
+        from core.receipt_views import _live_direct_lines, _direct_lines_total
+        receipt, txn = self._make_receipt_and_txn()
+        _, owed_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=txn.id, business=self.biz, paid_amount=0, customer_name='Bosco',
+        )
+        entry.is_paid = True
+        entry.save(update_fields=['is_paid'])
+        live_lines = _live_direct_lines(receipt)
+        self.assertIsNotNone(live_lines)
+        self.assertTrue(live_lines[0].get('is_paid'))
+        self.assertNotIn('moved_to_tab', live_lines[0])
+        self.assertEqual(_direct_lines_total(live_lines), 100.0, 'now genuinely collected, counted again')
+
+    def test_public_receipt_endpoint_reflects_moved_line_live(self):
+        """End-to-end through the real public_receipt() view — not just
+        the helper function in isolation."""
+        receipt, txn = self._make_receipt_and_txn()
+        Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=txn.id, business=self.biz, paid_amount=0, customer_name='Bosco',
+        )
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Bosco')
+        self.assertContains(resp, 'bado inadaiwa')
+
+    def test_receipt_live_status_poll_reflects_moved_line(self):
+        """End-to-end through the real receipt_live_status() poll endpoint
+        (the 20s live poll) — confirms the SAME fix applies there, not
+        just the initial page render, per Roy's own "in real time" ask."""
+        receipt, txn = self._make_receipt_and_txn()
+        Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=txn.id, business=self.biz, paid_amount=0, customer_name='Bosco',
+        )
+        resp = self.client.get(f'/r/{receipt.token}/live/')
+        self.assertEqual(resp.status_code, 200)
+        d = resp.json()
+        self.assertEqual(d['total'], 0.0)
+        self.assertEqual(d['lines'][0]['moved_to_tab'], 'Bosco')
+
+    def test_gawanya_split_receipt_display_unaffected(self):
+        """Regression lock: an ORDINARY Gawanya split (both resulting
+        transactions genuinely paid, just via two different channels — no
+        tab involved at all) must never be marked moved_to_tab, and both
+        halves must still count fully toward the total, exactly as before
+        this fix."""
+        from core.receipt_views import _live_direct_lines, _direct_lines_total
+        receipt, txn = self._make_receipt_and_txn()
+        Transaction.split_payment_method_locked(
+            txn_id=txn.id, business=self.biz, split_amount=Decimal('30'), new_method='cash',
+        )
+        live_lines = _live_direct_lines(receipt)
+        self.assertIsNotNone(live_lines)
+        for l in live_lines:
+            self.assertNotIn('moved_to_tab', l)
+        self.assertEqual(_direct_lines_total(live_lines), 100.0)
+
+    def test_void_line_still_dropped_entirely_unaffected(self):
+        """Regression lock: the pre-existing void-drop behavior (2026-08-21)
+        must be completely unchanged by this fix."""
+        from core.receipt_views import _live_direct_lines
+        receipt, txn = self._make_receipt_and_txn()
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{txn.id}/void/', {'reason': 'mistake'})
+        live_lines = _live_direct_lines(receipt)
+        self.assertIsNotNone(live_lines)
+        self.assertEqual(live_lines, [])

@@ -250,18 +250,44 @@ def _live_direct_lines(receipt):
     correct_transaction_preset already has its own dedicated, existing
     in-place receipt-line rename (2026-08-01), so it's not duplicated here.
 
+    3. revert_direct_sale_to_tab (↩️ Tengua→Tab, 2026-08-25 live audit —
+       Roy asked plainly whether a payment-method correction "adjusts
+       everywhere the money touches and displays, in real time"). Before
+       this, a reverted line was invisible to this function entirely: the
+       whole-sale (paid_amount<=0) case mutates the ORIGINAL transaction
+       in place with no split at all, so it hit neither the void check
+       (payment_method becomes 'credit', not 'void') nor the split-child
+       path — the line rendered exactly as a normal, fully-paid, complete
+       sale forever, with no indication the item now sits UNPAID on a
+       (possibly different-named) customer's open tab. The partial
+       (paid_amount>0) case DOES route through split_payment_method_
+       locked() like Gawanya, so the split-child mechanics above already
+       applied — but the synthesized child line carried no is_paid/status
+       marker at all, rendering identically to an ordinary paid line, with
+       nothing telling the reader that portion is now owed elsewhere.
+       Every transaction now sold via this function (both the base line's
+       own txn and any split child) is checked for a live BarTabEntry —
+       if reverted-to-tab and STILL unpaid, the line gets `moved_to_tab`
+       (the tab's customer name) instead of a plain subtotal display; if
+       that tab entry has SINCE been settled (paid off through the normal
+       tab mechanisms), it's shown exactly like any other paid line
+       (`is_paid=True`) — money genuinely collected, just via a different
+       final path, self-healing the same way every other live-recomputed
+       state here does.
+
     Deliberately does NOT recompute an UNTOUCHED line's subtotal/name live
     — avoiding the exact kind of live-recompute precision trap this app
     has hit before (Kuku/Chipo Mapato) for the vast majority of lines that
     were never corrected at all. Returns None (meaning: nothing to
     change, use receipt.lines exactly as before) whenever recomputing
     isn't possible — a receipt issued before this fix has no txn_id on
-    any line — or whenever nothing was actually voided or split.
+    any line — or whenever nothing was actually voided, split, or moved
+    to a tab.
     """
     lines = receipt.lines or []
     if not lines or not all(isinstance(l, dict) and l.get('txn_id') for l in lines):
         return None
-    from .models import Transaction as _Txn
+    from .models import BarTabEntry as _BTE, Transaction as _Txn
     txn_ids = [l['txn_id'] for l in lines]
     txns = {
         t.id: t for t in
@@ -271,7 +297,26 @@ def _live_direct_lines(receipt):
     for c in _Txn.objects.filter(split_from_id__in=txn_ids, business_id=receipt.business_id):
         children_by_parent.setdefault(c.split_from_id, []).append(c)
 
-    changed = bool(children_by_parent)
+    all_relevant_ids = list(txn_ids) + [c.id for kids in children_by_parent.values() for c in kids]
+    tab_entries = {
+        e.transaction_id: e
+        for e in _BTE.objects.filter(transaction_id__in=all_relevant_ids).select_related('tab')
+    }
+
+    def _apply_tab_state(line_dict, t):
+        entry = tab_entries.get(t.id)
+        if entry is None:
+            return line_dict
+        new_l = dict(line_dict)
+        if entry.is_paid:
+            new_l['is_paid'] = True
+            new_l.pop('moved_to_tab', None)
+        else:
+            new_l['moved_to_tab'] = entry.tab.customer_name
+            new_l.pop('is_paid', None)
+        return new_l
+
+    changed = bool(children_by_parent) or bool(tab_entries)
     live_lines = []
     for l in lines:
         t = txns.get(l['txn_id'])
@@ -281,20 +326,37 @@ def _live_direct_lines(receipt):
         if l['txn_id'] in children_by_parent:
             new_l = dict(l)
             new_l['subtotal'] = float(t.revenue())
-            live_lines.append(new_l)
+            live_lines.append(_apply_tab_state(new_l, t))
         else:
-            live_lines.append(l)
+            live_lines.append(_apply_tab_state(l, t))
         for child in children_by_parent.get(l['txn_id'], []):
-            live_lines.append({
+            live_lines.append(_apply_tab_state({
                 'name': l.get('name', ''),
                 'qty': l.get('qty', 1),
                 'subtotal': float(child.revenue()),
                 'txn_id': child.id,
-            })
+            }, child))
 
     if not changed:
         return None
     return live_lines
+
+
+def _direct_lines_total(direct_lines):
+    """Sum a _live_direct_lines() result into the receipt's own displayed
+    total — excluding a line still sitting UNPAID on a tab it was reverted
+    to (moved_to_tab set, is_paid not yet True). That amount isn't really
+    part of THIS completed sale anymore; counting it would silently
+    overstate what the customer paid here. A line that's since been
+    settled (is_paid True) is counted normally — the money is genuinely
+    collected, just via a different final path. Shared by both
+    public_receipt() (initial render) and receipt_live_status() (the 20s
+    poll) so the two can never compute a different total for the same
+    state."""
+    return round(sum(
+        float(l.get('subtotal') or 0) for l in direct_lines
+        if not (l.get('moved_to_tab') and not l.get('is_paid'))
+    ), 2)
 
 
 def _get_live_tab_state(receipt):
@@ -558,7 +620,7 @@ def public_receipt(request, token):
         _direct_lines = _live_direct_lines(receipt)
         if _direct_lines is not None:
             receipt.lines = _direct_lines
-            receipt.total = round(sum(float(l.get('subtotal') or 0) for l in _direct_lines), 2)
+            receipt.total = _direct_lines_total(_direct_lines)
 
     station_debt = None
     if tab_status == 'DEBT':
@@ -674,7 +736,7 @@ def receipt_live_status(request, token):
         # full page reload.
         _direct_lines = _live_direct_lines(receipt)
         if _direct_lines is not None:
-            _direct_total = round(sum(float(l.get('subtotal') or 0) for l in _direct_lines), 2)
+            _direct_total = _direct_lines_total(_direct_lines)
             return JsonResponse({
                 'is_live': False, 'tab_status': tab_status,
                 'lines': _direct_lines, 'total': _direct_total,
