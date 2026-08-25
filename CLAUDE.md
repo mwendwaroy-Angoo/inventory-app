@@ -8609,3 +8609,51 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   plus the full pre-existing `RevertDirectSaleToTabTest` suite re-run and
   confirmed passing against the pinned-`sale_amount`/entry-amount change.
   No migrations. 2404 tests pass (core + accounts).
+- Fix: "Tengua→Tab" still failing — root-caused from a live screenshot
+  (2026-08-25, third same-day follow-up). Roy: reverting a bar-item sale
+  from Quick Sell's "Bar Orders" panel now correctly disappeared from
+  "Malipo ya Hivi Karibuni" (confirming the previous two fixes worked),
+  but the resulting tab was "nowhere to be seen on the tabs drawer" —
+  he wanted it discoverable so the original staffer could clear it via
+  "Geuza Deni". Root cause: `revert_direct_sale_to_tab_locked()` derived
+  the new `BarTab.source` from the ITEM's own station (bar vs kitchen,
+  via `item.store.is_kitchen`) — for "White Cap" (not a kitchen item)
+  that's `'bar'`. But `tabs_list()` (the endpoint powering all three
+  boards' tabs drawers) filters STRICTLY: Quick Sell's own drawer
+  (`?ctx=qs`) only ever shows `BarTab.source='qs'`; Bar/Kitchen Board's
+  drawer only shows `source__in=['bar','kitchen']` — completely
+  EXCLUDING 'qs'. Quick Sell's own tab-CREATION code has always used
+  `source='qs'` unconditionally regardless of item type (confirmed by
+  reading its own Recent Payments panel, which requests `station=bar`
+  items specifically, yet its OWN tabs are always `source='qs'`) — 'qs'
+  is a genuinely separate axis from bar/kitchen, not something
+  derivable from the item at all. A tab created with the item's station
+  was therefore invisible in the exact drawer Roy was looking at, and
+  would only ever have shown up in Bar Board's own drawer instead.
+  Fixed by threading an explicit `station` parameter through the whole
+  chain — the view (`revert_direct_sale_to_tab`) now reads a `station`
+  POST field (validated against `{'bar','kitchen','qs'}`, falling back
+  to `None` on anything else) and passes it to `Transaction.revert_
+  direct_sale_to_tab_locked()`'s new `station=` kwarg, which uses it
+  directly for `BarTab.source` when valid, falling back to the old
+  item-derived value only when no valid station is given (defensive
+  default for a stale/uncached client). Each of the three templates now
+  sends its OWN station explicitly in the POST body — `bar_board.html`→
+  `'bar'`, `kitchen_board.html`→`'kitchen'`, `quick_sell.html`→`'qs'` —
+  matching exactly which drawer that template's own tab-creation code
+  already uses, so the reverted tab always lands in the SAME drawer the
+  correcting staffer is actually looking at, regardless of which board
+  they're using or what station the underlying item belongs to. The
+  existing item-station permission check (`_allowed_tab_sources`) is
+  UNCHANGED — deliberately kept separate from this purely-cosmetic
+  routing decision, since who's allowed to act on a sale is a different
+  question from which drawer displays the result. 6 new tests — 3 at
+  the model layer (`test_model_station_param_routes_tab_to_the_right_
+  drawer`, `test_model_invalid_station_falls_back_to_item_derived_
+  source`, `test_model_no_station_falls_back_to_item_derived_source`)
+  and 2 at the view layer including a full round-trip through the real
+  `tabs_list()` endpoint proving the tab is genuinely visible via
+  `/bar/tabs/?ctx=qs` after the fix (`test_view_station_param_routes_
+  tab_to_the_right_drawer`), plus a backward-compat regression lock for
+  a client that never sends `station=` at all. No migrations. 2409 tests
+  pass (core + accounts).

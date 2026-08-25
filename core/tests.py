@@ -43630,6 +43630,39 @@ class RevertDirectSaleToTabTest(TestCase):
                 paid_amount=Decimal('50'), customer_name='Bosco',
             )
 
+    # ── 2026-08-25, second same-day follow-up: the tab landed in the
+    # WRONG drawer entirely (Roy: reverted from Quick Sell's "Bar Orders"
+    # panel — correctly disappeared from Recent Payments, but was
+    # "nowhere to be seen on the tabs drawer" there). Root cause: the
+    # item's own station (bar, since it isn't a kitchen item) was used
+    # for BarTab.source, but Quick Sell's own tabs drawer only ever shows
+    # source='qs' — completely orthogonal to bar/kitchen. ─────────────
+    def test_model_station_param_routes_tab_to_the_right_drawer(self):
+        _, _, tab, _ = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=self.txn.id, business=self.biz,
+            paid_amount=Decimal('50'), customer_name='Bosco', station='qs',
+        )
+        self.assertEqual(
+            tab.source, 'qs',
+            'a correction made from Quick Sell must create a source=qs tab, '
+            "not source=bar (the item's own station) — otherwise it's "
+            "invisible in Quick Sell's own tabs drawer",
+        )
+
+    def test_model_invalid_station_falls_back_to_item_derived_source(self):
+        _, _, tab, _ = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=self.txn.id, business=self.biz,
+            paid_amount=Decimal('50'), customer_name='Bosco', station='bogus',
+        )
+        self.assertEqual(tab.source, 'bar')
+
+    def test_model_no_station_falls_back_to_item_derived_source(self):
+        _, _, tab, _ = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=self.txn.id, business=self.biz,
+            paid_amount=Decimal('50'), customer_name='Bosco',
+        )
+        self.assertEqual(tab.source, 'bar')
+
     # ── 2026-08-25 follow-up: paid_amount=0 — nothing confirmed collected,
     # the WHOLE sale reverts to the tab unresolved (Roy: "the staff who
     # claimed it was paid for never confirmed the mode of payment used
@@ -43776,6 +43809,40 @@ class RevertDirectSaleToTabTest(TestCase):
         self.assertEqual(data['owed_amount'], 100.0)
         tab = BarTab.objects.get(id=data['tab_id'])
         self.assertEqual(tab.unpaid_total(), Decimal('100.00'))
+
+    def test_view_station_param_routes_tab_to_the_right_drawer(self):
+        """Literal reported scenario: reverting from Quick Sell must land
+        the tab in source='qs' — visible in Quick Sell's own drawer via
+        /bar/tabs/?ctx=qs, not source='bar' (the item's own station)."""
+        self.client.force_login(self.corrector)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '0', 'customer_name': 'Bosco', 'station': 'qs',
+            'idempotency_token': 'rtt-tok-station-qs',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        tab = BarTab.objects.get(id=data['tab_id'])
+        self.assertEqual(tab.source, 'qs')
+
+        # Confirm it's actually visible through the real tabs_list() endpoint
+        # Quick Sell's own drawer calls (?ctx=qs), not just the stored field.
+        list_resp = self.client.get('/bar/tabs/?ctx=qs')
+        tab_ids = [t['id'] for t in list_resp.json().get('tabs', [])]
+        self.assertIn(tab.id, tab_ids)
+
+    def test_view_no_station_defaults_to_item_station_bar_drawer(self):
+        """Backward-compat: an old/uncached client that never sends
+        station= still gets a working tab, just under the item's own
+        station (visible from Bar Board's drawer, not Quick Sell's)."""
+        self.client.force_login(self.corrector)
+        resp = self.client.post(f'/bar/transactions/{self.txn.id}/revert-to-tab/', {
+            'paid_amount': '0', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-station-none',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        tab = BarTab.objects.get(id=data['tab_id'])
+        self.assertEqual(tab.source, 'bar')
 
     def test_view_blocks_staff_with_no_open_shift(self):
         no_shift_staff = User.objects.create_user(username='rtt_noshift', password='x')

@@ -3836,6 +3836,7 @@
     fd.append('paid_amount', amt);
     fd.append('customer_name', name.trim());
     fd.append('reason', 'Mauzo yaliyorekodiwa kimakosa kama yamelipwa yote');
+    fd.append('station', 'kitchen');
     fd.append('idempotency_token', (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()));
     fd.append('csrfmiddlewaretoken', (document.querySelector('[name=csrfmiddlewaretoken]')||{}).value||'');
     fetch('/bar/transactions/' + txnId + '/revert-to-tab/', {

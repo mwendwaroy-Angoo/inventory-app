@@ -3559,6 +3559,7 @@
         if (!name || !name.trim()) { qsShowToast('Jina la mteja linahitajika.', true); return; }
         qsPost('/bar/transactions/' + txnId + '/revert-to-tab/', {
             paid_amount: amt, customer_name: name.trim(), reason: 'Mauzo yaliyorekodiwa kimakosa kama yamelipwa yote',
+            station: 'qs',
             idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
         })
             .then(function (r) { return r.json(); })

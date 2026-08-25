@@ -2300,6 +2300,23 @@ def revert_direct_sale_to_tab(request, txn_id):
     so the WHOLE sale reverts to the tab unresolved rather than being
     split into a paid/owed pair. See Transaction.revert_direct_sale_to_
     tab_locked()'s own docstring for the full mechanism.
+
+    `station` (2026-08-25, second same-day follow-up — Roy: reverted a
+    bar-item sale from Quick Sell's "Bar Orders" panel, the correction
+    succeeded and the row correctly left "Malipo ya Hivi Karibuni", but
+    the resulting tab was "nowhere to be seen on the tabs drawer"): this
+    endpoint is shared by all three boards, and Quick Sell's own tabs
+    drawer only ever shows BarTab.source='qs' — completely separate from
+    'bar'/'kitchen', regardless of whether the underlying item is itself
+    a bar or kitchen one (Quick Sell's Recent Payments panel only ever
+    queries station=bar items, but always creates ITS OWN tabs as
+    source='qs'). Read explicitly from the client (each of the three
+    templates sends its own — bar_board→'bar', kitchen_board→'kitchen',
+    quick_sell→'qs') and passed straight through to the model layer,
+    which uses it ONLY to pick where the new/reused tab lives — never as
+    a permission decision (the existing station check below, based on
+    the item's own real station, is unchanged and is what actually gates
+    who may act).
     """
     up = _get_up(request)
     if not up:
@@ -2335,6 +2352,9 @@ def revert_direct_sale_to_tab(request, txn_id):
     customer_name = (request.POST.get('customer_name') or '').strip()
     paid_amount_raw = (request.POST.get('paid_amount') or '').strip()
     reason = (request.POST.get('reason') or '').strip()
+    station = (request.POST.get('station') or '').strip()
+    if station not in ('bar', 'kitchen', 'qs'):
+        station = None
 
     if not customer_name:
         return JsonResponse({'ok': False, 'error': 'Jina la mteja linahitajika.'}, status=400)
@@ -2367,7 +2387,7 @@ def revert_direct_sale_to_tab(request, txn_id):
     try:
         paid_txn, owed_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
             txn_id=txn.id, business=up.business,
-            paid_amount=paid_amount, customer_name=customer_name,
+            paid_amount=paid_amount, customer_name=customer_name, station=station,
         )
     except ValueError as e:
         return JsonResponse({'ok': False, 'error': str(e)}, status=400)

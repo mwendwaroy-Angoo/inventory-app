@@ -1857,7 +1857,7 @@ class Transaction(models.Model):
             return all_ids
 
     @classmethod
-    def revert_direct_sale_to_tab_locked(cls, txn_id, business, paid_amount, customer_name):
+    def revert_direct_sale_to_tab_locked(cls, txn_id, business, paid_amount, customer_name, station=None):
         """Undo a direct sale that was mistakenly recorded as fully paid,
         when only PART of it — or NONE of it, per the 2026-08-25 follow-up
         below — was genuinely collected (2026-08-24 live request, Roy —
@@ -1913,11 +1913,26 @@ class Transaction(models.Model):
         merge_locked): searches for an already-OPEN tab under this exact
         customer name on the SAME station before creating a new one, so
         reverting a second item for the same customer lands on their
-        existing tab instead of fragmenting into two. Station (bar vs
-        kitchen) is inferred the same way correct_transaction_payment_
-        method/split_transaction_payment_method already do — from the
-        item's own store — matching the same permission gate the view
-        layer checks before calling this.
+        existing tab instead of fragmenting into two.
+
+        `station` (2026-08-25, second same-day follow-up — Roy: "it has
+        gotten out of recent sales section but it is still nowhere to be
+        seen on the tabs drawer") is the counter the STAFFER performing
+        the correction is actually looking at — 'bar'/'kitchen'/'qs',
+        sent explicitly by the view from which board/drawer the button
+        was tapped on. This is DELIBERATELY NOT the same thing as the
+        item's own is_kitchen station (used only for the view's own
+        permission gate, unchanged) — tabs_list()'s read side filters
+        strictly by BarTab.source (Quick Sell's own drawer, ?ctx=qs, only
+        ever shows source='qs' tabs; Bar/Kitchen Board's drawer only ever
+        shows source__in=['bar','kitchen']), so a tab created with the
+        WRONG source is invisible in the very drawer the staffer is
+        looking at — confirmed exactly this: the item's own station
+        (bar, since "White Cap" isn't a kitchen item) was used for a
+        correction made from Quick Sell, landing the new tab in
+        source='bar' — invisible from Quick Sell's own source='qs'-only
+        drawer. Falls back to the item's own station when no valid value
+        is given (defensive default for any future caller).
 
         Raises ValueError — never partially applies. Returns
         (paid_txn_or_None, owed_txn, tab, entry). paid_txn is None
@@ -1980,11 +1995,14 @@ class Transaction(models.Model):
                 txn.save(update_fields=['payment_method', 'recipient', 'sale_amount'])
                 owed_txn = txn
 
-            try:
-                is_kitchen = bool(owed_txn.item.store.is_kitchen)
-            except Exception:
-                is_kitchen = False
-            source = 'kitchen' if is_kitchen else 'bar'
+            if station in ('bar', 'kitchen', 'qs'):
+                source = station
+            else:
+                try:
+                    is_kitchen = bool(owed_txn.item.store.is_kitchen)
+                except Exception:
+                    is_kitchen = False
+                source = 'kitchen' if is_kitchen else 'bar'
 
             tab = BarTab.objects.select_for_update().filter(
                 business=business, customer_name__iexact=customer_name,

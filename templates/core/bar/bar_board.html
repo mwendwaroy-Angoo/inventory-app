@@ -3841,6 +3841,7 @@
     if (!name || !name.trim()) { showToast('Jina la mteja linahitajika.'); return; }
     post('/bar/transactions/' + txnId + '/revert-to-tab/', {
       paid_amount: amt, customer_name: name.trim(), reason: 'Mauzo yaliyorekodiwa kimakosa kama yamelipwa yote',
+      station: 'bar',
       idempotency_token: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random()),
     })
       .then(function (r) { return r.json(); })
