@@ -43663,6 +43663,37 @@ class RevertDirectSaleToTabTest(TestCase):
         self.assertIsNone(paid_txn)
         self.assertEqual(float(owed_txn.sale_amount), 100.0)
 
+    def test_model_zero_paid_works_when_original_sale_amount_is_none(self):
+        """2026-08-25 live regression, from a screen recording (Roy, "White
+        Cap"): a PLAIN (non-preset) Quick Sell item checkout always leaves
+        Transaction.sale_amount NULL (core/views.py's quick_sell() only
+        sets it for a preset/stock_qty line — see `sale_amt = None`
+        default there), relying on revenue()'s selling_price×qty fallback.
+        The full-revert branch used to read owed_txn.sale_amount directly
+        into BarTabEntry.amount (a NOT NULL field) — None violated that
+        constraint, silently rolling back the whole atomic block, so the
+        button appeared to do nothing at all. Reproduces the exact
+        production shape (no sale_amount set at all) rather than the
+        every-other-test convention of always setting it explicitly."""
+        plain_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            payment_method='mpesa', recorded_by=self.original_seller,
+            # sale_amount deliberately omitted — defaults to None, matching
+            # a real plain-item Quick Sell checkout exactly.
+        )
+        self.assertIsNone(plain_txn.sale_amount)
+        paid_txn, owed_txn, tab, entry = Transaction.revert_direct_sale_to_tab_locked(
+            txn_id=plain_txn.id, business=self.biz,
+            paid_amount=0, customer_name='Bosco',
+        )
+        self.assertIsNone(paid_txn)
+        owed_txn.refresh_from_db()
+        # item.selling_price (100) × qty (1) — revenue()'s fallback, now
+        # pinned as a real value rather than left None.
+        self.assertEqual(float(owed_txn.sale_amount), 100.0)
+        self.assertEqual(entry.amount, Decimal('100.00'))
+        self.assertEqual(tab.unpaid_total(), Decimal('100.00'))
+
     # ── View layer ───────────────────────────────────────────────────
     def test_view_reverts_and_returns_tab_info(self):
         self.client.force_login(self.corrector)
@@ -43725,6 +43756,26 @@ class RevertDirectSaleToTabTest(TestCase):
         self.assertEqual(tab.served_by_id, self.original_seller.id)
         self.txn.refresh_from_db()
         self.assertEqual(self.txn.payment_method, 'credit')
+
+    def test_view_zero_paid_via_http_succeeds_when_sale_amount_is_none(self):
+        """Full end-to-end reproduction of the reported failure over real
+        HTTP, with the exact production transaction shape (no sale_amount
+        set — see test_model_zero_paid_works_when_original_sale_amount_
+        is_none)."""
+        plain_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            payment_method='mpesa', recorded_by=self.original_seller,
+        )
+        self.client.force_login(self.corrector)
+        resp = self.client.post(f'/bar/transactions/{plain_txn.id}/revert-to-tab/', {
+            'paid_amount': '0', 'customer_name': 'Bosco',
+            'idempotency_token': 'rtt-tok-zero-noamt',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertEqual(data['owed_amount'], 100.0)
+        tab = BarTab.objects.get(id=data['tab_id'])
+        self.assertEqual(tab.unpaid_total(), Decimal('100.00'))
 
     def test_view_blocks_staff_with_no_open_shift(self):
         no_shift_staff = User.objects.create_user(username='rtt_noshift', password='x')

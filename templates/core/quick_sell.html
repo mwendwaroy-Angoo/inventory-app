@@ -631,6 +631,31 @@
         font-size:0.72rem; font-weight:600; cursor:pointer;
     }
     .qs-partial-btn:disabled { opacity:0.5; cursor:not-allowed; }
+    /* 2026-08-25 fix: qsShowToast() used to write into #qsSuccessTitle —
+       the checkout-success screen's OWN heading, only ever visible right
+       after a checkout completes — so every message it fired (73 call
+       sites, including every Tabs-drawer correction: Gawanya/Deni/
+       Tengua->Tab/Futa/Tarehe/revoke) was silently invisible whenever
+       triggered from the Tabs offcanvas or Recent Payments panel, which
+       sit on top of and hide that screen entirely. Roy: "nothing seems
+       to happen" — the action was completing (or correctly failing) the
+       whole time, just with zero visible feedback either way. Dedicated
+       fixed-position toast, z-index above Bootstrap's offcanvas (1045),
+       matching bar_board.html's #keg-toast exactly for visual parity. */
+    #qs-real-toast {
+        display: none;
+        position: fixed;
+        top: 80px; right: 20px;
+        z-index: 2000;
+        background: #2a2a2a;
+        border: 1px solid #c9a84c;
+        border-radius: 10px;
+        padding: 0.75rem 1.25rem;
+        color: #f0ece4;
+        font-size: 0.88rem;
+        max-width: 300px;
+        transition: opacity 0.4s;
+    }
 </style>
 {% endblock %}
 
@@ -744,6 +769,8 @@
     <!-- Cart items display -->
     <div class="qs-cart-items" id="qsCartItems"></div>
 </div>
+
+<div id="qs-real-toast"></div>
 
 <!-- Quantity Modal -->
 <div class="qs-modal-overlay" id="qsModal">
@@ -2931,14 +2958,28 @@
       };
     })();
 
-    function qsShowToast(msg) {
-        /* Reuse the qs success title briefly or fall back to alert */
-        var t = document.getElementById('qsSuccessTitle');
-        if (t) {
-            var prev = t.textContent;
-            t.textContent = msg;
-            setTimeout(function () { t.textContent = prev; }, 2500);
-        }
+    // 2026-08-25 fix (Roy: "nothing seems to happen" on Tengua->Tab/Deni,
+    // tapped from the Tabs drawer) — this used to write into
+    // #qsSuccessTitle, the checkout-success screen's own heading, which
+    // is never visible while the Tabs offcanvas/Recent Payments panel is
+    // open on top of it, so every one of this function's 70+ call sites
+    // (every correction button in the drawer) fired with zero visible
+    // feedback, success or failure alike. Real fixed-position toast now,
+    // matching bar_board.html's #keg-toast. `isError` (many call sites
+    // already pass a second `true` arg that this never used) tints it.
+    function qsShowToast(msg, isError) {
+        var el = document.getElementById('qs-real-toast');
+        if (!el) return;
+        el.textContent = msg;
+        el.style.borderColor = isError ? '#c0395a' : '#c9a84c';
+        el.style.color = isError ? '#e29aab' : '#f0ece4';
+        el.style.display = 'block';
+        el.style.opacity = '1';
+        clearTimeout(el._qsToastTimer);
+        el._qsToastTimer = setTimeout(function () {
+            el.style.opacity = '0';
+            setTimeout(function () { el.style.display = 'none'; }, 400);
+        }, isError ? 4500 : 2500);
     }
 
     window.qsOpenTabsDrawer = function () {

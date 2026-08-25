@@ -8552,3 +8552,60 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   reported scenario reproduced end to end — plus the pre-existing partial
   -split tests updated for the renamed parameter). No migrations. 2402
   tests pass (core + accounts).
+- Fix: "Tengua→Tab" still silently failing — root-caused from a screen
+  recording (2026-08-25, same-day follow-up). Roy sent a 24s screen
+  recording of Quick Sell's "Bar Orders" Tabs drawer: he tapped
+  "↩️ Tengua→Tab" on a "White Cap" direct sale, the `0`-default prompt
+  (confirming the previous fix HAD deployed), entered a customer name,
+  tapped OK — and the panel just silently reverted to its exact original
+  state, both "White Cap" rows unchanged, no toast, no error. He also
+  tried "🤝 Deni" as a fallback — "still nothing." Extracted frames with
+  ffmpeg (installed fresh in this session — not present by default) and
+  traced two REAL, distinct bugs, found by reading the actual code rather
+  than guessing from the video alone. **(1) The actual data bug**:
+  `revert_direct_sale_to_tab_locked()`'s `paid_amount<=0` branch built
+  `BarTabEntry.amount=owed_txn.sale_amount` directly — but
+  `Transaction.sale_amount` is nullable, and `core/views.py`'s
+  `quick_sell()` checkout ONLY sets it for a preset/stock_qty cart line
+  (`sale_amt = None` is the literal default for a plain item tap,
+  relying on `revenue()`'s `selling_price × qty` fallback instead) — "White
+  Cap" is exactly a plain, non-preset direct sale. `BarTabEntry.amount`
+  is NOT NULL, so this raised an IntegrityError, which rolled back the
+  WHOLE atomic block (including the `payment_method='credit'` flip) —
+  net visible effect: literally nothing changed, matching the recording
+  exactly. My own test fixtures never caught this because every one of
+  them explicitly set `sale_amount=Decimal(...)` on the fixture
+  transaction, unlike a real Quick Sell checkout. Fixed by pinning
+  `txn.sale_amount = Decimal(str(round(original_total, 2)))` explicitly
+  in the zero-paid branch (also closes a subtler correctness gap: without
+  this, `revenue()` would keep recomputing from `item.selling_price` at
+  READ time, so a later price edit on the item would silently change what
+  this now-historical sale reads as — unlike every other snapshot this
+  app takes at sale time) and switched `BarTabEntry.amount` to always
+  derive from `revenue()` rather than `sale_amount` directly, as a
+  defense-in-depth safety net. **(2) A separate, pre-existing UX bug that
+  made both the real failure AND any future error/success message
+  invisible**: `quick_sell.html`'s `qsShowToast(msg)` — unlike
+  `bar_board.html`'s `#keg-toast` and `kitchen_board.html`'s `#kb-toast`,
+  both real fixed-position toast elements — wrote into `#qsSuccessTitle`,
+  the CHECKOUT-SUCCESS SCREEN'S OWN HEADING, which is never visible while
+  the Tabs offcanvas/Recent Payments panel sits open on top of it. All 73
+  call sites of `qsShowToast` in this file — every correction button in
+  the Tabs drawer: Gawanya, Deni, Tengua→Tab, Futa, Tarehe, revoke — have
+  been silently firing into a hidden element this whole time whenever
+  triggered from inside the drawer, success or failure alike; 35 of those
+  call sites already passed a second `isError` argument the old
+  implementation never even read. Replaced with a real fixed-position
+  toast (`#qs-real-toast`, `z-index:2000` — above Bootstrap's offcanvas at
+  1045 — matching `#keg-toast`'s exact visual convention), now honoring
+  `isError` for red/gold styling. This means Roy's "Deni" fallback attempt
+  was very likely ALSO either succeeding or correctly failing the whole
+  time — just with zero visible feedback either way, which is why it
+  "looked like nothing happened" there too. 2 new tests reproducing the
+  exact `sale_amount=None` production shape — at the model layer
+  (`test_model_zero_paid_works_when_original_sale_amount_is_none`) and as
+  a full HTTP round-trip
+  (`test_view_zero_paid_via_http_succeeds_when_sale_amount_is_none`) —
+  plus the full pre-existing `RevertDirectSaleToTabTest` suite re-run and
+  confirmed passing against the pinned-`sale_amount`/entry-amount change.
+  No migrations. 2404 tests pass (core + accounts).

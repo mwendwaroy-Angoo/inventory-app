@@ -1958,10 +1958,26 @@ class Transaction(models.Model):
                 # Nothing confirmed collected — the WHOLE sale reverts,
                 # unresolved. No sibling transaction: the original one
                 # simply becomes the tab's own credit entry.
+                #
+                # sale_amount is nullable — a PLAIN (non-preset) item sale
+                # never sets it, relying on revenue()'s selling_price×qty
+                # fallback instead (found 2026-08-25, live report: "White
+                # Cap" reverted to KES 0/nothing happened — sale_amount
+                # was None, so BarTabEntry.amount below would have been
+                # None too, violating its NOT NULL constraint and rolling
+                # back the whole atomic block silently). Pin it explicitly
+                # to the already-computed original_total instead of
+                # reading sale_amount directly — this ALSO fixes a second,
+                # subtler issue: without it, revenue() would keep
+                # recomputing from item.selling_price at read time, so a
+                # LATER price change on the item would silently change
+                # what this now-historical sale reads as, unlike every
+                # other snapshot this app takes at sale time.
                 paid_txn = None
                 txn.payment_method = 'credit'
                 txn.recipient = customer_name
-                txn.save(update_fields=['payment_method', 'recipient'])
+                txn.sale_amount = Decimal(str(round(original_total, 2)))
+                txn.save(update_fields=['payment_method', 'recipient', 'sale_amount'])
                 owed_txn = txn
 
             try:
@@ -1984,7 +2000,11 @@ class Transaction(models.Model):
             entry = BarTabEntry.objects.create(
                 tab=tab, transaction=owed_txn,
                 description=owed_txn.item.description,
-                amount=owed_txn.sale_amount,
+                # revenue() (never sale_amount directly) — both branches
+                # above pin sale_amount now, but this stays the safe,
+                # always-non-null read (matches the NOT NULL constraint
+                # on BarTabEntry.amount) regardless.
+                amount=Decimal(str(round(float(owed_txn.revenue()), 2))),
                 is_paid=False,
             )
             return paid_txn, owed_txn, tab, entry
