@@ -44687,14 +44687,138 @@ class StockVarianceTheftVerdictTest(TestCase):
         self.assertEqual(self.item.current_balance(), balance_before - Decimal('5'))
         self.assertEqual(self.item.current_balance(), Decimal('15'))
 
-    def test_first_dismiss_increase_direction_creates_receipt(self):
-        svq = self._make_variance(direction=self.StockVarianceQuery.INCREASE, book=Decimal('20'), actual=Decimal('25'))
-        resp = self._dismiss(svq)
+    def _make_increase_variance(self, book=Decimal('20'), actual=Decimal('25')):
+        return self._make_variance(direction=self.StockVarianceQuery.INCREASE, book=book, actual=actual)
+
+    # ── INCREASE direction (2026-08-26, same-day redesign): never theft —
+    # always reasoned about as an unrecorded RECEIPT. ──────────────────────
+
+    def test_increase_accept_creates_receipt_with_default_cost_price(self):
+        # No owner_cost_price given — falls back to the item's CURRENT
+        # cost_price ("like the previous receipt"), per Roy's own wording.
+        svq = self._make_increase_variance()
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'receipt',
+        })
         self.assertTrue(resp.json()['ok'], resp.json())
         svq.refresh_from_db()
         self.assertEqual(svq.corrective_txn.type, 'Receipt')
         self.assertEqual(svq.corrective_txn.qty, Decimal('5'))
         self.assertEqual(self.item.current_balance(), Decimal('25'))
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('60'))  # unchanged, already the default
+        self.assertFalse(svq.compliance_noted)
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+
+    def test_increase_accept_with_explicit_cost_price_updates_item(self):
+        svq = self._make_increase_variance()
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'receipt', 'owner_cost_price': '75.50',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('75.50'))
+
+    def test_increase_accept_never_asks_for_sale_type(self):
+        # The old (pre-2026-08-26) code path used to ignore direction and
+        # always create a Receipt regardless of owner_response_type — this
+        # locks in that cash/mpesa/credit language plays no role at all.
+        svq = self._make_increase_variance()
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'cash',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertEqual(svq.corrective_txn.type, 'Receipt')
+        self.assertEqual(svq.corrective_txn.payment_method, '')
+
+    def test_increase_dismiss_creates_no_correction_and_no_theft_consequence(self):
+        svq = self._make_increase_variance()
+        balance_before = self.item.current_balance()
+        resp = self._dismiss(svq, note='Sikuamini kuwa kilipokewa')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertIsNone(svq.corrective_txn)
+        self.assertFalse(svq.owner_accepted)
+        self.assertFalse(svq.compliance_noted)  # never a theft/performance strike
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+        self.assertIsNone(svq.dispute_deadline)  # never enters DISPUTED
+        self.assertEqual(self.item.current_balance(), balance_before)  # stock untouched
+
+    def test_increase_dismiss_never_tagged_theft_or_disputed(self):
+        from core.stock_take_views import item_has_pending_variance
+        svq = self._make_increase_variance()
+        self._dismiss(svq)
+        svq.refresh_from_db()
+        self.assertNotEqual(svq.status, self.StockVarianceQuery.DISPUTED)
+        # Item unlocks immediately regardless.
+        self.assertFalse(item_has_pending_variance(self.item.id))
+
+    def test_increase_dismiss_notifies_staff_without_theft_wording(self):
+        svq = self._make_increase_variance()
+        self._dismiss(svq)
+        notif = Notification.objects.filter(
+            user=self.staff_user, title__icontains='Hesabu Haikukubaliwa',
+        ).first()
+        self.assertIsNotNone(notif)
+        self.assertIn('SI tofauti ya wizi', notif.message)
+
+    @patch('core.stock_take_views.send_sms_notification_async')
+    def test_increase_dismiss_never_sends_sms(self, mock_sms):
+        # Unlike the decrease theft verdict (which SMSes urgently), a
+        # neutral "not accepted" carries no urgency.
+        svq = self._make_increase_variance()
+        self._dismiss(svq)
+        self.assertFalse(mock_sms.called)
+
+    def test_increase_dismiss_after_accept_never_reverses_the_receipt(self):
+        # Owner accepted (Receipt created), later reconsiders to "not
+        # accepted" — Roy's "never touch the stock a second time" rule
+        # applies here too, even without any theft framing to walk back.
+        svq = self._make_increase_variance()
+        self._accept(svq)
+        svq.refresh_from_db()
+        original_txn_id = svq.corrective_txn_id
+        balance_after_accept = self.item.current_balance()
+
+        resp = self._dismiss(svq, note='Nimebadilisha wazo')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertFalse(svq.owner_accepted)
+        self.assertFalse(svq.compliance_noted)
+        self.assertEqual(svq.corrective_txn_id, original_txn_id)  # never reversed
+        self.assertEqual(self.item.current_balance(), balance_after_accept)
+
+    def test_increase_accept_after_dismiss_performs_the_deferred_receipt(self):
+        # First dismiss (no correction created), then reconsider to accept
+        # — the Receipt must be created NOW, since none exists yet. This is
+        # exactly why `has_correction` (not `owner_accepted is not None`)
+        # is the real signal for whether 'accept' still needs to DO the
+        # correction.
+        svq = self._make_increase_variance()
+        self._dismiss(svq)
+        svq.refresh_from_db()
+        self.assertIsNone(svq.corrective_txn)
+        balance_before = self.item.current_balance()
+
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'receipt', 'owner_cost_price': '65',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertIn('MAREKEBISHO', resp.json()['message'])
+        svq.refresh_from_db()
+        self.assertIsNotNone(svq.corrective_txn)
+        self.assertEqual(svq.corrective_txn.type, 'Receipt')
+        self.assertTrue(svq.owner_accepted)
+        self.assertEqual(self.item.current_balance(), balance_before + Decimal('5'))
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('65'))
+
+    def test_increase_never_reaches_finalize_now(self):
+        svq = self._make_increase_variance()
+        self._dismiss(svq)
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'finalize_now'})
+        self.assertFalse(resp.json()['ok'])
 
     def test_theft_tagged_transaction_counts_as_a_real_loss_unlike_adj_noloss(self):
         # Deliberately NOT excluded from P&L/analytics — a real loss, unlike
@@ -45121,3 +45245,269 @@ class VarianceLossKesDisputedExclusionTest(TestCase):
         contrib = _staff_contribution_helper(self.staff_profile, self.biz)
         self.assertEqual(contrib['variance_loss_kes'], 400)
         self.assertEqual(len(contrib['unaffirmed_variances']), 1)
+
+
+class IncreaseVariancePresetMatchingTest(TestCase):
+    """2026-08-26 same-day follow-up (Roy, live — Blue Ice showing a +0.06
+    increase variance and offered a flat 'accept as receipt' with no regard
+    for presets): 'the cost price division should be according to preset'
+    — a variance matching a configured preset's own quantity_consumed
+    (a portion of a bottle, e.g. Robo=0.25) routes the accept-time cost
+    into THAT preset's own cost_price, never the item's flat whole-bottle
+    cost_price. A variance matching NOTHING (a whole number, or an odd
+    fraction like the reported 0.06 — very likely accumulated preset-
+    fraction drift, see diagnose_stock_shortfalls' own 2026-08-21 finding)
+    falls back to the original flat item.cost_price behaviour."""
+
+    def setUp(self):
+        from core.models import StockVarianceQuery, StockTake
+        self.StockVarianceQuery = StockVarianceQuery
+        self.biz = Business.objects.create(name='Preset Match Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='pmatch_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Blue Ice',
+            material_no='PMATCH-01', unit='btl', selling_price=Decimal('200'),
+            cost_price=Decimal('1200'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.robo = ItemPortionPreset.objects.create(
+            item=self.item, label='Robo', price=Decimal('350'),
+            quantity_consumed=Decimal('0.25'),
+        )
+        self.nusu = ItemPortionPreset.objects.create(
+            item=self.item, label='Nusu', price=Decimal('650'),
+            quantity_consumed=Decimal('0.5'),
+        )
+        self.stock_take = StockTake.objects.create(business=self.biz, store=self.store)
+        self.client.force_login(self.owner)
+
+    def _make_variance(self, book, actual):
+        return self.StockVarianceQuery.objects.create(
+            stock_take=self.stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=book, actual_count=actual,
+            direction=self.StockVarianceQuery.INCREASE,
+        )
+
+    # ── _matching_preset_for_increase() — unit coverage ───────────────────
+
+    def test_matches_exact_preset_fraction(self):
+        from core.stock_take_views import _matching_preset_for_increase
+        result = _matching_preset_for_increase(self.item, Decimal('0.25'))
+        self.assertEqual(result.id, self.robo.id)
+
+    def test_matches_within_small_tolerance(self):
+        from core.stock_take_views import _matching_preset_for_increase
+        result = _matching_preset_for_increase(self.item, Decimal('0.248'))
+        self.assertEqual(result.id, self.robo.id)
+
+    def test_no_match_for_whole_number(self):
+        from core.stock_take_views import _matching_preset_for_increase
+        result = _matching_preset_for_increase(self.item, Decimal('1'))
+        self.assertIsNone(result)
+
+    def test_no_match_for_odd_non_preset_fraction(self):
+        # The literal reported figure — matches nothing.
+        from core.stock_take_views import _matching_preset_for_increase
+        result = _matching_preset_for_increase(self.item, Decimal('0.06'))
+        self.assertIsNone(result)
+
+    def test_closest_match_wins_when_two_presets_are_close(self):
+        from core.stock_take_views import _matching_preset_for_increase
+        farther = ItemPortionPreset.objects.create(
+            item=self.item, label='Farther', price=Decimal('900'),
+            quantity_consumed=Decimal('0.745'),  # diff 0.005 from target
+        )
+        closer = ItemPortionPreset.objects.create(
+            item=self.item, label='Closer', price=Decimal('900'),
+            quantity_consumed=Decimal('0.752'),  # diff 0.002 from target
+        )
+        result = _matching_preset_for_increase(self.item, Decimal('0.75'))
+        self.assertEqual(result.id, closer.id)
+
+    def test_no_presets_at_all_returns_none(self):
+        from core.stock_take_views import _matching_preset_for_increase
+        bare_item = Item.objects.create(
+            business=self.biz, store=self.store, description='No Presets Here',
+            material_no='PMATCH-02', unit='pcs', selling_price=Decimal('10'),
+        )
+        result = _matching_preset_for_increase(bare_item, Decimal('0.25'))
+        self.assertIsNone(result)
+
+    # ── review_variance() accept — routes cost into the matched preset ────
+
+    def test_accept_matching_preset_sets_preset_cost_not_item_cost(self):
+        svq = self._make_variance(book=Decimal('20'), actual=Decimal('20.25'))
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'receipt', 'owner_cost_price': '80',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertEqual(svq.corrective_txn.preset_id, self.robo.id)
+        self.robo.refresh_from_db()
+        self.assertEqual(self.robo.cost_price, Decimal('80'))
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('1200'))  # untouched
+
+    def test_accept_matching_preset_with_no_cost_given_defaults_to_item_cost_price(self):
+        # Preset has no cost_price of its own yet — falls back to the
+        # item's whole-bottle cost_price (same per-whole-unit basis).
+        svq = self._make_variance(book=Decimal('20'), actual=Decimal('20.5'))
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'receipt',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.nusu.refresh_from_db()
+        self.assertEqual(self.nusu.cost_price, Decimal('1200'))
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('1200'))  # untouched either way
+
+    def test_accept_matching_preset_reuses_its_own_existing_cost_price_as_default(self):
+        self.robo.cost_price = Decimal('310')
+        self.robo.save(update_fields=['cost_price'])
+        svq = self._make_variance(book=Decimal('20'), actual=Decimal('20.25'))
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'receipt',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.robo.refresh_from_db()
+        self.assertEqual(self.robo.cost_price, Decimal('310'))  # left as its own value
+
+    def test_accept_whole_number_variance_still_updates_item_cost_price(self):
+        # Regression lock: a genuine whole-bottle delivery is completely
+        # unaffected by the preset-matching logic.
+        svq = self._make_variance(book=Decimal('20'), actual=Decimal('21'))
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'receipt', 'owner_cost_price': '1350',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertIsNone(svq.corrective_txn.preset_id)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.cost_price, Decimal('1350'))
+        self.robo.refresh_from_db()
+        self.nusu.refresh_from_db()
+        self.assertIsNone(self.robo.cost_price)
+        self.assertIsNone(self.nusu.cost_price)
+
+    def test_accept_odd_fraction_falls_back_to_item_cost_price(self):
+        svq = self._make_variance(book=Decimal('20'), actual=Decimal('20.06'))
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'receipt',
+        })
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertIsNone(svq.corrective_txn.preset_id)
+        self.robo.refresh_from_db()
+        self.assertIsNone(self.robo.cost_price)
+
+    # ── pending_variances() view context — matched_preset/looks_like_drift ──
+
+    def test_view_context_attaches_matched_preset_for_pending_row(self):
+        self._make_variance(book=Decimal('20'), actual=Decimal('20.25'))
+        resp = self.client.get('/stock/variances/')
+        self.assertEqual(resp.status_code, 200)
+        row = resp.context['pending'][0]
+        self.assertEqual(row.matched_preset.id, self.robo.id)
+        self.assertFalse(row.looks_like_drift)
+
+    def test_view_context_flags_looks_like_drift_for_unmatched_fraction(self):
+        self._make_variance(book=Decimal('20'), actual=Decimal('20.06'))
+        resp = self.client.get('/stock/variances/')
+        row = resp.context['pending'][0]
+        self.assertIsNone(row.matched_preset)
+        self.assertTrue(row.looks_like_drift)
+
+    def test_view_context_no_drift_flag_for_whole_number(self):
+        self._make_variance(book=Decimal('20'), actual=Decimal('21'))
+        resp = self.client.get('/stock/variances/')
+        row = resp.context['pending'][0]
+        self.assertIsNone(row.matched_preset)
+        self.assertFalse(row.looks_like_drift)
+
+    def test_pending_page_renders_matched_preset_hint(self):
+        self._make_variance(book=Decimal('20'), actual=Decimal('20.25'))
+        resp = self.client.get('/stock/variances/')
+        self.assertContains(resp, 'Robo')
+
+    def test_pending_page_renders_drift_warning(self):
+        self._make_variance(book=Decimal('20'), actual=Decimal('20.06'))
+        resp = self.client.get('/stock/variances/')
+        self.assertContains(resp, 'si kipimo')
+
+    def test_decrease_direction_never_gets_matched_preset(self):
+        svq = self.StockVarianceQuery.objects.create(
+            stock_take=self.stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('20'), actual_count=Decimal('19.75'),
+            direction=self.StockVarianceQuery.DECREASE,
+        )
+        resp = self.client.get('/stock/variances/')
+        row = [r for r in resp.context['pending'] if r.id == svq.id][0]
+        self.assertIsNone(row.matched_preset)
+        self.assertFalse(row.looks_like_drift)
+
+
+class DiagnoseStockShortfallsPresetDumpTest(TestCase):
+    """2026-08-26 — diagnose_stock_shortfalls now dumps an item's CURRENT
+    preset configuration up front, since 'presets never picked up' could
+    mean zero presets are saved against THIS item id at all (a config
+    problem Quick Sell/Bar Board would show as a plain tile with no
+    picker) rather than a balance-math problem."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Preset Dump Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+
+    def test_no_presets_prints_none_and_a_hint(self):
+        from io import StringIO
+        from django.core.management import call_command
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Bare Spirit',
+            material_no='PDUMP-01', unit='btl', selling_price=Decimal('200'),
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Preset Dump Biz', item='Bare Spirit', stdout=out)
+        output = out.getvalue()
+        self.assertIn('Portion presets configured for THIS item id (0)', output)
+        self.assertIn('NONE.', output)
+
+    def test_presets_are_listed_with_their_fields(self):
+        from io import StringIO
+        from django.core.management import call_command
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description='Configured Spirit',
+            material_no='PDUMP-02', unit='btl', selling_price=Decimal('200'),
+        )
+        ItemPortionPreset.objects.create(
+            item=item, label='Robo', price=Decimal('350'),
+            quantity_consumed=Decimal('0.25'), cost_price=Decimal('80'),
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Preset Dump Biz', item='Configured Spirit', stdout=out)
+        output = out.getvalue()
+        self.assertIn("'Robo'", output)
+        self.assertIn('quantity_consumed=0.2500', output)
+        self.assertIn('cost_price=80.00', output)
+
+    def test_duplicate_item_listing_shows_preset_count(self):
+        from io import StringIO
+        from django.core.management import call_command
+        item1 = Item.objects.create(
+            business=self.biz, store=self.store, description='Twin Spirit',
+            material_no='PDUMP-03', unit='btl', selling_price=Decimal('200'),
+        )
+        item2 = Item.objects.create(
+            business=self.biz, store=self.store, description='Twin Spirit',
+            material_no='PDUMP-04', unit='btl', selling_price=Decimal('200'),
+        )
+        ItemPortionPreset.objects.create(
+            item=item2, label='Robo', price=Decimal('350'), quantity_consumed=Decimal('0.25'),
+        )
+        out = StringIO()
+        call_command('diagnose_stock_shortfalls', business='Preset Dump Biz', item='Twin Spirit', stdout=out)
+        output = out.getvalue()
+        self.assertIn(f'item#{item2.id}', output)
+        self.assertIn('presets=1', output)

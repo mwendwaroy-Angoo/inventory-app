@@ -125,6 +125,29 @@ class Command(BaseCommand):
             f"  Reorder level: {item.reorder_level}   Cost price: {item.cost_price}"
         )
 
+        # 2026-08-26 live report (Roy — "blue ice never picked up the
+        # presets accordingly no matter what we did"): dumps the item's
+        # CURRENT preset configuration up front, since "presets never
+        # picked up" could mean zero presets are actually saved against
+        # THIS item id (Quick Sell would then show a plain tile with no
+        # picker at all — a config problem, not a balance-math one), or
+        # could mean a DIFFERENT "same name" Item (see the duplicate-item
+        # check below) is the one that actually has them configured.
+        presets = list(item.portion_presets.all().order_by('display_order'))
+        self.stdout.write(f"\n-- Portion presets configured for THIS item id ({len(presets)}) --")
+        if not presets:
+            self.stdout.write(self.style.ERROR(
+                "  NONE. Quick Sell/Bar Board show a plain tile with no portion picker for "
+                "this exact item id — if staff expect to see quarter/half/three-quarter "
+                "tiles here, check the DUPLICATE-ITEM section below first (presets may be "
+                "saved against a different Item row with the same name)."
+            ))
+        for p in presets:
+            self.stdout.write(
+                f"  preset#{p.id} {p.label!r} price=KES{p.price} "
+                f"quantity_consumed={p.quantity_consumed} cost_price={p.cost_price}"
+            )
+
         txns = (
             Transaction.objects.filter(business=business, item=item)
             .select_related('preset', 'keg_barrel', 'produce_bunch', 'kitchen_batch')
@@ -222,7 +245,10 @@ class Command(BaseCommand):
                 "other's balance). Compare material_no/store below:"
             ))
             for o in others:
-                self.stdout.write(f"    item#{o.id} material_no={o.material_no!r} store={o.store} balance={o.current_balance()}")
+                self.stdout.write(
+                    f"    item#{o.id} material_no={o.material_no!r} store={o.store} "
+                    f"balance={o.current_balance()} presets={o.portion_presets.count()}"
+                )
 
         # ── Duplicate-receipt heuristic (2026-08-21, tightened same-day
         #    after a real Dallas run: a fast-moving spirit restocked in the

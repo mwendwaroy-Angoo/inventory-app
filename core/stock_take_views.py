@@ -34,7 +34,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
 from core.models import (
-    Item, ShiftStockCount, StockTake, StockVarianceQuery, Store, Transaction,
+    Item, ItemPortionPreset, ShiftStockCount, StockTake, StockVarianceQuery, Store, Transaction,
 )
 from core.notifications import (
     create_in_app_notification, normalize_ke_phone, send_sms_notification,
@@ -134,6 +134,41 @@ def finalize_expired_variance_disputes(business):
                     f"umekuwa wa kudumu.",
                     normalize_ke_phone(svq.queried_staff.phone),
                 )
+
+
+def _matching_preset_for_increase(item, variance):
+    """2026-08-26 (Roy, live — "if the variance is +0.25 or +0.5 or +0.75
+    the cost price division should be according to preset"): an INCREASE
+    variance that lands on a clean fraction (0.25/0.5/0.75 of a bottle,
+    say) is far more likely a PORTIONED preset amount than a whole new
+    delivery — the owner cannot "receive" a quarter bottle from a
+    supplier the way they receive a whole one. Finds the item's own
+    preset whose `quantity_consumed` matches `variance` (small tolerance
+    for Decimal noise), so the accept flow can route the cost the owner
+    enters into THAT preset's own `cost_price` (per-whole-unit basis,
+    same as `item.cost_price` — see `ItemPortionPreset.cost_price`'s own
+    docstring) instead of blindly overwriting `item.cost_price` itself,
+    which represents the whole bottle, not one portion of it. Returns
+    None when nothing matches closely enough — a whole-number variance
+    (a genuine new bottle) or an odd, non-preset-aligned fraction (very
+    likely accumulated preset-fraction drift, see diagnose_stock_
+    shortfalls' own 2026-08-21 'preset_drift' section) both correctly
+    fall through to the original flat item.cost_price behaviour.
+    """
+    if not item or variance is None:
+        return None
+    target = abs(variance)
+    if target == 0:
+        return None
+    best = None
+    best_diff = None
+    for preset in item.portion_presets.all():
+        if not preset.quantity_consumed:
+            continue
+        diff = abs(preset.quantity_consumed - target)
+        if diff <= Decimal('0.01') and (best_diff is None or diff < best_diff):
+            best, best_diff = preset, diff
+    return best
 
 
 # ── Shift-change accountability (2026-08-22, Roy) ──────────────────────────────
@@ -691,13 +726,35 @@ def pending_variances(request):
     # below so a just-expired dispute shows up as resolved, not disputed.
     finalize_expired_variance_disputes(business)
 
-    pending   = StockVarianceQuery.objects.filter(
+    pending   = list(StockVarianceQuery.objects.filter(
         stock_take__business=business, status=StockVarianceQuery.PENDING,
-    ).select_related('stock_take__conducted_by', 'item', 'queried_staff__user').order_by('created_at')
+    ).select_related('stock_take__conducted_by', 'item', 'queried_staff__user')
+      .prefetch_related('item__portion_presets').order_by('created_at'))
 
-    responded = StockVarianceQuery.objects.filter(
+    responded = list(StockVarianceQuery.objects.filter(
         stock_take__business=business, status=StockVarianceQuery.RESPONDED,
-    ).select_related('stock_take__conducted_by', 'item', 'queried_staff__user').order_by('responded_at')
+    ).select_related('stock_take__conducted_by', 'item', 'queried_staff__user')
+      .prefetch_related('item__portion_presets').order_by('responded_at'))
+
+    # 2026-08-26 (Roy — "the cost price division should be according to
+    # preset"): for every still-open INCREASE row, work out up front which
+    # preset (if any) the fraction matches, so the template can show a
+    # "≈ {preset label}" hint and default the accept prompt's cost
+    # suggestion correctly — and, when NOTHING matches a clean fraction OR
+    # a whole number, a warning that this looks like accumulated preset-
+    # fraction drift (see diagnose_stock_shortfalls' 'preset_drift'
+    # section) rather than a real unrecorded delivery, steering toward
+    # Rekebisha instead of blindly accepting it as a receipt.
+    for v in pending + responded:
+        if v.direction == StockVarianceQuery.INCREASE and v.item:
+            v.matched_preset = _matching_preset_for_increase(v.item, v.variance)
+            v.looks_like_drift = (
+                v.matched_preset is None
+                and abs(v.variance) != abs(v.variance).to_integral_value()
+            )
+        else:
+            v.matched_preset = None
+            v.looks_like_drift = False
 
     # 2026-08-26 (Roy — theft-verdict redesign): a rejected variance whose
     # appeal window is still open — the stock is already corrected, the
@@ -707,10 +764,16 @@ def pending_variances(request):
         stock_take__business=business, status=StockVarianceQuery.DISPUTED,
     ).select_related('stock_take__conducted_by', 'item', 'queried_staff__user', 'corrective_txn').order_by('dispute_deadline')
 
-    resolved  = StockVarianceQuery.objects.filter(
+    resolved  = list(StockVarianceQuery.objects.filter(
         stock_take__business=business, status=StockVarianceQuery.RESOLVED,
     ).select_related('stock_take__conducted_by', 'item', 'queried_staff__user', 'corrective_txn',
-                     'owner_action_by').order_by('-owner_acted_at')[:30]
+                     'owner_action_by')
+      .prefetch_related('item__portion_presets').order_by('-owner_acted_at')[:30])
+    for v in resolved:
+        v.matched_preset = (
+            _matching_preset_for_increase(v.item, v.variance)
+            if v.direction == StockVarianceQuery.INCREASE and v.item else None
+        )
 
     return render(request, 'core/stock_variances_pending.html', {
         'pending':   pending,
@@ -862,20 +925,43 @@ def review_variance(request, var_id):
     "another staff's mess should not affect her normal operations" (Roy) —
     this window is purely about the STAFFER's own record.
 
-    Once a row has EVER been decided (owner_accepted is no longer None,
-    whether it's now DISPUTED or already RESOLVED), any further accept/
+    Once a row has a corrective_txn already attached, any further accept/
     dismiss call is a pure RECONSIDERATION — same "any number of times,
     never re-touches the underlying record" pattern already established by
     review_petty_cash()'s own undo mechanism (2026-07-25). It flips ONLY
     owner_accepted/compliance_noted/status — the corrective_txn already
-    created at the moment of the FIRST decision is never touched, re-
-    created, or reversed, matching Roy's own explicit rule: "the only thing
-    that should change is the staff's performance record and remuneration
-    ... but not the stock balance." select_for_update() below closes the
-    one real race this creates that didn't matter before: two near-
-    simultaneous first-time decisions on the same row could otherwise both
-    read owner_accepted=None and both create a corrective transaction for
-    the same physical shortfall.
+    created is never touched, re-created, or reversed, matching Roy's own
+    explicit rule: "the only thing that should change is the staff's
+    performance record and remuneration ... but not the stock balance."
+    select_for_update() below closes the one real race this creates that
+    didn't matter before: two near-simultaneous first-time decisions on the
+    same row could otherwise both read owner_accepted=None and both create
+    a corrective transaction for the same physical shortfall.
+
+    2026-08-26 (Roy, live, same-day follow-up — "the only way stock would
+    be extra during stock take is if it was received but not received in
+    the system... that is a plus not a theft"): an INCREASE-direction
+    variance (physical count HIGHER than the book) never means theft — the
+    theft-verdict machinery above (the '[THEFT]' tag, DISPUTED appeal
+    window, staff accusation) is scoped to DECREASE only. An increase is
+    always reasoned about as an unrecorded RECEIPT (the owner restocked but
+    never logged Add Transaction → Receipt), never a "cash sale" — 'accept'
+    creates the Receipt (as it already did) and additionally lets the owner
+    set a cost price for it, defaulting to the item's CURRENT cost_price
+    ("like the previous receipt") unless overridden — a new, narrow,
+    documented exception to "Item.cost_price has exactly ONE designed
+    writer" (Add Transaction's Receipt flow), in the same spirit as the
+    KitchenBatch.open_batch() exception already carved out there. 'dismiss'
+    on an increase means "I don't believe this recount" — resolves
+    immediately with NO correction created (nothing to append — the owner
+    is saying the extra stock isn't real) and NO accountability
+    consequence (compliance_noted stays False, no appeal window, no theft
+    wording). Because an increase-dismiss may create no correction at all,
+    `has_correction` (whether `corrective_txn_id` is set) — not merely
+    "has owner_accepted been set" — is the real signal for whether a
+    later 'accept' must still DO the correction (reconsidering an
+    increase's earlier "not accepted" into "accept" performs the deferred
+    Receipt creation right then) or is a pure field-flip reconsideration.
     """
     if request.method != 'POST':
         return JsonResponse({'ok': False, 'error': 'POST required'}, status=405)
@@ -890,7 +976,12 @@ def review_variance(request, var_id):
             StockVarianceQuery.objects.select_for_update(),
             id=var_id, stock_take__business=business,
         )
-        is_reconsideration = (svq.owner_accepted is not None)
+        # has_correction (not merely "has owner_accepted been set") is the
+        # real signal for whether the physical stock correction still needs
+        # to happen — see the 2026-08-26 docstring addition above for why
+        # these two can diverge for an INCREASE-direction dismiss.
+        has_correction = (svq.corrective_txn_id is not None)
+        is_increase = (svq.direction == StockVarianceQuery.INCREASE)
         reviewer_name = request.user.get_full_name() or request.user.username
         now = timezone.now()
         when = timezone.localtime(now).strftime('%d %b %Y, %H:%M')
@@ -915,7 +1006,7 @@ def review_variance(request, var_id):
             return JsonResponse({'ok': True, 'message': msg})
 
         if action == 'accept':
-            if is_reconsideration:
+            if has_correction:
                 # Pure reversal — never creates or touches corrective_txn.
                 was_theft_verdict = (svq.owner_accepted is False)
                 _owner_note = request.POST.get('owner_response_note', '').strip()
@@ -959,7 +1050,14 @@ def review_variance(request, var_id):
                     )
                 return JsonResponse({'ok': True, 'message': msg})
 
-            # ── Original first-time accept path — unchanged behaviour ──────
+            # ── No correction exists yet ────────────────────────────────
+            # For DECREASE this is always genuinely first-time (a decrease
+            # ALWAYS creates a correction on its first decision, whichever
+            # way it goes). For INCREASE it may ALSO be a reconsideration
+            # from an earlier "not accepted" dismiss (see the dismiss
+            # branch below) — that dismiss deliberately never created a
+            # correction, so the deferred Receipt is created right here.
+            was_previously_not_accepted = (svq.owner_accepted is False)
             corrective_txn = None
             try:
                 # Staff-responded variances use the staff's response type.
@@ -1018,40 +1116,94 @@ def review_variance(request, var_id):
                             invoice_no='[SVQ]',
                         )
                 elif (svq.direction == StockVarianceQuery.INCREASE and svq.item):
+                    # 2026-08-26 (Roy — "the only way stock would be extra
+                    # ... is if it was received but not received in the
+                    # system"): always an unrecorded RECEIPT, never a
+                    # "sale" — the owner sets a cost price for it,
+                    # defaulting to the item's own CURRENT cost_price
+                    # ("like the previous receipt") when left blank/
+                    # invalid. A DELIBERATE, NARROW exception to "Item.
+                    # cost_price has exactly ONE designed writer" — same
+                    # documented-exception category as KitchenBatch.
+                    # open_batch(); see this view's own docstring.
+                    _cost_str = request.POST.get('owner_cost_price', '').strip()
+                    cost_price = None
+                    if _cost_str:
+                        try:
+                            cost_price = Decimal(_cost_str)
+                            if cost_price < 0:
+                                cost_price = None
+                        except InvalidOperation:
+                            cost_price = None
+
+                    # 2026-08-26 same-day follow-up — "the cost price
+                    # division should be according to preset": a variance
+                    # matching a preset's own quantity_consumed (a portion
+                    # of a bottle, not a whole one) routes the cost into
+                    # THAT preset's own cost_price instead of the item's
+                    # flat, whole-bottle cost_price — both fields share the
+                    # same per-whole-unit basis (see ItemPortionPreset.
+                    # cost_price's own docstring), so no conversion is
+                    # needed, only the right field to write.
+                    matched_preset = _matching_preset_for_increase(svq.item, svq.variance)
+                    if cost_price is None:
+                        if matched_preset is not None:
+                            cost_price = (
+                                matched_preset.cost_price
+                                if matched_preset.cost_price is not None
+                                else svq.item.cost_price
+                            )
+                        else:
+                            cost_price = svq.item.cost_price
+
                     corrective_txn = Transaction.objects.create(
                         business=business,
                         item=svq.item,
                         type='Receipt',
                         qty=svq.variance,
                         payment_method='',
-                        recipient=_owner_note or '',
+                        recipient=_owner_note or 'Mapokezi yasiyorekodiwa',
                         recorded_by=request.user,
                         date=svq.stock_take.taken_at.date(),
+                        preset=matched_preset,
                     )
+                    if matched_preset is not None:
+                        if cost_price is not None and cost_price != matched_preset.cost_price:
+                            ItemPortionPreset.objects.filter(id=matched_preset.id).update(cost_price=cost_price)
+                    elif cost_price is not None and cost_price != svq.item.cost_price:
+                        Item.objects.filter(id=svq.item_id).update(cost_price=cost_price)
             except Exception as exc:
                 logger.exception("Error creating corrective transaction for variance %s", var_id)
                 return JsonResponse({'ok': False, 'error': str(exc)})
 
-            svq.owner_accepted  = True
-            svq.owner_action_by = request.user
-            svq.owner_acted_at  = now
-            svq.corrective_txn  = corrective_txn
-            svq.owner_note      = _owner_note
-            svq.status          = StockVarianceQuery.RESOLVED
+            svq.owner_accepted   = True
+            svq.compliance_noted = False
+            svq.owner_action_by  = request.user
+            svq.owner_acted_at   = now
+            svq.corrective_txn   = corrective_txn
+            svq.owner_note       = _owner_note
+            svq.status           = StockVarianceQuery.RESOLVED
+            svq.dispute_deadline = None
             svq.save(update_fields=[
-                'owner_accepted', 'owner_action_by', 'owner_acted_at',
-                'corrective_txn', 'owner_note', 'status',
+                'owner_accepted', 'compliance_noted', 'owner_action_by',
+                'owner_acted_at', 'corrective_txn', 'owner_note', 'status',
+                'dispute_deadline',
             ])
 
             # 2026-07-24 wording/accountability audit: neither branch named who acted
             # or when, and 'accept' never told the staffer who reported the variance
             # what happened to their explanation — only 'dismiss' did, an inconsistency
             # since both are equally a final decision on the same reported variance.
-            msg = f'Imekubaliwa na {reviewer_name} tarehe {when}'
+            if is_increase:
+                msg = f'Imekubaliwa kama mapokezi yasiyorekodiwa na {reviewer_name} tarehe {when}'
+            else:
+                msg = f'Imekubaliwa na {reviewer_name} tarehe {when}'
             if corrective_txn:
                 msg += f' — transaction ya {svq.item_name_cache} imeundwa.'
             else:
                 msg += '.'
+            if was_previously_not_accepted:
+                msg = f'MAREKEBISHO: {msg}'
 
             if svq.queried_staff:
                 create_in_app_notification(
@@ -1068,7 +1220,63 @@ def review_variance(request, var_id):
         elif action == 'dismiss':
             _dismiss_note = request.POST.get('owner_response_note', '').strip()
 
-            if is_reconsideration:
+            if is_increase:
+                # 2026-08-26 (Roy — "that is a plus not a theft"): an
+                # INCREASE-direction variance can never be a theft verdict
+                # — "dismiss" here means "I don't believe this recount,"
+                # nothing more. No '[THEFT]' tag, no DISPUTED appeal
+                # window, no accountability consequence
+                # (compliance_noted stays False). If a Receipt was
+                # already created (has_correction — the owner previously
+                # accepted this as an unrecorded receipt and is now
+                # reconsidering), that Receipt is NEVER reversed — same
+                # "never touch the stock a second time" rule as the
+                # decrease theft-verdict reconsideration below, just
+                # without any theft framing to walk back.
+                svq.owner_accepted   = False
+                svq.compliance_noted = False
+                svq.owner_action_by  = request.user
+                svq.owner_acted_at   = now
+                svq.status           = StockVarianceQuery.RESOLVED
+                svq.dispute_deadline = None
+                svq.owner_note       = _dismiss_note
+                svq.save(update_fields=[
+                    'owner_accepted', 'compliance_noted', 'owner_action_by',
+                    'owner_acted_at', 'status', 'dispute_deadline', 'owner_note',
+                ])
+
+                if has_correction:
+                    msg = (
+                        f'Umebadilisha uamuzi wa "{svq.item_name_cache}" kuwa HAIKUKUBALIWA na '
+                        f'{reviewer_name} tarehe {when} — Transaction #{svq.corrective_txn_id} '
+                        f'HAITAGUSWA (stock haibadiliki tena baada ya kusahihishwa).'
+                    )
+                else:
+                    msg = (
+                        f'Hesabu ya ziada ya "{svq.item_name_cache}" haikukubaliwa na '
+                        f'{reviewer_name} tarehe {when} — hakuna marekebisho yaliyofanywa, '
+                        f'stock haijabadilishwa.'
+                    )
+                if _dismiss_note:
+                    msg += f' Sababu: {_dismiss_note}'
+
+                if svq.queried_staff:
+                    staff_msg = (
+                        f"Mmiliki {reviewer_name} ameamua kuwa ongezeko la {svq.item_name_cache} "
+                        f"halikukubaliwa kama mapokezi halisi — hesabu yako haikuchukuliwa. "
+                        f"Hii SI tofauti ya wizi/utendaji — haitaathiri rekodi yako."
+                    )
+                    if _dismiss_note:
+                        staff_msg += f' Sababu: {_dismiss_note}'
+                    create_in_app_notification(
+                        svq.queried_staff.user,
+                        f"ℹ️ Hesabu Haikukubaliwa: {svq.item_name_cache}",
+                        staff_msg, notification_type='info',
+                        link_url=f'/stock/variances/{svq.id}/respond/',
+                    )
+                return JsonResponse({'ok': True, 'message': msg})
+
+            if has_correction:
                 # Re-affirming theft after a prior reversal, OR simply
                 # re-confirming while still DISPUTED before the window
                 # expired — Roy's own "if he decides to be firm with his
@@ -1114,33 +1322,30 @@ def review_variance(request, var_id):
                 return JsonResponse({'ok': True, 'message': msg})
 
             # ── First-time reject — the new theft-verdict path ─────────────
-            # "the purpose of this level of scrutiny is to capture theft...
-            # the business owner cannot fail to replenish stock" (Roy) —
-            # unlike the old dismiss (which corrected nothing), this now
-            # creates a corrective transaction just like 'accept as
-            # wastage' does — the physical correction happens immediately
-            # and permanently, completely independent of the appeal window
-            # that follows. Tagged '[THEFT]' (distinct from '[ADJ]'/
-            # '[ADJ-NOLOSS]'/'[SVQ]') so it reads distinctly in Transaction
-            # History — a genuine, real loss (unlike '[ADJ-NOLOSS]'), so it
-            # correctly counts everywhere a real Wastage loss already does
-            # (P&L, analytics) with no special exclusion needed.
+            # DECREASE only — is_increase already returned above, since
+            # "the only way stock would be extra ... is if it was received
+            # but not received in the system... that is a plus not a
+            # theft" (Roy). "the purpose of this level of scrutiny is to
+            # capture theft... the business owner cannot fail to replenish
+            # stock" (Roy) — unlike the old dismiss (which corrected
+            # nothing), this now creates a corrective transaction just
+            # like 'accept as wastage' does — the physical correction
+            # happens immediately and permanently, completely independent
+            # of the appeal window that follows. Tagged '[THEFT]'
+            # (distinct from '[ADJ]'/'[ADJ-NOLOSS]'/'[SVQ]') so it reads
+            # distinctly in Transaction History — a genuine, real loss
+            # (unlike '[ADJ-NOLOSS]'), so it correctly counts everywhere a
+            # real Wastage loss already does (P&L, analytics) with no
+            # special exclusion needed.
             corrective_txn = None
             try:
-                if svq.direction == StockVarianceQuery.DECREASE and svq.item:
+                if svq.item:
                     corrective_txn = Transaction.objects.create(
                         business=business, item=svq.item, type='Wastage',
                         qty=-abs(svq.variance), payment_method='',
                         recipient=_dismiss_note or 'Tofauti ya stock — hakuna maelezo yanayokubalika',
                         recorded_by=request.user, date=svq.stock_take.taken_at.date(),
                         invoice_no='[THEFT]',
-                    )
-                elif svq.direction == StockVarianceQuery.INCREASE and svq.item:
-                    corrective_txn = Transaction.objects.create(
-                        business=business, item=svq.item, type='Receipt',
-                        qty=svq.variance, payment_method='',
-                        recipient=_dismiss_note or '',
-                        recorded_by=request.user, date=svq.stock_take.taken_at.date(),
                     )
             except Exception as exc:
                 logger.exception("Error creating corrective transaction for variance %s", var_id)

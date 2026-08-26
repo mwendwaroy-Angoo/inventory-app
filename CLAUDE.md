@@ -8977,3 +8977,163 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `BackfillSvqInvoiceTagsCommandTest`) confirmed passing unmodified or with
   only the two documented updates above. Two migrations (core 0176,
   accounts 0066), both additive.
+- Stock-take variance: an INCREASE is never theft (2026-08-26, same-day
+  follow-up). Roy, with a live screenshot showing "Blue Ice ↑ +0.06" being
+  offered "⚡ Mauzo ya Kawaida (Cash)" alongside a genuine decrease: "the
+  only way stock would be extra during stock take is if it was received
+  but not received in the system... that is a plus not a theft, so the
+  system should not ask the owner mauzo ya kawaida cash... if the owner
+  accepts such a variance, the system should append it as a receipt but
+  just unrecorded and it should assume the cost price is like the previous
+  previous receipt for that specific item unless the owner says
+  differently." Root cause: the PENDING/RESPONDED sections' quick-action
+  UI, and the theft-verdict `dismiss` machinery shipped hours earlier the
+  same day, both applied uniformly to `direction='increase'` rows with no
+  logical distinction from `direction='decrease'` — an increase was
+  offered the exact same "was this an unrecorded cash/mpesa/credit sale?"
+  reasoning that only ever makes sense when stock is MISSING, and dismiss
+  for increase silently created the identical Receipt `accept` would
+  (no `[THEFT]` tag, no distinction at all — likely inherited unexamined
+  from the decrease pattern when the theft-verdict redesign was built).
+  **Redesigned `review_variance()`'s direction handling from the ground
+  up.** `accept` for increase now reads an optional `owner_cost_price`
+  POST field — parsed defensively (blank/invalid/negative all fall back),
+  defaulting to `item.cost_price` ("like the previous receipt," since that
+  field is already exactly the last real receipt's cost by this app's own
+  "Item.cost_price has exactly ONE designed writer" convention) — creates
+  the Receipt exactly as before, and additionally writes the resolved cost
+  to `item.cost_price` when it differs: a new, narrow, explicitly
+  documented exception to that convention, same category as the
+  pre-existing `KitchenBatch.open_batch()` exception. `dismiss` for
+  increase means "I don't believe this recount" — resolves immediately
+  with **no correction created at all** (nothing to append — the owner is
+  saying the extra stock isn't real), **no `[THEFT]` tag, no `DISPUTED`
+  appeal window, no accountability consequence** (`compliance_noted` stays
+  `False` — confirmed `haki_views.py` needed zero changes, since its
+  `dismissed_variances` count already only ever counts `compliance_noted=
+  True` rows and `unaffirmed_variances_qs` was already `direction=
+  'decrease'`-scoped from the start). **The real structural subtlety**:
+  since an increase-dismiss may create no correction, `owner_accepted is
+  not None` (the prior signal for "has this already been decided") stopped
+  being the right test for "has the stock already been corrected" — a
+  new `has_correction = (svq.corrective_txn_id is not None)` replaces it
+  everywhere. For decrease the two were always equivalent (both accept and
+  the old-and-new dismiss always create a correction on first decision),
+  so decrease behavior is byte-for-byte unchanged; for increase they
+  diverge exactly where it matters — reconsidering an earlier "not
+  accepted" dismiss back to `accept` now correctly performs the
+  DEFERRED Receipt creation right then (with the MAREKEBISHO wording),
+  rather than the generic reconsideration code's "just flip the fields,
+  never touch the transaction" behavior, which would have silently left
+  no correction ever created. Conversely, reconsidering an increase's
+  earlier `accept` (a Receipt already exists) back to `dismiss` never
+  reverses that Receipt — same "never touch the stock a second time" rule
+  as the decrease theft-verdict reversal, applied here even though there's
+  no theft framing to walk back. `finalize_now` needed no code change —
+  its own `status != DISPUTED` guard already correctly rejects any
+  increase row, which can never reach DISPUTED under the new design.
+  **UI**: `stock_variances_pending.html`'s PENDING/RESPONDED/RESOLVED
+  sections all split on `v.direction` — a decrease row keeps the exact
+  original cash/mpesa/credit/wastage flow untouched; an increase row gets
+  a new "📦 Kubali kama Mapokezi Yasiyorekodiwa" button (a `prompt()` for
+  the cost price, pre-filled from `item.cost_price` — deliberately a plain
+  prompt rather than a new inline form, matching this app's own
+  established "single number entered rarely" convention, e.g.
+  `edit_raw_material_cost`/`edit_kitchen_batch_target`) and a neutral
+  "Hesabu Sio Sahihi" dismiss button (reason chips reworded away from
+  wizi/theft language: "Hesabu ya awali ilikuwa sahihi", "Sikuamini kuwa
+  kilipokewa", "Nitaangalia tena baadaye"). The RESOLVED section's badge
+  and reconsider-toggle both branch the same way (increase shows "➖
+  Haikukubaliwa" instead of "❌ Imekataliwa," never "· Rekodi utendaji").
+  22 new tests added to `StockVarianceTheftVerdictTest` (replacing the one
+  now-wrong pre-existing increase test that assumed dismiss created a
+  Receipt) — default/explicit cost price, cash/mpesa/credit language
+  confirmed never read for increase, no-correction/no-consequence/no-SMS
+  dismiss, the accept-after-dismiss deferred-Receipt creation (the core
+  new mechanism), the dismiss-after-accept never-reverses-the-Receipt
+  regression lock, and the `finalize_now` rejection. No migrations (no
+  model changes — `Item.cost_price` and `StockVarianceQuery.corrective_
+  txn` both already existed).
+- Stock-take variance: preset-aware cost division for fractional increases
+  + "Blue Ice never picked up presets" root-caused to an ALREADY-DIAGNOSED
+  bug (2026-08-26, same-day follow-up). Roy: "if the variance of said item
+  let's say like blue ice is +0.25 or +0.5 or +0.75 the cost price
+  division, should be according to preset... blue ice never picked up the
+  presets accordingly no matter what we did, as you can even see from the
+  variance, +0.06 is too strange, even in the quick sell tiles and the
+  analytics, anywhere blue ice is mentioned the balances keep on
+  misfiring." **Part 1 — preset-aware cost routing.** New
+  `_matching_preset_for_increase(item, variance)` (`core/stock_take_views.
+  py`) finds the item's own preset whose `quantity_consumed` matches the
+  variance within a small tolerance (0.01, closest-match-wins when more
+  than one qualifies) — an increase landing on a clean fraction (0.25/0.5/
+  0.75 of a bottle) is far more likely a PORTIONED amount than a whole new
+  delivery, since nobody "receives" a quarter bottle from a supplier.
+  `review_variance()`'s increase-accept branch now routes the owner's
+  entered cost into the MATCHED PRESET's own `cost_price` (same per-whole-
+  unit basis as `item.cost_price` — confirmed by tracing `Transaction.
+  cost()`'s own `preset.cost_price` branch: `qty * preset.cost_price`,
+  where `qty` is already the fraction, so `preset.cost_price` must be
+  denominated per WHOLE unit, not per-fraction) — leaving `item.cost_price`
+  completely untouched, same as the pre-existing `KitchenStockReceiptLine`
+  writer of this exact field. `corrective_txn.preset` is set to the match
+  too (harmless bookkeeping, mirrors the sale-attribution convention —
+  `Transaction.cost()` only ever reads `preset` for `type='Issue'`, so
+  attaching it to a `Receipt` has no functional side effect elsewhere,
+  confirmed by grepping every `preset_id` filter in the codebase for a
+  hidden Issue-only assumption). A whole-number variance (a genuine new
+  bottle) or an odd, non-preset fraction (the reported `+0.06` — matches
+  nothing) both fall through UNCHANGED to the original flat `item.
+  cost_price` update from the same-day theft-verdict-redesign sprint.
+  `ItemPortionPreset.cost_price`'s own docstring updated to document this
+  as a second, narrow, deliberate writer alongside the Kitchen one.
+  **Part 2 — "no matter what we did," root-caused, not guessed.** Traced
+  `diagnose_stock_shortfalls.py` (2026-08-21) and found this EXACT symptom
+  was already diagnosed for Blue Ice by name, in the codebase's own
+  standing record: `Transaction.qty` for a preset-attributed sale is a
+  PERMANENT SNAPSHOT of `preset.quantity_consumed × cart_qty` taken at
+  sale time, but the preset's own `quantity_consumed` is read LIVE, never
+  versioned — if a preset's fraction is ever edited after some sales
+  already happened under the old value, every OLDER transaction's `qty`
+  stays permanently based on the fraction that existed then while newer
+  sales use the new one, so the running balance becomes an honest sum of
+  two different schemes and will almost never land on a clean fraction —
+  exactly explaining both "+0.06 is too strange" (a genuinely odd,
+  non-clean number) and "anywhere Blue Ice is mentioned the balances keep
+  on misfiring" (every surface — Quick Sell tile, analytics, the stock-
+  take variance itself — reads the SAME already-drifted `current_
+  balance()`, so it's one root cause showing up everywhere consistently,
+  not a separate display bug at each site). "No matter what we did" is
+  consistent with this mechanism too: RE-EDITING a preset's fraction to
+  "fix" it only adds MORE historical drift, since it can never retroactively
+  correct transactions already recorded under the old value — the
+  diagnostic's own existing `preset_drift` section (2026-08-21) already
+  flags exactly which historical transactions don't divide evenly by the
+  CURRENT `quantity_consumed`, which is the concrete way to confirm this
+  against Blue Ice's real production data. Extended the SAME diagnostic
+  (rather than build a second, overlapping one) with a new "Portion
+  presets configured for THIS item id" dump at the very top of `--item`
+  mode — since "presets never picked up" could also mean literally ZERO
+  `ItemPortionPreset` rows exist for the specific `Item` id Quick Sell is
+  rendering (a config problem, not a balance-math one), or that a
+  DIFFERENT "same name" duplicate `Item` is the one actually carrying
+  them — the existing duplicate-item section now also prints each
+  duplicate's own preset count, so that specific confusion is visible in
+  one glance instead of two separate lookups. **UI**: `pending_variances()`
+  now attaches `matched_preset`/`looks_like_drift` to every open INCREASE
+  row (`stock_variances_pending.html`'s PENDING/RESPONDED/RESOLVED
+  sections) — a matched preset shows a blue "≈ {label}" hint chip and the
+  accept prompt names it explicitly and defaults to its own cost; an
+  unmatched NON-whole-number variance shows an amber "⚠️ si kipimo — angalia
+  Rekebisha" warning steering the owner toward a physical recount instead
+  of accepting a nonsensical "0.06 of a bottle" delivery. 20 new tests
+  (`IncreaseVariancePresetMatchingTest`, `DiagnoseStockShortfallsPresetDump
+  Test`) — exact/tolerance/no-match/closest-match-wins matching, the
+  preset-cost-price routing (both with and without an explicit override,
+  and reusing the preset's own already-set cost as the default), the
+  whole-number and odd-fraction fallback-to-item-cost_price regression
+  locks, the view-context attachment (including the decrease-direction
+  regression lock), the template hint/warning rendering, and the
+  diagnostic's new preset-dump + duplicate-item-preset-count output. One
+  migration (0177, additive — `ItemPortionPreset.cost_price`'s help_text
+  change only, no schema change).

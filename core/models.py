@@ -4432,12 +4432,18 @@ class ItemPortionPreset(models.Model):
 
     cost_price = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True,
-        help_text='Per-unit cost for THIS specific cut/preset — used when several presets '
-                  'under one shared item (e.g. Kuku: Bawa/Paja/Kifua) are bought at genuinely '
+        help_text='Per-whole-unit cost for THIS specific cut/preset (same basis as item.'
+                  'cost_price, NOT a per-fraction price) — used when several presets under '
+                  'one shared item (e.g. Kuku: Bawa/Paja/Kifua) are bought at genuinely '
                   'different unit costs, so item.cost_price alone cannot represent them (2026-07-25, '
-                  'Kitchen Stock Receipt). Written ONLY by KitchenStockReceiptLine at receiving time — '
-                  'deliberately never editable from the item form itself (Roy\'s explicit instruction). '
-                  'Item.cost_price is left untouched for these presets and stays whatever it was.',
+                  'Kitchen Stock Receipt). Historically written ONLY by KitchenStockReceiptLine at '
+                  'receiving time — deliberately never editable from the item form itself (Roy\'s '
+                  'explicit instruction). 2026-08-26 (Roy — "the cost price division should be '
+                  'according to preset"): a SECOND, narrow writer — stock_take_views.review_variance()\'s '
+                  'increase-accept flow — also sets this, but only when an INCREASE stock-take variance '
+                  'lands on a fraction matching this exact preset\'s quantity_consumed (see '
+                  '_matching_preset_for_increase()); item.cost_price is left untouched in that case too, '
+                  'same as the kitchen writer.',
     )
 
     tracks_stock_of = models.ForeignKey(

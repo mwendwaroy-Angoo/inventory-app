@@ -73,7 +73,7 @@
     <div>
         <h1 class="page-title mb-1">📊 {% trans 'Tofauti za Stok' %}</h1>
         <p style="color:#b0b0b0; font-size:0.875rem; margin:0;">
-            {% trans 'Kagua tofauti. Kukubali kunamaanisha maelezo halali (mauzo yasiyorekodiwa au upotevu usiojulikana). Kukataa kunamaanisha si maelezo halali — stock inasahihishwa mara moja, na mfanyakazi anayehusika anapewa muda wa kujibu kabla uamuzi kuathiri rekodi yake ya utendaji kwa kudumu.' %}
+            {% trans 'Kagua tofauti. Ikiwa vitu vimepungua (↓), kukubali kunamaanisha maelezo halali (mauzo yasiyorekodiwa au upotevu usiojulikana); kukataa kunamaanisha si maelezo halali — stock inasahihishwa mara moja, na mfanyakazi anayehusika anapewa muda wa kujibu kabla uamuzi kuathiri rekodi yake ya utendaji kwa kudumu. Ikiwa vitu vimeongezeka (↑), hii SI wizi — huwa ni mapokezi ya bidhaa ambayo hayakurekodiwa kwenye mfumo, na kukubali kunaunda Receipt moja kwa moja.' %}
         </p>
     </div>
     <div class="d-flex gap-2">
@@ -102,6 +102,15 @@
             <span style="font-size:0.78rem; color:#6ee7b7; margin-left:0.4rem;">
                 ↑ +{{ v.variance|floatformat:"-2" }}
             </span>
+            {% if v.matched_preset %}
+            <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(96,165,250,0.12); color:#60a5fa; margin-left:0.35rem;">
+                ≈ {{ v.matched_preset.label }}
+            </span>
+            {% elif v.looks_like_drift %}
+            <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(251,191,36,0.12); color:#fbbf24; margin-left:0.35rem;" title="{% trans 'Sio kipimo chochote kilichowekwa — inaweza kuwa mabaki ya hesabu ya awali, si mapokezi halisi. Fikiria Rekebisha badala yake.' %}">
+                ⚠️ {% trans 'si kipimo — angalia Rekebisha' %}
+            </span>
+            {% endif %}
             {% endif %}
         </div>
         <span class="var-badge badge-pending">⏳ Inasubiri</span>
@@ -135,6 +144,7 @@
         </div>
 
         {% if is_owner %}
+        {% if v.direction == 'decrease' %}
         <div class="d-flex gap-2 flex-wrap" style="margin-top:0.75rem; padding-top:0.65rem; border-top:1px solid #2a2a2a;">
             <button onclick="reviewVariance({{ v.id }}, 'accept', '{{ v.item_name_cache|escapejs }}', true, this)"
                 class="btn btn-sm"
@@ -208,6 +218,24 @@
                         style="border:1px solid #444; color:#b0b0b0;">{% trans 'Ghairi' %}</button>
             </div>
         </div>
+        {% else %}
+        <!-- 2026-08-26 (Roy — "that is a plus not a theft"): an INCREASE
+             variance is always reasoned about as an unrecorded RECEIPT,
+             never a sale — no cash/mpesa/credit language, no theft
+             framing on reject. -->
+        <div class="d-flex gap-2 flex-wrap" style="margin-top:0.75rem; padding-top:0.65rem; border-top:1px solid #2a2a2a;">
+            <button onclick="acceptIncreaseVariance({{ v.id }}, '{{ v.item_name_cache|escapejs }}', '{% if v.matched_preset %}{{ v.matched_preset.cost_price|default:v.item.cost_price|default_if_none:'' }}{% else %}{{ v.item.cost_price|default_if_none:'' }}{% endif %}', '{% if v.matched_preset %}{{ v.matched_preset.label|escapejs }}{% endif %}')"
+                class="btn btn-sm"
+                style="background:rgba(110,231,183,0.06); border:1px solid rgba(110,231,183,0.2); color:#6ee7b7;">
+                📦 {% trans 'Kubali kama Mapokezi Yasiyorekodiwa' %}
+            </button>
+            <button onclick="dismissIncreaseVariance({{ v.id }}, '{{ v.item_name_cache|escapejs }}', this)"
+                class="btn btn-sm"
+                style="background:rgba(255,255,255,0.04); border:1px solid #444; color:#b0b0b0;">
+                {% trans 'Hesabu Sio Sahihi' %}
+            </button>
+        </div>
+        {% endif %}
         {% endif %}
     </div>
 </div>
@@ -259,6 +287,7 @@
         {% endif %}
 
         {% if is_owner %}
+        {% if v.direction == 'decrease' %}
         <div class="d-flex gap-2 flex-wrap">
             <button onclick="reviewVariance({{ v.id }}, 'accept', '{{ v.item_name_cache|escapejs }}', false, this)"
                 class="btn btn-sm"
@@ -271,6 +300,20 @@
                 ❌ {% trans 'Kataa — Rekodi Utendaji' %}
             </button>
         </div>
+        {% else %}
+        <div class="d-flex gap-2 flex-wrap">
+            <button onclick="acceptIncreaseVariance({{ v.id }}, '{{ v.item_name_cache|escapejs }}', '{% if v.matched_preset %}{{ v.matched_preset.cost_price|default:v.item.cost_price|default_if_none:'' }}{% else %}{{ v.item.cost_price|default_if_none:'' }}{% endif %}', '{% if v.matched_preset %}{{ v.matched_preset.label|escapejs }}{% endif %}')"
+                class="btn btn-sm"
+                style="background:rgba(110,231,183,0.1); border:1px solid rgba(110,231,183,0.3); color:#6ee7b7;">
+                📦 {% trans 'Kubali kama Mapokezi Yasiyorekodiwa' %}
+            </button>
+            <button onclick="dismissIncreaseVariance({{ v.id }}, '{{ v.item_name_cache|escapejs }}', this)"
+                class="btn btn-sm"
+                style="background:rgba(255,255,255,0.04); border:1px solid #444; color:#b0b0b0;">
+                {% trans 'Hesabu Sio Sahihi' %}
+            </button>
+        </div>
+        {% endif %}
         {% endif %}
     </div>
 </div>
@@ -371,9 +414,11 @@
         <span style="font-size:0.68rem; padding:0.1rem 0.35rem; border-radius:8px; background:rgba(251,191,36,0.12); color:#fbbf24; margin-left:0.35rem;">🔀 {% trans 'pengo baina ya zamu' %}</span>
         {% endif %}
         {% if v.owner_accepted %}
-        <span class="var-badge badge-resolved">✅ Imekubaliwa</span>
-        {% else %}
+        <span class="var-badge badge-resolved">✅ {% if v.direction == 'decrease' %}Imekubaliwa{% else %}Imekubaliwa kama Mapokezi{% endif %}</span>
+        {% elif v.direction == 'decrease' %}
         <span style="font-size:0.72rem; color:#f87171;">❌ Imekataliwa{% if v.compliance_noted %} · Rekodi utendaji{% endif %}</span>
+        {% else %}
+        <span style="font-size:0.72rem; color:#888;">➖ Haikukubaliwa</span>
         {% endif %}
     </div>
     <div class="var-card-body" style="font-size:0.8rem; color:#b0b0b0;">
@@ -397,6 +442,7 @@
             ↺ {% trans 'Badilisha uamuzi' %}
         </button>
         <div id="reconsider-actions-{{ v.id }}" style="display:none; margin-top:0.5rem;" class="d-flex gap-2 flex-wrap">
+            {% if v.direction == 'decrease' %}
             {% if not v.owner_accepted %}
             <button onclick="reconsiderVariance({{ v.id }}, 'accept', '{{ v.item_name_cache|escapejs }}')"
                 class="btn btn-sm"
@@ -409,6 +455,21 @@
                 style="background:rgba(192,57,90,0.08); border:1px solid rgba(192,57,90,0.25); color:#c0395a;">
                 ❌ {% trans 'Rudisha kuwa Imekataliwa' %}
             </button>
+            {% endif %}
+            {% else %}
+            {% if not v.owner_accepted %}
+            <button onclick="acceptIncreaseVariance({{ v.id }}, '{{ v.item_name_cache|escapejs }}', '{% if v.matched_preset %}{{ v.matched_preset.cost_price|default:v.item.cost_price|default_if_none:'' }}{% else %}{{ v.item.cost_price|default_if_none:'' }}{% endif %}', '{% if v.matched_preset %}{{ v.matched_preset.label|escapejs }}{% endif %}')"
+                class="btn btn-sm"
+                style="background:rgba(110,231,183,0.06); border:1px solid rgba(110,231,183,0.2); color:#6ee7b7;">
+                📦 {% trans 'Kubali kama Mapokezi' %}
+            </button>
+            {% else %}
+            <button onclick="dismissIncreaseVariance({{ v.id }}, '{{ v.item_name_cache|escapejs }}', this)"
+                class="btn btn-sm"
+                style="background:rgba(255,255,255,0.04); border:1px solid #444; color:#b0b0b0;">
+                {% trans 'Rudisha kuwa Haikukubaliwa' %}
+            </button>
+            {% endif %}
             {% endif %}
         </div>
     </div>
@@ -549,6 +610,58 @@ function submitReasonAccept(varId, itemName) {
             else { alert(d.error || 'Hitilafu. Jaribu tena.'); }
         })
         .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
+}
+
+// 2026-08-26 (Roy — "the only way stock would be extra... is if it was
+// received but not received in the system... that is a plus not a
+// theft"): an INCREASE-direction variance is always an unrecorded RECEIPT,
+// never a sale — 'accept' asks only for a cost price (defaulting to the
+// item's own current cost_price, i.e. "like the previous receipt", which
+// the owner can override), never cash/mpesa/credit. 'dismiss' means "I
+// don't believe this recount" — no theft framing, no accountability
+// consequence, no appeal window.
+function acceptIncreaseVariance(varId, itemName, defaultCostPrice, presetLabel) {
+    // 2026-08-26 (Roy — "the cost price division should be according to
+    // preset"): when the variance matches a configured preset (a portion
+    // of a bottle, e.g. Robo/Nusu), the prompt says so explicitly and the
+    // cost entered is routed into THAT preset's own cost_price server-
+    // side — never the item's flat, whole-bottle cost_price.
+    var promptLabel;
+    if (presetLabel) {
+        promptLabel = 'Kubali "' + itemName + '" kama mapokezi yasiyorekodiwa — kiasi hiki ' +
+            'kinalingana na kipimo "' + presetLabel + '".\n\n' +
+            'Bei ya kipimo hicho (kwa kila kimoja cha msingi) — kwa default ni bei ya awali. ' +
+            'Badilisha tu kama bei hii ilikuwa tofauti:';
+    } else {
+        promptLabel = 'Kubali "' + itemName + '" kama mapokezi yasiyorekodiwa.\n\n' +
+            'Bei ya ununuzi (kwa kila kipimo) — kwa default ni bei ya mapokezi ya awali. ' +
+            'Badilisha tu kama bei hii ilikuwa tofauti:';
+    }
+    var costStr = prompt(promptLabel, defaultCostPrice || '');
+    if (costStr === null) return; // cancelled
+
+    var fd = new FormData();
+    fd.append('action', 'accept');
+    fd.append('owner_response_type', 'receipt');
+    if (costStr.trim()) fd.append('owner_cost_price', costStr.trim());
+    fd.append('csrfmiddlewaretoken', _csrf());
+
+    fetch('/stock/variances/' + varId + '/review/', { method: 'POST', body: fd })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.ok) { alert('✅ ' + (d.message || 'Imekamilika.')); location.reload(); }
+            else { alert(d.error || 'Hitilafu. Jaribu tena.'); }
+        })
+        .catch(function() { alert('Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.'); });
+}
+
+function dismissIncreaseVariance(varId, itemName, anchorEl) {
+    openReasonChips({
+        anchorEl: anchorEl,
+        title: 'Kwa nini hesabu hii sio sahihi?',
+        chips: ['Hesabu ya awali ilikuwa sahihi', 'Sikuamini kuwa kilipokewa', 'Nitaangalia tena baadaye'],
+        onSelect: function (reason) { _submitReviewVariance(varId, 'dismiss', reason); },
+    });
 }
 
 function reviewVariance(varId, action, itemName, noPriorResponse, anchorEl) {
