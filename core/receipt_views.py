@@ -320,16 +320,32 @@ def _live_direct_lines(receipt):
     live_lines = []
     for l in lines:
         t = txns.get(l['txn_id'])
-        if t is None or t.payment_method == 'void' or not t.qty:
-            changed = True
-            continue
-        if l['txn_id'] in children_by_parent:
-            new_l = dict(l)
-            new_l['subtotal'] = float(t.revenue())
-            live_lines.append(_apply_tab_state(new_l, t))
+        # 2026-08-26 audit finding (Roy: "audit if futa from recent sales
+        # adjusts stock balance") — the ORIGINAL line's own liveness and
+        # each split-off SIBLING's own liveness are now checked
+        # independently, never bundled together. Before this fix a
+        # `continue` here on the parent alone skipped straight past the
+        # child-render loop below too, so a voided parent silently hid a
+        # STILL-LIVE sibling's genuine revenue from the customer's own
+        # receipt — and, the other direction, a void'd sibling still
+        # rendered here at all, since only the parent's own status was
+        # ever checked; a sibling's own qty is ALWAYS 0 by construction
+        # (see Transaction.split_from's docstring), so it must never be
+        # checked here — only its payment_method.
+        parent_live = t is not None and t.payment_method != 'void' and bool(t.qty)
+        if parent_live:
+            if l['txn_id'] in children_by_parent:
+                new_l = dict(l)
+                new_l['subtotal'] = float(t.revenue())
+                live_lines.append(_apply_tab_state(new_l, t))
+            else:
+                live_lines.append(_apply_tab_state(l, t))
         else:
-            live_lines.append(_apply_tab_state(l, t))
+            changed = True
         for child in children_by_parent.get(l['txn_id'], []):
+            if child.payment_method == 'void':
+                changed = True
+                continue
             live_lines.append(_apply_tab_state({
                 'name': l.get('name', ''),
                 'qty': l.get('qty', 1),

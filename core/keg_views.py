@@ -2512,6 +2512,30 @@ def void_direct_transaction(request, txn_id):
     sale already has its own correction tool (Ilikuwa Kosa / write-off) and
     must go through that instead, so its debt-tracker bookkeeping stays
     consistent.
+
+    Split-group aware (2026-08-26 audit finding, Roy: "audit if futa from
+    recent sales adjusts stock balance"). A ✂️ Gawanya / 🤝 Deni split
+    (Transaction.split_payment_method_locked) reduces the ORIGINAL row's
+    own sale_amount and creates a NEW sibling for the split-off portion —
+    but the sibling NEVER carries any of the sale's real qty (only the
+    original row does; see that method's own docstring). Before this fix,
+    voiding the original row alone zeroed its qty — correctly restoring the
+    WHOLE physical unit to stock in isolation — while any still-live
+    sibling's revenue stayed recognized for that exact same now-"never
+    sold" unit: a self-contradictory ledger (stock says it never left the
+    shelf, a sibling transaction says it was paid for) that no report in
+    this app was built to reconcile. Voiding now cascades DOWNWARD ONLY —
+    the clicked transaction plus every live descendant reachable via
+    split_from — never walking UP to an unrelated root the staffer didn't
+    click. This keeps the common, safe case (voiding a split-off sibling
+    alone, which never carries real qty and needs no cascade at all) byte-
+    identical to before, while closing the dangerous case (voiding a row
+    that still has live children hanging off it, almost always the
+    original). A live CREDIT descendant blocks the whole cascade outright
+    — that slice needs the debt-tracker's own correction tool first, since
+    silently voiding just the cash/mpesa portion would leave the same
+    inconsistency one layer deeper (a customer's debt for an item the
+    stock ledger now says never left the shelf).
     """
     up = _get_up(request)
     if not up:
@@ -2545,33 +2569,78 @@ def void_direct_transaction(request, txn_id):
         )
 
     reason = (request.POST.get('reason') or '').strip()
-    old_amount = float(txn.revenue())
-    old_method = txn.payment_method
     item_description = txn.item.description if txn.item else ''
 
+    # Downward-only split-group closure — see docstring above. Never walks
+    # up to split_from's own parent; only what's reachable FROM the row
+    # that was actually clicked.
+    group_ids = {txn.id}
+    frontier = [txn.id]
+    group = [txn]
+    while frontier:
+        kids = list(
+            Transaction.objects.select_related('item__store')
+            .filter(business=up.business, split_from_id__in=frontier)
+            .exclude(id__in=group_ids)
+        )
+        if not kids:
+            break
+        group.extend(kids)
+        group_ids.update(k.id for k in kids)
+        frontier = [k.id for k in kids]
+
+    live_group = [m for m in group if m.payment_method != 'void']
+    if not live_group:
+        return JsonResponse({'ok': False, 'error': 'Tayari imefutwa.'}, status=400)
+
+    if any(m.payment_method == 'credit' for m in live_group):
+        return JsonResponse(
+            {'ok': False, 'error': (
+                'Mauzo haya yamegawanywa na sehemu yake ni deni — sahihisha sehemu hiyo '
+                'kwanza kupitia "Ilikuwa Kosa" (deni), kisha ujaribu kufuta hii tena.'
+            )},
+            status=400,
+        )
+
     with db_txn.atomic():
-        txn = Transaction.objects.select_for_update().get(id=txn.id)
-        if txn.payment_method == 'void':
+        locked = [
+            m for m in
+            Transaction.objects.select_for_update().filter(id__in=[m.id for m in live_group])
+            if m.payment_method != 'void'
+        ]
+        if not locked:
             return JsonResponse({'ok': False, 'error': 'Tayari imefutwa.'}, status=400)
 
-        _reverse_stock_movement_envelope(txn)
+        breakdown = [(m.payment_method, float(m.revenue())) for m in locked]
+        old_amount = round(sum(a for _pm, a in breakdown), 2)
 
-        txn.qty = Decimal('0')
-        txn.payment_method = 'void'
-        if reason:
-            txn.recipient = (f'{txn.recipient} [FUTWA: {reason}]' if txn.recipient else f'[FUTWA: {reason}]')[:200]
-            txn.save(update_fields=['qty', 'payment_method', 'recipient'])
-        else:
-            txn.save(update_fields=['qty', 'payment_method'])
+        for m in locked:
+            _reverse_stock_movement_envelope(m)
+            m.qty = Decimal('0')
+            m.payment_method = 'void'
+            if reason:
+                m.recipient = (f'{m.recipient} [FUTWA: {reason}]' if m.recipient else f'[FUTWA: {reason}]')[:200]
+                m.save(update_fields=['qty', 'payment_method', 'recipient'])
+            else:
+                m.save(update_fields=['qty', 'payment_method'])
 
     who = request.user.get_full_name() or request.user.username
     when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
     label = {'cash': 'Cash', 'mpesa': 'M-Pesa'}
-    message = (
-        f'🗑 {who} amefuta mauzo ya "{item_description}" (KES {old_amount:,.0f} '
-        f'{label.get(old_method, old_method)}) — stock na mapato vimerekebishwa. Tarehe {when}.'
-        + (f' Sababu: {reason}' if reason else '')
-    )
+    if len(breakdown) > 1:
+        parts = ' + '.join(f'KES {a:,.0f} {label.get(pm, pm)}' for pm, a in breakdown)
+        message = (
+            f'🗑 {who} amefuta mauzo YOTE ya "{item_description}" (yalikuwa yamegawanywa: '
+            f'{parts} — jumla KES {old_amount:,.0f}) — stock na mapato vimerekebishwa. Tarehe {when}.'
+            + (f' Sababu: {reason}' if reason else '')
+        )
+    else:
+        old_method, old_amount_single = breakdown[0]
+        message = (
+            f'🗑 {who} amefuta mauzo ya "{item_description}" (KES {old_amount_single:,.0f} '
+            f'{label.get(old_method, old_method)}) — stock na mapato vimerekebishwa. Tarehe {when}.'
+            + (f' Sababu: {reason}' if reason else '')
+        )
     _notify_direct_correction(up.business, message, request.user, source=('kitchen' if is_kitchen else 'bar'))
 
     return JsonResponse({'ok': True, 'message': message})

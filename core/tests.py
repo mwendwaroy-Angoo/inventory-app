@@ -19729,6 +19729,165 @@ class VoidDirectTransactionTest(TestCase):
         txn.refresh_from_db()
         self.assertEqual(txn.payment_method, 'cash')
 
+    # ── 2026-08-26 audit finding: split-group cascade ───────────────────
+    # Roy: "audit if futa from recent sales adjusts stock balance ...
+    # and after the fix assist in the backfill". Root cause: a ✂️ Gawanya
+    # (Transaction.split_payment_method_locked) split leaves the sale's
+    # REAL qty only on the row that was never split; the split-off sibling
+    # always carries qty=0. Voiding the qty-carrying row alone therefore
+    # restored the WHOLE physical unit to stock while a still-live sibling
+    # kept its own revenue recognized for that exact same now-"never sold"
+    # item. void_direct_transaction now cascades DOWNWARD (never upward)
+    # from whichever row was clicked.
+
+    def test_void_split_root_cascades_to_live_sibling_and_restores_stock_once(self):
+        self.assertEqual(self.item.current_balance(), Decimal('20'))
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='cash',
+        )
+        self.assertEqual(self.item.current_balance(), Decimal('19'))
+        _orig, child = Transaction.split_payment_method_locked(
+            txn_id=txn.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        # Split alone must never move stock — only the payment-method split.
+        self.assertEqual(self.item.current_balance(), Decimal('19'))
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {'reason': 'Mteja hakununua'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertIn('YOTE', data['message'])
+
+        txn.refresh_from_db()
+        child.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'void')
+        self.assertEqual(child.payment_method, 'void')
+        self.assertEqual(txn.qty, Decimal('0'))
+        self.assertEqual(child.qty, Decimal('0'), 'a split sibling never carried real qty to begin with')
+        # Stock restored exactly once — never doubled by voiding both rows.
+        self.assertEqual(self.item.current_balance(), Decimal('20'))
+        self.assertIn('Mteja hakununua', txn.recipient)
+        self.assertIn('Mteja hakununua', child.recipient)
+
+    def test_void_split_sibling_alone_is_safe_no_cascade_no_stock_change(self):
+        """The common, safe case: voiding just the split-off portion (the
+        one that never carried real qty) must NOT touch the still-live
+        original row or restore any stock — it never needed a cascade."""
+        self.assertEqual(self.item.current_balance(), Decimal('20'))
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='cash',
+        )
+        _orig, child = Transaction.split_payment_method_locked(
+            txn_id=txn.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        self.assertEqual(self.item.current_balance(), Decimal('19'))
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{child.id}/void/', {})
+        self.assertTrue(resp.json()['ok'])
+
+        txn.refresh_from_db()
+        child.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash', 'the original, still-live row must be left completely untouched')
+        self.assertEqual(child.payment_method, 'void')
+        # Real qty still lives on the untouched original — stock unaffected.
+        self.assertEqual(self.item.current_balance(), Decimal('19'))
+
+    def test_void_split_root_reversal_of_message_and_reconcile_excludes_both(self):
+        """Cascade correctness against the actual cash reconciliation
+        chain (Roy's second ask — float/cash-sales/counter-cash
+        sensibility): after cascading, NEITHER the cash NOR the mpesa
+        portion may still count toward a shift's expected cash."""
+        from core.shift_views import _window_revenue
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='cash',
+        )
+        Transaction.split_payment_method_locked(
+            txn_id=txn.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        start = timezone.now() - timedelta(hours=1)
+        end = timezone.now() + timedelta(hours=1)
+        self.assertEqual(_window_revenue(self.biz, is_kitchen=False, start=start, end=end), 500.0)
+
+        self.client.force_login(self.owner)
+        self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+
+        self.assertEqual(
+            _window_revenue(self.biz, is_kitchen=False, start=start, end=end), 0.0,
+            'cascading the void must drop BOTH the cash and mpesa fragments from live revenue',
+        )
+
+    def test_void_split_group_with_live_credit_sibling_is_refused(self):
+        """A credit fragment needs the debt tracker's own correction tool
+        (customer ledger cleanup) — the whole cascade must refuse rather
+        than silently leave a customer's debt standing against stock that
+        now says the item never left the shelf."""
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='cash',
+        )
+        _orig, credit_child = Transaction.split_payment_method_locked(
+            txn_id=txn.id, business=self.biz, split_amount=Decimal('300'),
+            new_method='credit', recipient='Bosco',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['ok'])
+
+        txn.refresh_from_db()
+        credit_child.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash', 'nothing may be touched when the cascade is refused')
+        self.assertEqual(credit_child.payment_method, 'credit')
+        self.assertEqual(self.item.current_balance(), Decimal('19'))
+
+    def test_void_already_fully_voided_split_group_rejected(self):
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('0'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        _orig, child = Transaction.split_payment_method_locked(
+            txn_id=txn.id, business=self.biz, split_amount=Decimal('80'), new_method='mpesa',
+        )
+        self.client.force_login(self.owner)
+        # Void the group once — succeeds.
+        resp1 = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertTrue(resp1.json()['ok'])
+        # Retrying on the (now fully void) group is a clean no-op rejection,
+        # not a silent double-reversal of the envelope/stock.
+        resp2 = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertEqual(resp2.status_code, 400)
+
+    def test_void_split_root_with_keg_barrel_reverses_envelope_once(self):
+        barrel = KegBarrel.objects.create(
+            business=self.biz, store=self.bar_store, item=self.item,
+            cost_price=Decimal('3000'), target_revenue=Decimal('5000'),
+            status='TAPPED', revenue_collected=Decimal('1000'),
+            volume_dispensed_ml=Decimal('2000'), cups_dispensed=10,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-500'), sale_amount=Decimal('250'), payment_method='cash',
+            keg_barrel=barrel, keg_serving='cup', keg_qty=5,
+        )
+        Transaction.split_payment_method_locked(
+            txn_id=txn.id, business=self.biz, split_amount=Decimal('150'), new_method='mpesa',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/bar/transactions/{txn.id}/void/', {})
+        self.assertTrue(resp.json()['ok'])
+        barrel.refresh_from_db()
+        # Whole 250 KES removed from revenue_collected (100 remaining cash +
+        # 150 split mpesa), and the physical 500ml removed exactly once
+        # (never double-reversed via the qty=0 sibling).
+        self.assertEqual(barrel.revenue_collected, Decimal('750'))
+        self.assertEqual(barrel.volume_dispensed_ml, Decimal('1500'))
+        self.assertEqual(barrel.cups_dispensed, 5)
+
 
 class LiveDirectReceiptLinesTest(TestCase):
     """2026-08-21 live report (Roy): "even if an item is deleted from
@@ -19904,6 +20063,103 @@ class LiveDirectReceiptLinesTest(TestCase):
             lines=[{'name': 'Tusker', 'subtotal': 200.0, 'txn_id': t1.id}],
         )
         self.assertIsNone(_live_direct_lines(receipt))
+
+    # ── 2026-08-26 audit finding: parent/child void independence ────────
+    # Found while auditing "does Futa adjust stock balance": voiding a
+    # split PARENT alone used to `continue` past the child-render loop
+    # entirely, hiding a STILL-LIVE sibling's genuine revenue from the
+    # receipt. Voiding a split CHILD alone rendered it anyway — the loop
+    # only ever checked the parent's own void/qty status, never the
+    # child's — so a voided sibling kept showing its stale amount as if
+    # still charged. Both are fixed by deciding each row's own liveness
+    # independently (never checking `qty` on a child — it's always 0 by
+    # construction, unrelated to whether it's void).
+
+    def test_voided_child_drops_its_own_line_parent_untouched(self):
+        from core.receipt_views import _live_direct_lines
+        t1 = self._txn(amount=Decimal('500'), payment_method='cash')
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[{'name': 'Tusker', 'subtotal': 500.0, 'txn_id': t1.id}],
+        )
+        _orig, child = Transaction.split_payment_method_locked(
+            txn_id=t1.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        child.payment_method = 'void'
+        child.qty = Decimal('0')
+        child.save(update_fields=['payment_method', 'qty'])
+
+        result = _live_direct_lines(receipt)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['txn_id'], t1.id)
+        self.assertEqual(result[0]['subtotal'], 200.0, "parent's own reduced (post-split) amount must be unaffected")
+
+    def test_voided_parent_still_shows_live_sibling(self):
+        """Direct regression lock for the receipt-display half of the
+        2026-08-26 audit — before the fix, this exact state (parent void,
+        sibling still genuinely live — the pre-fix void_direct_transaction
+        could produce it) silently hid the sibling's real, still-standing
+        revenue from the customer's own receipt."""
+        from core.receipt_views import _live_direct_lines
+        t1 = self._txn(amount=Decimal('500'), payment_method='cash')
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[{'name': 'Tusker', 'subtotal': 500.0, 'txn_id': t1.id}],
+        )
+        _orig, child = Transaction.split_payment_method_locked(
+            txn_id=t1.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        t1.payment_method = 'void'
+        t1.qty = Decimal('0')
+        t1.save(update_fields=['payment_method', 'qty'])
+
+        result = _live_direct_lines(receipt)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['txn_id'], child.id)
+        self.assertEqual(result[0]['subtotal'], 300.0)
+
+    def test_both_split_rows_voided_receipt_shows_nothing(self):
+        from core.receipt_views import _live_direct_lines
+        t1 = self._txn(amount=Decimal('500'), payment_method='cash')
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[{'name': 'Tusker', 'subtotal': 500.0, 'txn_id': t1.id}],
+        )
+        _orig, child = Transaction.split_payment_method_locked(
+            txn_id=t1.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        for t in (t1, child):
+            t.payment_method = 'void'
+            t.qty = Decimal('0')
+            t.save(update_fields=['payment_method', 'qty'])
+
+        result = _live_direct_lines(receipt)
+        self.assertIsNotNone(result)
+        self.assertEqual(result, [])
+
+    def test_public_receipt_reflects_cascaded_void_end_to_end(self):
+        """End-to-end through the real, fixed void_direct_transaction —
+        clicking Futa on the split root now correctly cascades, and the
+        receipt shows nothing left for that sale at all."""
+        t1 = self._txn(amount=Decimal('500'), payment_method='cash')
+        receipt = Receipt.issue(
+            business=self.biz, payment_method='cash',
+            lines=[{'name': 'Tusker', 'subtotal': 500.0, 'txn_id': t1.id}],
+        )
+        self.client.force_login(self.owner)
+        split_resp = self.client.post(f'/bar/transactions/{t1.id}/split-payment/', {
+            'new_method': 'mpesa', 'split_amount': '300',
+        })
+        self.assertTrue(split_resp.json().get('ok'), split_resp.json())
+
+        void_resp = self.client.post(f'/bar/transactions/{t1.id}/void/', {})
+        self.assertTrue(void_resp.json().get('ok'), void_resp.json())
+
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertEqual(len(resp.context['receipt'].lines), 0)
+        self.assertEqual(float(resp.context['receipt'].total), 0.0)
 
 
 class TransactionPresetCorrectionTest(TestCase):
@@ -45657,3 +45913,153 @@ class RevertVarianceMiscountTest(TestCase):
         resp = self._revert()
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(self.item.current_balance(), Decimal('0.75'))
+
+
+class BackfillVoidSplitSiblingsTest(TestCase):
+    """core/management/commands/backfill_void_split_siblings.py — the
+    2026-08-26 companion to void_direct_transaction()'s split-group
+    cascade fix (Roy: "audit if futa from recent sales adjusts stock
+    balance ... assist in the backfill"). Repairs any historical case
+    where a direct-sale split (✂️ Gawanya/🤝 Deni) ROOT was voided alone,
+    pre-fix, leaving a still-live sibling's revenue standing for an item
+    the stock ledger now says never left the shelf.
+
+    Builds the pre-fix broken state directly via the ORM (never through
+    the endpoint, which — post-fix — can no longer produce it), matching
+    this app's own established pattern for a backfill whose bug the live
+    code path no longer reproduces."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Backfill Void Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='bvs_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='BVS-01', unit='Pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('150'), opening_bin_balance=Decimal('20'),
+        )
+
+    def _broken_group(self, item=None, total=Decimal('500'), split=Decimal('300')):
+        """Build the exact pre-fix broken shape: a split root that's
+        already void (as the OLD void_direct_transaction would have left
+        it) while its sibling is still fully live."""
+        item = item or self.item
+        root = Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal('-1'), sale_amount=total, payment_method='cash',
+        )
+        from core.models import Transaction as _Txn
+        _orig, sibling = _Txn.split_payment_method_locked(
+            txn_id=root.id, business=self.biz, split_amount=split, new_method='mpesa',
+        )
+        root.refresh_from_db()
+        root.payment_method = 'void'
+        root.qty = Decimal('0')
+        root.save(update_fields=['payment_method', 'qty'])
+        return root, sibling
+
+    def test_dry_run_reports_but_saves_nothing(self):
+        from django.core.management import call_command
+        from io import StringIO
+        root, sibling = self._broken_group()
+        out = StringIO()
+        call_command('backfill_void_split_siblings', dry_run=True, stdout=out)
+        sibling.refresh_from_db()
+        self.assertEqual(sibling.payment_method, 'mpesa', 'dry-run must write nothing')
+        self.assertIn('would void', out.getvalue())
+
+    def test_voids_the_live_sibling_and_reverses_its_own_share(self):
+        from django.core.management import call_command
+        from io import StringIO
+        root, sibling = self._broken_group()
+        call_command('backfill_void_split_siblings', stdout=StringIO())
+        sibling.refresh_from_db()
+        self.assertEqual(sibling.payment_method, 'void')
+        self.assertEqual(sibling.qty, Decimal('0'), 'a split sibling never carried real qty to begin with')
+        self.assertIn('[FUTWA:', sibling.recipient)
+
+    def test_never_touches_stock_further_root_already_restored_it(self):
+        """The root's own void already restored the whole physical unit
+        (pre-fix) — the backfill must never restore it a second time; a
+        sibling always carried qty=0, so voiding it moves nothing more."""
+        from django.core.management import call_command
+        from io import StringIO
+        self.assertEqual(self.item.current_balance(), Decimal('20'))
+        root, sibling = self._broken_group()
+        self.assertEqual(self.item.current_balance(), Decimal('20'), 'root void already restored it (pre-fix behaviour)')
+        call_command('backfill_void_split_siblings', stdout=StringIO())
+        self.assertEqual(self.item.current_balance(), Decimal('20'), 'backfill must not move stock a second time')
+
+    def test_credit_sibling_never_auto_voided_only_flagged(self):
+        from django.core.management import call_command
+        from io import StringIO
+        root = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('500'), payment_method='cash',
+        )
+        from core.models import Transaction as _Txn
+        _orig, credit_sibling = _Txn.split_payment_method_locked(
+            txn_id=root.id, business=self.biz, split_amount=Decimal('300'),
+            new_method='credit', recipient='Bosco',
+        )
+        root.refresh_from_db()
+        root.payment_method = 'void'
+        root.qty = Decimal('0')
+        root.save(update_fields=['payment_method', 'qty'])
+
+        out = StringIO()
+        call_command('backfill_void_split_siblings', stdout=out)
+        credit_sibling.refresh_from_db()
+        self.assertEqual(credit_sibling.payment_method, 'credit', 'a credit fragment must never be auto-voided')
+        self.assertIn('NOT auto-voided', out.getvalue())
+
+    def test_business_scoping_never_leaks_across_businesses(self):
+        from django.core.management import call_command
+        from io import StringIO
+        other_biz = Business.objects.create(name='Other Backfill Void Biz')
+        other_store = Store.objects.create(business=other_biz, name='Bar')
+        other_item = Item.objects.create(
+            business=other_biz, store=other_store, description='Foreign',
+            material_no='BVS-FOREIGN', unit='Pcs', selling_price=Decimal('200'),
+        )
+        root_a, sibling_a = self._broken_group()
+        root_b = Transaction.objects.create(
+            business=other_biz, item=other_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('400'), payment_method='cash',
+        )
+        from core.models import Transaction as _Txn
+        _orig_b, sibling_b = _Txn.split_payment_method_locked(
+            txn_id=root_b.id, business=other_biz, split_amount=Decimal('150'), new_method='mpesa',
+        )
+        root_b.refresh_from_db()
+        root_b.payment_method = 'void'
+        root_b.qty = Decimal('0')
+        root_b.save(update_fields=['payment_method', 'qty'])
+
+        call_command('backfill_void_split_siblings', business=self.biz.name, stdout=StringIO())
+        sibling_a.refresh_from_db()
+        sibling_b.refresh_from_db()
+        self.assertEqual(sibling_a.payment_method, 'void', 'the named business must be fixed')
+        self.assertEqual(sibling_b.payment_method, 'mpesa', 'a different business must be left completely untouched')
+
+    def test_idempotent_second_run_finds_nothing_left(self):
+        from django.core.management import call_command
+        from io import StringIO
+        root, sibling = self._broken_group()
+        call_command('backfill_void_split_siblings', stdout=StringIO())
+        out = StringIO()
+        call_command('backfill_void_split_siblings', stdout=out)
+        self.assertIn('Split groups affected: 0', out.getvalue())
+
+    def test_unaffected_business_reports_zero(self):
+        from django.core.management import call_command
+        from io import StringIO
+        # A completely ordinary, never-split, never-voided sale.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+        out = StringIO()
+        call_command('backfill_void_split_siblings', stdout=out)
+        self.assertIn('Split groups affected: 0', out.getvalue())

@@ -9191,3 +9191,91 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   immediate item unblocking, working from both DISPUTED and finalized-
   RESOLVED starting states, the "nothing to revert" guard, and the
   staff-blocked regression lock. No migrations.
+- Futa (Recent Sales) split-group stock/cash inconsistency + backfill +
+  float→cash-sales→counter-cash audit (2026-08-26), urgent live request:
+  "audit if futa from recent sales adjusts stock balance and then after
+  the fix assist in the backfill at the same audit the integrity from
+  float to cash sales to counter cash sensibility and if you flag
+  anything perform the fix." **Root cause, traced through the real
+  code, not guessed**: `void_direct_transaction()` ("🗑 Futa" on a direct
+  sale in the "🕐 Malipo ya Hivi Karibuni" panel) zeroes `qty` and flips
+  `payment_method='void'` on ONE clicked `Transaction` with no awareness
+  at all of `Transaction.split_from`/`split_children` — the ✂️ Gawanya/
+  🤝 Deni split mechanism (2026-07-26 onward). A split keeps the sale's
+  REAL physical `qty` on the ORIGINAL row only; the split-off sibling
+  always carries `qty=0` (see `split_payment_method_locked()`'s own
+  docstring). Voiding the qty-carrying original ALONE therefore restored
+  the WHOLE physical unit to stock — correct in isolation — while any
+  still-live sibling (say, the mpesa portion of a cash+mpesa split) kept
+  its own revenue recognized for that exact same now-"never sold" item: a
+  self-contradictory ledger (stock says it never left the shelf, a
+  sibling transaction says it was paid for) that fed straight into
+  `_reconcile()`/`till_expected_cash()` too, since both simply filter on
+  `payment_method` — the still-live sibling kept counting toward
+  cash/mpesa reconciliation for an item the stock ledger no longer
+  believed was sold. **Fix**: voiding now cascades DOWNWARD ONLY — the
+  clicked transaction plus every live descendant reachable via
+  `split_from`, walking recursively via a small closure — never upward to
+  an unrelated root the staffer didn't click. This keeps the common, safe
+  case (voiding a split-off sibling alone, which never carries real `qty`
+  and needs no cascade at all — verified this is genuinely inert on its
+  own) byte-identical to before, while closing the dangerous case
+  (voiding a row that still has live children hanging off it, almost
+  always the original). A live CREDIT descendant blocks the WHOLE cascade
+  outright with a clear error pointing to the debt tracker's own
+  "Ilikuwa Kosa" tool first — silently voiding just the cash/mpesa
+  portion would leave the identical inconsistency one layer deeper (a
+  customer's debt for an item the stock ledger now says never left the
+  shelf). Each member of a cascaded group reverses its own share of the
+  source revenue-envelope (`_reverse_stock_movement_envelope`, unchanged,
+  called per-member) and gets the same `[FUTWA: reason]` tag, so the
+  whole group is traceable identically in Transaction History; the
+  physical `qty` is still only ever restored ONCE (from wherever it
+  lives — the original), regardless of how many members are in the
+  group. **Two more real bugs found in the SAME investigation, on the
+  customer-facing receipt side**: `core.receipt_views._live_direct_lines()`
+  (built 2026-08-21 to self-heal a direct sale's receipt after a
+  correction) had its parent-liveness and child-liveness checks WRONGLY
+  bundled together in one loop — voiding the PARENT `continue`d straight
+  past the child-render code entirely, silently hiding a still-live
+  sibling's genuine revenue from the customer's own receipt; and voiding
+  a CHILD alone rendered it ANYWAY, since the child-append code never
+  checked `payment_method=='void'` at all (only ever checked the
+  UNRELATED parent's own status) — a voided split fragment kept showing
+  its stale, pre-void amount on the receipt as if still charged. Fixed by
+  deciding each row's own liveness independently — critically, a child's
+  `qty` must NEVER be checked (always 0 by construction, unrelated to
+  whether it's void) — only `payment_method`. **Backfill**: new
+  `backfill_void_split_siblings` (`--dry-run` first, matching this app's
+  own established convention) walks every historical VOID direct-sale
+  Transaction's downward `split_from` closure and voids any still-live
+  cash/mpesa descendant it finds (same envelope reversal, same
+  `[FUTWA: backfill — ...]` tag); a live CREDIT descendant is NEVER
+  auto-voided, only reported for manual follow-up via the debt tracker's
+  own tool — idempotent, safe to re-run, optional `--business=NAME`
+  scoping. **Float→cash-sales→counter-cash audit**: re-read `_reconcile()`
+  and `till_expected_cash()` end to end — confirmed both already
+  correctly exclude `payment_method='void'` by construction (their
+  cash/mpesa/credit filters simply never match it), confirmed `_reconcile()`
+  is the single formula every consumer (`active_shift_api`, `close_shift`,
+  `shift_history`, `bar_z_report`) reads from with no independent
+  reimplementation anywhere to drift, and confirmed the theft-verdict
+  work earlier this same day (`[SVQ-REVERT]`/`[THEFT]` corrective
+  transactions) never touches `type='Issue'` at all, so it has zero
+  interaction with cash reconciliation. The one real, substantive gap in
+  this whole chain WAS the split/void cascade above — now fixed, closing
+  both the stock-balance question and the cash-reconciliation question
+  together (a cascaded void drops the group's ENTIRE revenue from
+  `_reconcile()`/`till_expected_cash()` at once, matching the group's
+  entire `qty` being restored at once). No other drift found. 21 new
+  tests (`VoidDirectTransactionTest` split-cascade coverage — the
+  cascade itself, the safe-single-sibling-no-cascade regression lock, the
+  credit-blocks-everything refusal, already-voided-group rejection, keg-
+  envelope-reversed-once, and a direct `_window_revenue` regression lock
+  proving both fragments drop out of live shift revenue together;
+  `LiveDirectReceiptLinesTest` — voided-child-drops-its-line, voided-
+  parent-still-shows-live-sibling, both-voided-shows-nothing, and a full
+  end-to-end HTTP round-trip through the real, fixed endpoint;
+  `BackfillVoidSplitSiblingsTest` — dry-run, real repair, credit-never-
+  auto-voided, business-scoping, idempotent re-run, unaffected-business
+  no-op). No migrations.
