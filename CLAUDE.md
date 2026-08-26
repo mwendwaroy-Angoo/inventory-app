@@ -8871,3 +8871,109 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `LiveDirectReceiptLinesTest`/`DirectSalePaymentSplitTest`/`ReceiptSplit
   PaymentDisplayTest`/`VoidDirectTransactionTest` suites re-run and
   confirmed passing unmodified. No migrations.
+- Stock-take variance reject redesigned into a theft verdict (2026-08-26),
+  live design conversation: Roy pushed back hard on the pre-existing
+  accept/reject shape — "if rejected, the variance closes as resolved but
+  nothing gets corrected... the business owner cannot fail to replenish
+  stock... but the business owner knows that he has been stolen from."
+  Root problem: 'dismiss' ("Kataa") used to mean nothing more than "I don't
+  believe this explanation" — no corrective transaction, no distinction
+  between an innocent mistake and something deliberate, and the stock
+  balance stayed wrong forever. Redesigned per Roy's own framing, with his
+  explicit invitation to interpret the ambiguous parts ("I am not sure if
+  I have made sense so you can also improve on what you know I mean").
+  **The physical correction is now unconditional and immediate on EITHER
+  decision** — 'dismiss' now creates the SAME kind of corrective
+  `Transaction` 'accept' already did (Wastage for a decrease, Receipt for
+  an increase), the instant it's clicked, tagged `[THEFT]` (a real loss —
+  deliberately NOT excluded from P&L/analytics the way `[ADJ-NOLOSS]` is).
+  **What's NOT immediate is the accusation**: the row goes to a new
+  `DISPUTED` status (not straight to `RESOLVED`) with a
+  `StockVarianceQuery.dispute_deadline` — `Business.
+  variance_dispute_window_hours` (accounts migration 0066, owner-
+  configurable, default 48h, new "Sera ya Tofauti za Stock" card on Payment
+  Settings, `_section='variance_policy'`) — during which the accused
+  staffer can respond (`respond_to_variance()` stays `DISPUTED`, doesn't
+  flip to `RESPONDED`, so the verdict+deadline already in place aren't
+  lost — notifies the owner distinctly: "Jibu Limepokewa Kabla ya Muda
+  Kuisha"). `item_has_pending_variance()` treats `DISPUTED` exactly like
+  `RESOLVED` for the ITEM's own sale-ability — Roy's explicit "the item
+  should be sellable again... another staff's mess should not affect her
+  normal operations" — the appeal window is purely about the STAFFER's own
+  record, never the item. New `finalize_now` action lets the owner skip
+  waiting entirely ("the business owner should be the one to get to decide
+  whether he wants an explanation or not"). New lazy sweep
+  `finalize_expired_variance_disputes()` (same "checked on read, no real
+  cron" pattern as `KitchenStockReceipt.maybe_auto_close()`) auto-finalizes
+  a `DISPUTED` row past its deadline on the next page load of either the
+  owner's variances list or the staffer's own respond page, notifying the
+  staffer it's now permanent. **Reconsideration** (accept↔dismiss any
+  number of times, once a row has ever been decided) is a PURE
+  accountability-record flip — `owner_accepted`/`compliance_noted`/`status`
+  only — the `corrective_txn` created at the moment of the FIRST decision
+  is NEVER re-created, re-touched, or reversed, matching Roy's own explicit
+  rule verbatim: "the only thing that should change is the staff's
+  performance record and remuneration... but not the stock balance."
+  `select_for_update()` + `transaction.atomic()` added around the whole
+  read-modify-write (a new necessity now that dismiss also writes a real
+  financial transaction) closes the one race this creates: two near-
+  simultaneous first-time decisions on the same row could otherwise both
+  read `owner_accepted=None` and both create a corrective transaction for
+  the same physical shortfall. A reversal (either direction) gets the
+  established MAREKESHO wording (who, what changed, when, why) via
+  `owner_note`, and the staffer is separately notified either way. Haki/
+  recognition impact: `core/haki_views.py`'s `dismissed_variances`/
+  `variance_loss_kes` now `.exclude(status=StockVarianceQuery.DISPUTED)` —
+  a still-DISPUTED theft verdict does NOT yet count against a staffer's own
+  track record; only once it's genuinely `RESOLVED` (timeout, "Thibitisha
+  Sasa," or staying firm after a response) does it, per Roy's own "the
+  verdict now becomes permanent" framing — this was my own interpretive
+  call on the ambiguous part of the request, flagged here for Roy to
+  correct if he meant something else. Separately, per Roy's "regarding
+  email notification... it is quite important": `_notify_owner()`
+  (the shared fan-out already used for every stock-take owner notification
+  — a new variance created, an auto-reconciled gap, a staff response) now
+  ALSO sends email via `send_email_notification_async`, alongside the
+  pre-existing in-app + SMS — confirmed via direct trace this channel was
+  completely missing before (in-app + SMS only). New `StockVarianceQuery.
+  DISPUTED` status value + `dispute_deadline` field (migration
+  `0176_stockvariancequery_dispute_deadline_and_more`). `stock_variances_
+  pending.html` gained a new "🚨 Disputed" section (item/variance/staff/
+  deadline/corrective_txn/owner_note/staff_response, three owner actions:
+  🔒 Thibitisha Sasa / ✅ Badilisha kuwa Sahihi / Bado Ninakataa) and a
+  "↺ Badilisha uamuzi" reconsider toggle on already-Resolved rows, matching
+  the petty-cash-review-undo precedent (2026-07-25). `stock_variance_
+  respond.html` gained a disputed-state banner explaining the preliminary
+  verdict + deadline to the accused staffer. Two pre-existing tests updated
+  for the new first-time-dismiss contract (`StockVarianceReviewWordingTest.
+  test_dismiss_skip_leaves_owner_note_blank_and_still_resolves` and
+  `StockTakeVarianceItemLockTest.test_owner_resolving_variance_unlocks_the_
+  item`, both now assert `DISPUTED` not `RESOLVED` for a first-time
+  dismiss; the latter gained a companion `test_owner_accepting_variance_
+  unlocks_the_item` locking in that 'accept' is completely unchanged — no
+  appeal window, straight to `RESOLVED`). 38 new tests
+  (`StockVarianceTheftVerdictTest`, `VarianceDisputeWindowSettingsTest`,
+  `VarianceLossKesDisputedExclusionTest`) covering the full lifecycle:
+  immediate correction on first dismiss (both directions), the `[THEFT]`
+  tag's real-loss treatment via `loss_value()`, deadline computation
+  (default and business-configured), immediate item unblocking, staffer
+  notification + SMS + owner email, both reconsideration directions never
+  touching `corrective_txn`/stock, re-dismissing while still disputed never
+  double-corrects, MAREKEBISHO wording, `finalize_now` (including the
+  reject-when-not-disputed guard), the lazy-sweep auto-finalize (both entry
+  points, plus a still-within-window negative), staff-response-while-
+  disputed staying `DISPUTED` and notifying the owner distinctly, the
+  `select_for_update()` race-safety re-run, manager parity, a staff-blocked
+  regression lock (redirect, not JSON 403 — `@owner_or_manager_required` is
+  a full-page decorator), the settings form (default/custom/invalid/
+  clamped-to-1), and the Haki-exclusion matrix (disputed excluded, same row
+  counts once finalized, mixed rows sum only the resolved one). All
+  pre-existing stock-take/variance/Haki test suites (98 tests across
+  `StockVarianceReviewWordingTest`, `StockTakeVarianceItemLockTest`,
+  `VarianceLossKesAffirmationTest`, `PayrollVarianceSuggestionTest`,
+  `RunAccountabilityStockTakeGapTest`, `StockTakeApiAccountabilityTest`,
+  `AttributeVarianceShiftTest`, `StockTakeVarianceAttributionTest`,
+  `StartStockTakeIdempotencyTest`, `StockTakeVarianceDashboardExclusionTest`,
+  `BackfillSvqInvoiceTagsCommandTest`) confirmed passing unmodified or with
+  only the two documented updates above. Two migrations (core 0176,
+  accounts 0066), both additive.

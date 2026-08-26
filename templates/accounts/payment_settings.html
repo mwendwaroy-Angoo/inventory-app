@@ -805,6 +805,39 @@
 </div>
 {% endif %}
 
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- STOCK VARIANCE DISPUTE WINDOW (2026-08-26, theft-verdict redesign)      -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="row">
+  <div class="col-12">
+    <div class="card mb-4">
+      <div class="card-body">
+        <h5 style="color:var(--gold); font-family:'Playfair Display',serif; margin-bottom:0.5rem;">
+          🚨 {% trans 'Muda wa Kupinga Uamuzi wa Tofauti ya Stock' %}
+        </h5>
+        <p style="color:#b0b0b0; font-size:0.83rem; margin-bottom:1.25rem;">
+          {% trans 'Ukikataa tofauti ya stock (uamuzi wa wizi/makosa ya makusudi), stock inasahihishwa mara moja — lakini mfanyakazi anayehusika anapewa muda huu kutoa maelezo kabla uamuzi kuathiri rekodi yake ya utendaji na malipo kwa kudumu. Unaweza pia kuthibitisha uamuzi mapema bila kusubiri muda wote.' %}
+        </p>
+        <form method="post" action="{% url 'payment_settings' %}">
+          {% csrf_token %}
+          <input type="hidden" name="_section" value="variance_policy">
+          <div class="mb-3">
+            <label for="id_variance_dispute_window_hours" style="color:var(--pearl); font-size:0.85rem;">
+              {% trans 'Masaa ya kusubiri jibu' %}
+            </label>
+            <input type="number" name="variance_dispute_window_hours" id="id_variance_dispute_window_hours"
+                   min="1" step="1" value="{{ business.variance_dispute_window_hours }}"
+                   class="form-control" style="max-width:180px; background:#1a1a1a; border:1px solid #444; color:var(--pearl);">
+          </div>
+          <button type="submit" class="btn btn-gold">
+            💾 {% trans 'Hifadhi' %}
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% if biz_profile.modules.keg or biz_profile.modules.kitchen %}
 <div class="row justify-content-center">
   <div class="col-lg-8">

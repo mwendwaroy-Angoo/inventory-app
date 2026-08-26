@@ -8704,10 +8704,12 @@ class StockVarianceQuery(models.Model):
 
     PENDING   = 'pending'
     RESPONDED = 'responded'
+    DISPUTED  = 'disputed'
     RESOLVED  = 'resolved'
     STATUS_CHOICES = [
         ('pending',   'Pending Staff Response'),
         ('responded', 'Staff Responded'),
+        ('disputed',  'Rejected as Theft — Appeal Window Open'),
         ('resolved',  'Resolved'),
     ]
 
@@ -8789,6 +8791,25 @@ class StockVarianceQuery(models.Model):
     corrective_txn    = models.ForeignKey('Transaction', on_delete=models.SET_NULL,
                                            null=True, blank=True, related_name='variance_correction')
     compliance_noted  = models.BooleanField(default=False)
+    # 2026-08-26 (Roy, live — "the purpose of this level of scrutiny is to
+    # capture theft"): rejecting a variance ("Kataa") used to be ambiguous —
+    # nothing corrected the book balance, and nothing distinguished "this was
+    # a genuine mistake" from "this was deliberate." Redesigned per Roy's own
+    # framing: a business must replenish/correct stock regardless of WHY it's
+    # short, so 'dismiss' now ALWAYS creates a corrective transaction (same
+    # as 'accept' already did) the moment it's clicked — the physical
+    # correction is immediate and permanent, never revisited again. What's
+    # NOT immediate is the ACCUSATION: the accused staffer gets a window
+    # (Business.variance_dispute_window_hours) to respond before the verdict
+    # — which affects only their own recognition score and Haki record, via
+    # the EXISTING owner_accepted/compliance_noted fields, completely
+    # independent of the stock correction above — becomes permanent. Set the
+    # moment 'dismiss' first fires (status -> DISPUTED); cleared to null once
+    # the row reaches RESOLVED (whether by timeout, an explicit "Thibitisha
+    # Sasa," or an owner reconsideration) — a non-null value is exactly
+    # "still within the appeal window," queried directly rather than
+    # recomputed from status each time.
+    dispute_deadline  = models.DateTimeField(null=True, blank=True)
     created_at        = models.DateTimeField(auto_now_add=True)
 
     class Meta:

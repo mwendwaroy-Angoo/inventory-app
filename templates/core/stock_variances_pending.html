@@ -48,6 +48,7 @@
     .badge-pending  { background: rgba(251,191,36,0.12);  color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
     .badge-responded{ background: rgba(96,165,250,0.12);  color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
     .badge-resolved { background: rgba(110,231,183,0.12); color: #6ee7b7; border: 1px solid rgba(110,231,183,0.3); }
+    .badge-disputed { background: rgba(192,57,90,0.12); color: #e87090; border: 1px solid rgba(192,57,90,0.3); }
     .section-label {
         font-size: 0.72rem;
         text-transform: uppercase;
@@ -72,7 +73,7 @@
     <div>
         <h1 class="page-title mb-1">📊 {% trans 'Tofauti za Stok' %}</h1>
         <p style="color:#b0b0b0; font-size:0.875rem; margin:0;">
-            {% trans 'Kagua tofauti, kubali au kataa maelezo ya wafanyakazi.' %}
+            {% trans 'Kagua tofauti. Kukubali kunamaanisha maelezo halali (mauzo yasiyorekodiwa au upotevu usiojulikana). Kukataa kunamaanisha si maelezo halali — stock inasahihishwa mara moja, na mfanyakazi anayehusika anapewa muda wa kujibu kabla uamuzi kuathiri rekodi yake ya utendaji kwa kudumu.' %}
         </p>
     </div>
     <div class="d-flex gap-2">
@@ -276,7 +277,81 @@
 {% endfor %}
 {% endif %}
 
-{% if not pending and not responded %}
+<!-- ── Disputed — theft verdict, appeal window open (2026-08-26) ── -->
+{% if disputed %}
+<div class="section-label" style="margin-top:1.5rem; color:#e87090;">🚨 {{ disputed|length }} {% trans 'Uamuzi wa Awali — Muda wa Kupinga Bado Uko Wazi' %}</div>
+{% for v in disputed %}
+<div class="var-card" style="border-left: 3px solid #c0395a;">
+    <div class="var-card-header">
+        <div>
+            <span style="color:var(--pearl); font-weight:600;">{{ v.item_name_cache }}</span>
+            {% if v.direction == 'decrease' %}
+            <span style="font-size:0.78rem; color:#f87171; margin-left:0.4rem;">↓ {{ v.variance|floatformat:"-2" }}</span>
+            {% else %}
+            <span style="font-size:0.78rem; color:#6ee7b7; margin-left:0.4rem;">↑ +{{ v.variance|floatformat:"-2" }}</span>
+            {% endif %}
+        </div>
+        <span class="var-badge badge-disputed">🚨 Imekataliwa — Inasubiri</span>
+    </div>
+    <div class="var-card-body">
+        <div style="font-size:0.8rem; color:#b0b0b0; margin-bottom:0.5rem;">
+            {% trans 'Stock tayari imesahihishwa (bidhaa inauzika tena). Rekodi ya utendaji ya mfanyakazi bado haijawa ya kudumu.' %}
+        </div>
+        <div class="row g-2 mb-2" style="font-size:0.82rem;">
+            <div class="col-sm-4">
+                <div style="color:#b0b0b0; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">Aliyehusika</div>
+                <div style="color:var(--pearl);">
+                    {% if v.queried_staff %}{{ v.queried_staff.user.get_full_name|default:v.queried_staff.user.username }}{% else %}&mdash;{% endif %}
+                </div>
+            </div>
+            <div class="col-sm-4">
+                <div style="color:#b0b0b0; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">Muda Unaisha</div>
+                <div style="color:#fbbf24;">{{ v.dispute_deadline|date:"d M Y, H:i" }}</div>
+            </div>
+            {% if v.corrective_txn %}
+            <div class="col-sm-4">
+                <div style="color:#b0b0b0; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em;">Marekebisho</div>
+                <div style="color:var(--pearl);">Transaction #{{ v.corrective_txn.id }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% if v.owner_note %}
+        <div style="font-size:0.8rem; color:#b0b0b0; background:rgba(255,255,255,0.02); padding:0.4rem 0.65rem; border-radius:6px; border:1px solid #2a2a2a; margin-bottom:0.5rem;">
+            {% trans 'Sababu yako' %}: "{{ v.owner_note }}"
+        </div>
+        {% endif %}
+        {% if v.response_note or v.response_type %}
+        <div style="font-size:0.8rem; color:#60a5fa; background:rgba(96,165,250,0.06); padding:0.4rem 0.65rem; border-radius:6px; border:1px solid rgba(96,165,250,0.25); margin-bottom:0.65rem;">
+            💬 {% trans 'Jibu la mfanyakazi' %}: <span class="resp-chip">{{ v.get_response_type_display }}</span>
+            {% if v.response_note %}"{{ v.response_note }}"{% endif %}
+        </div>
+        {% endif %}
+
+        {% if is_owner %}
+        <div class="d-flex gap-2 flex-wrap">
+            <button onclick="finalizeVarianceNow({{ v.id }}, '{{ v.item_name_cache|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(192,57,90,0.1); border:1px solid rgba(192,57,90,0.3); color:#e87090;">
+                🔒 {% trans 'Thibitisha Sasa' %}
+            </button>
+            <button onclick="disputedAction({{ v.id }}, 'accept', '{{ v.item_name_cache|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(110,231,183,0.06); border:1px solid rgba(110,231,183,0.2); color:#6ee7b7;">
+                ✅ {% trans 'Badilisha kuwa Sahihi' %}
+            </button>
+            <button onclick="disputedAction({{ v.id }}, 'dismiss', '{{ v.item_name_cache|escapejs }}')"
+                class="btn btn-sm"
+                style="border:1px solid #444; color:#b0b0b0;">
+                {% trans 'Bado Ninakataa' %}
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if not pending and not responded and not disputed %}
 <div style="text-align:center; padding:3rem 1rem; color:#888;">
     <div style="font-size:2rem; margin-bottom:0.5rem;">✅</div>
     <div>{% trans 'Hakuna tofauti zinazosubiri.' %}</div>
@@ -311,6 +386,32 @@
     </div>
     {% if v.owner_note %}
     <div style="font-size:0.8rem; color:#b0b0b0; padding:0 0.9rem 0.65rem; font-style:italic;">"{{ v.owner_note }}"</div>
+    {% endif %}
+    {% if is_owner %}
+    <!-- 2026-08-26 — reconsider toggle, same pattern as petty cash review's
+         own undo mechanism: never re-touches the stock correction, only the
+         accountability fields. -->
+    <div style="padding:0 0.9rem 0.65rem;">
+        <button onclick="toggleReconsider({{ v.id }})" id="reconsider-toggle-{{ v.id }}"
+            style="background:transparent; border:1px dashed #444; color:#888; border-radius:6px; padding:0.2rem 0.55rem; font-size:0.72rem; cursor:pointer;">
+            ↺ {% trans 'Badilisha uamuzi' %}
+        </button>
+        <div id="reconsider-actions-{{ v.id }}" style="display:none; margin-top:0.5rem;" class="d-flex gap-2 flex-wrap">
+            {% if not v.owner_accepted %}
+            <button onclick="reconsiderVariance({{ v.id }}, 'accept', '{{ v.item_name_cache|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(110,231,183,0.06); border:1px solid rgba(110,231,183,0.2); color:#6ee7b7;">
+                ✅ {% trans 'Badilisha kuwa Sahihi' %}
+            </button>
+            {% else %}
+            <button onclick="reconsiderVariance({{ v.id }}, 'dismiss', '{{ v.item_name_cache|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(192,57,90,0.08); border:1px solid rgba(192,57,90,0.25); color:#c0395a;">
+                ❌ {% trans 'Rudisha kuwa Imekataliwa' %}
+            </button>
+            {% endif %}
+        </div>
+    </div>
     {% endif %}
 </div>
 {% endfor %}
@@ -395,6 +496,11 @@ function _csrf() {
   };
 })();
 
+function toggleReconsider(varId) {
+    var box = document.getElementById('reconsider-actions-' + varId);
+    if (box) box.style.display = (box.style.display === 'none' || box.style.display === '') ? 'flex' : 'none';
+}
+
 function toggleReasonForm(varId) {
     var form = document.getElementById('reason-form-' + varId);
     var btn  = document.getElementById('reason-toggle-' + varId);
@@ -450,11 +556,15 @@ function reviewVariance(varId, action, itemName, noPriorResponse, anchorEl) {
     if (noPriorResponse) {
         label = action === 'accept'
             ? 'Kubali tofauti ya ' + itemName + ' bila jibu la mfanyakazi?\n\nTransaction ya marekebisho itaundwa.'
-            : 'Kataa tofauti ya ' + itemName + ' bila jibu la mfanyakazi?\n\nItarekodiwa kwenye rekodi ya utendaji wake.';
+            : 'Kataa tofauti ya ' + itemName + ' kama si maelezo halali (wizi/makosa ya makusudi)?\n\n' +
+              'Stock itasahihishwa MARA MOJA. Mfanyakazi anayehusika atapewa muda wa kujibu ' +
+              'kabla uamuzi huu kuathiri rekodi yake ya utendaji na malipo kwa kudumu.';
     } else {
         label = action === 'accept'
             ? 'Kubali jibu la mfanyakazi na uunde transaction ya ' + itemName + '?'
-            : 'Kataa jibu la mfanyakazi na urekodi kama tatizo la utendaji?';
+            : 'Kataa jibu la mfanyakazi kama si maelezo halali (wizi/makosa ya makusudi)?\n\n' +
+              'Stock itasahihishwa MARA MOJA. Mfanyakazi anayehusika atapewa muda wa kujibu ' +
+              'kabla uamuzi huu kuathiri rekodi yake ya utendaji na malipo kwa kudumu.';
     }
     if (!confirm(label)) return;
 
@@ -463,15 +573,53 @@ function reviewVariance(varId, action, itemName, noPriorResponse, anchorEl) {
     // exactly the kind of thing that needs to be on record. 'accept' already
     // has the richer "Kubali na Sababu" alternative for owners who want to
     // leave a note, so it keeps its direct-submit path unchanged here.
+    // 2026-08-26 — chips updated for the new theft-verdict meaning of Kataa.
     if (action === 'dismiss') {
         openReasonChips({
             anchorEl: anchorEl,
-            title: 'Kwa nini umekataa?',
-            chips: ['Hesabu ya awali ilikuwa sahihi', 'Maelezo hayakubaliki'],
+            title: 'Kwa nini umekataa (wizi/makosa ya makusudi)?',
+            chips: ['Hesabu ya awali ilikuwa sahihi', 'Hakuna maelezo ya kuaminika', 'Muundo wa wizi unaonekana'],
             onSelect: function (reason) { _submitReviewVariance(varId, action, reason); },
         });
         return;
     }
+    _submitReviewVariance(varId, action, '');
+}
+
+// 2026-08-26 (theft-verdict redesign): the DISPUTED section's own three
+// actions — confirm early, reconsider to accept, or re-affirm the theft
+// verdict. All three route through the SAME review_variance() endpoint,
+// which already knows (via is_reconsideration server-side) never to touch
+// the corrective_txn/stock a second time once a first decision exists.
+function disputedAction(varId, action, itemName) {
+    var labels = {
+        accept: 'Badilisha uamuzi wa "' + itemName + '" kuwa UMEKUBALIWA?\n\n' +
+                'Haitahesabika tena kwenye rekodi ya utendaji ya mfanyakazi. Stock haitaguswa — ' +
+                'tayari imesahihishwa.',
+        dismiss: 'Thibitisha kuwa uamuzi wa "' + itemName + '" UNABAKI (wizi/makosa ya makusudi)?\n\n' +
+                  'Itakuwa ya kudumu mara moja, bila kusubiri muda uliobaki. Stock haitaguswa tena.',
+    };
+    if (!confirm(labels[action])) return;
+    _submitReviewVariance(varId, action, '');
+}
+
+function finalizeVarianceNow(varId, itemName) {
+    if (!confirm('Thibitisha uamuzi wa "' + itemName + '" SASA, bila kusubiri muda wote uliobaki?\n\n' +
+                  'Utakuwa wa kudumu mara moja.')) return;
+    _submitReviewVariance(varId, 'finalize_now', '');
+}
+
+// 2026-08-26 — reconsider an ALREADY-RESOLVED verdict (either direction),
+// same "any number of times, never touches the underlying record" pattern
+// as review_petty_cash()'s own undo mechanism.
+function reconsiderVariance(varId, action, itemName) {
+    var labels = {
+        accept: 'Badilisha uamuzi wa "' + itemName + '" kuwa UMEKUBALIWA?\n\n' +
+                'Haitahesabika tena kwenye rekodi ya utendaji ya mfanyakazi. Stock haitaguswa.',
+        dismiss: 'Rudisha uamuzi wa "' + itemName + '" kuwa UMEKATALIWA (wizi/makosa ya makusudi)?\n\n' +
+                  'Itaathiri tena rekodi ya utendaji ya mfanyakazi. Stock haitaguswa.',
+    };
+    if (!confirm(labels[action])) return;
     _submitReviewVariance(varId, action, '');
 }
 

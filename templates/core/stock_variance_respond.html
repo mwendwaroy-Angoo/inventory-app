@@ -57,12 +57,31 @@
     <div style="font-size:2.5rem; margin-bottom:0.5rem;">🙏</div>
     <div style="color:#6ee7b7; font-size:1rem; font-weight:600;">Asante! Jibu lako limetumwa.</div>
     <div style="color:#b0b0b0; font-size:0.85rem; margin-top:0.4rem;">
+        {% if is_disputed %}
+        Mmiliki ameona jibu lako na anaweza kubadilisha au kuthibitisha uamuzi wake
+        {% if svq.dispute_deadline %}kabla ya {{ svq.dispute_deadline|date:"d M Y, H:i" }}{% endif %}.
+        {% else %}
         Mmiliki ataangalia na atakufahamisha uamuzi wake.
+        {% endif %}
     </div>
     <a href="/" class="btn btn-sm btn-gold mt-3">🏠 Kurasa Kuu</a>
 </div>
 
 {% else %}
+
+{% if is_disputed %}
+<div style="background:rgba(192,57,90,0.08); border:1px solid rgba(192,57,90,0.3); border-radius:10px; padding:0.9rem 1.1rem; margin-bottom:1rem;">
+    <div style="color:#e87090; font-weight:600; font-size:0.88rem; margin-bottom:0.3rem;">
+        🚨 Mmiliki tayari ameamua kuwa tofauti hii si maelezo halali
+    </div>
+    <div style="color:#b0b0b0; font-size:0.8rem;">
+        Stock tayari imesahihishwa mara moja. Una hadi
+        <strong style="color:#fbbf24;">{% if svq.dispute_deadline %}{{ svq.dispute_deadline|date:"d M Y, H:i" }}{% endif %}</strong>
+        kutoa maelezo yako kabla uamuzi huu kuwa wa kudumu — utaathiri rekodi yako ya
+        utendaji na malipo. Jibu lako litamwezesha mmiliki kubadilisha au kuthibitisha uamuzi wake.
+    </div>
+</div>
+{% endif %}
 
 <!-- Variance summary -->
 <div class="resp-card">

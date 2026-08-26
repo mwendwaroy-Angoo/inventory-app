@@ -158,6 +158,19 @@ class Business(models.Model):
                   "opt-in for tighter oversight, not the default.",
     )
 
+    variance_dispute_window_hours = models.PositiveIntegerField(
+        default=48,
+        help_text="2026-08-26 — when the owner rejects a stock-take variance as "
+                  "deliberate/malicious rather than an innocent mistake, the "
+                  "accused staffer gets this many hours to respond and explain "
+                  "before the verdict becomes permanent (affecting their "
+                  "recognition score and Haki record). The owner can also "
+                  "confirm the verdict immediately without waiting ('Thibitisha "
+                  "Sasa'). This window only gates the STAFF consequence — the "
+                  "stock correction itself and the item's availability for sale "
+                  "both happen immediately, regardless of this setting.",
+    )
+
     last_txn_sms_at = models.DateTimeField(
         null=True, blank=True,
         help_text='Timestamp of last transaction SMS sent. Used for 10-minute bundling window.'

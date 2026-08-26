@@ -159,9 +159,18 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
         milestones.append(f'⭐ KES {float(total_revenue):,.0f} mwezi huu')
 
     # ── Dismissed stock variances (compliance record) ──
+    # 2026-08-26 (Roy — theft-verdict redesign): 'dismiss' now stamps
+    # compliance_noted=True/owner_accepted=False the MOMENT the owner first
+    # rejects a variance (status=DISPUTED), not only once the appeal window
+    # closes — the stock correction is immediate, but the CONSEQUENCE
+    # against this staffer's own record must not, per Roy's own framing
+    # ("the verdict now becomes permanent" only after the window). Excluding
+    # DISPUTED here means a still-open appeal never counts against her yet —
+    # only a genuinely finalized (RESOLVED) verdict does.
     dismissed_variances = StockVarianceQuery.objects.filter(
         queried_staff=staff_profile,
         compliance_noted=True,
+        status=StockVarianceQuery.RESOLVED,
         stock_take__taken_at__date__gte=date_from,
         stock_take__taken_at__date__lte=date_to,
     ).count()
@@ -225,14 +234,28 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
     # explanation nor affirmation from the required parties" should ever
     # count toward a staffer's own track record — i.e. exclude only the
     # AFFIRMED (owner_accepted=True) rows; still-pending, staff-responded-
-    # but-not-yet-reviewed, and dismissed (owner_accepted=False) rows all
-    # correctly still count until a genuine affirmation clears them.
+    # but-not-yet-reviewed, and a FINALIZED dismissal (owner_accepted=False,
+    # status=RESOLVED) all correctly still count until a genuine affirmation
+    # clears them.
+    #
+    # 2026-08-26 addition (Roy — theft-verdict redesign): DISPUTED is a NEW
+    # state that didn't exist when the rule above was written — it's the
+    # owner's PRELIMINARY theft verdict, appeal window still open. Roy's own
+    # explicit framing was two-stage on purpose ("if... the business owner
+    # decides to be firm with his decision the verdict now becomes
+    # permanent") — the consequence against a staffer's own record must not
+    # be real until the window has actually run its course, or the appeal
+    # would be theater with no real effect. Excluded here; a still-PENDING/
+    # RESPONDED row (never reviewed at all, owner_accepted still None) is
+    # untouched by this and keeps counting exactly as it always has.
     unaffirmed_variances_qs = StockVarianceQuery.objects.filter(
         attributed_shift__staff=user, attributed_shift__business=business,
         direction='decrease',
         stock_take__taken_at__date__gte=date_from,
         stock_take__taken_at__date__lte=date_to,
-    ).exclude(owner_accepted=True).select_related('item', 'stock_take').order_by('-created_at')
+    ).exclude(owner_accepted=True).exclude(
+        status=StockVarianceQuery.DISPUTED,
+    ).select_related('item', 'stock_take').order_by('-created_at')
     variance_loss_kes = float(
         unaffirmed_variances_qs.aggregate(t=Sum('estimated_revenue'))['t'] or 0
     )

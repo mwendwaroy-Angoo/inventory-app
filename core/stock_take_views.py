@@ -6,12 +6,25 @@ Flow:
   2. On POST, StockTake + StockVarianceQuery rows are created for non-zero variances.
   3. The shift's staff member (if linked) is notified via SMS + in-app.
   4. Staff responds at /stock/variances/<id>/respond/.
-  5. Owner reviews at /stock/variances/ and accepts (creates corrective Transaction) or dismisses.
-  6. Dismissed variances set compliance_noted=True → appear on Haki contribution report.
+  5. Owner reviews at /stock/variances/:
+       - Accept → corrective Transaction created, resolved immediately, no
+         effect on the staffer's own recognition/Haki record.
+       - Dismiss (2026-08-26 redesign — a THEFT verdict, not just "I don't
+         believe this") → the SAME kind of corrective Transaction is created
+         immediately (tagged '[THEFT]'), but the row goes to DISPUTED, not
+         RESOLVED — the accused staffer gets Business.variance_dispute_
+         window_hours to respond before the verdict (which affects only
+         their own record, never the stock correction above) becomes
+         permanent. The owner can finalize early ('finalize_now') or
+         reconsider at any point after the first decision — see
+         review_variance()'s own docstring for the full mechanism.
+  6. A finalized (RESOLVED) theft verdict sets compliance_noted=True →
+     appears on the Haki contribution report and feeds variance_loss_kes.
 """
 
 import json
 import logging
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
@@ -35,29 +48,92 @@ logger = logging.getLogger(__name__)
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 def _notify_owner(business, title, message):
-    """Send in-app + SMS notification to all owners of a business."""
+    """Send in-app + SMS + email notification to all owners of a business.
+
+    2026-08-26 live request (Roy — "regarding email notification, write in
+    the e-mail notification for stock takes to the business owners, it is
+    quite important"): this was in-app + SMS only, confirmed by direct
+    trace, no email anywhere in this file. SMS is easy to miss in a busy
+    day; email is the one channel Roy specifically wants for something this
+    consequential (a stock-take variance, and now a theft verdict).
+    """
     from accounts.models import UserProfile
+    from core.notifications import send_email_notification_async
     owners = UserProfile.objects.filter(business=business, role='owner').select_related('user')
     for op in owners:
         create_in_app_notification(op.user, title, message, notification_type='warning', link_url='/stock/variances/')
         if op.phone:
             send_sms_notification_async(message, normalize_ke_phone(op.phone))
+        if op.user.email:
+            send_email_notification_async(op.user.email, title, None, text_message=message)
 
 
 def item_has_pending_variance(item_id):
     """2026-07-26 (item 6, live request): a stock-take discrepancy on a
     SPECIFIC item blocks selling that exact item — never the whole business —
-    until the owner resolves it via review_variance() (accept or dismiss),
-    which is the ONLY thing that flips status to RESOLVED. This is why no
-    separate "unlock" endpoint is needed: resolution IS the unlock, and it is
-    already owner/manager-only (see @owner_or_manager_required on that view).
-    'responded' (staff has explained but owner hasn't decided yet) still
-    blocks — only a genuine owner decision clears it, per Roy's explicit
-    "only revocable on the owner's side."
+    until the owner makes a decision via review_variance() (accept or
+    dismiss). 'responded' (staff has explained but owner hasn't decided yet)
+    still blocks — only a genuine owner decision clears it, per Roy's
+    explicit "only revocable on the owner's side."
+
+    2026-08-26 (Roy — theft-verdict redesign): DISPUTED also unblocks, not
+    just RESOLVED. Rejecting now means "I believe this was theft" — the
+    stock correction happens immediately, and Roy was explicit the item
+    "should be sellable again... another staff's mess should not affect
+    her normal operations" — the accountability appeal window that follows
+    (see StockVarianceQuery.dispute_deadline) is entirely about the ACCUSED
+    STAFFER's own record, never about the item's availability.
     """
     return StockVarianceQuery.objects.filter(
         item_id=item_id,
-    ).exclude(status=StockVarianceQuery.RESOLVED).exists()
+    ).exclude(status__in=[StockVarianceQuery.RESOLVED, StockVarianceQuery.DISPUTED]).exists()
+
+
+def finalize_expired_variance_disputes(business):
+    """Lazily auto-finalize any DISPUTED variance whose appeal window has
+    passed — same "checked on read, no real cron" pattern already
+    established by KitchenStockReceipt.maybe_auto_close() (this app
+    deliberately avoids a real background scheduler; see CLAUDE.md's
+    repeated "deferred-cron pattern" notes). Called from every page a
+    human might load that would want to see the latest state: the
+    owner's variances list and the staffer's own respond page.
+
+    The verdict (owner_accepted=False, compliance_noted=True,
+    corrective_txn already set at the moment 'Kataa' was first clicked)
+    never changes here — only `status` flips to RESOLVED and
+    `dispute_deadline` clears, i.e. this only removes the "still within
+    the appeal window" state. Notifies the accused staffer that the
+    verdict is now permanent; does not re-notify the owner, who already
+    made the decision that's now taking effect.
+    """
+    expired = StockVarianceQuery.objects.filter(
+        stock_take__business=business,
+        status=StockVarianceQuery.DISPUTED,
+        dispute_deadline__lte=timezone.now(),
+    ).select_related('queried_staff__user', 'item')
+
+    for svq in expired:
+        svq.status = StockVarianceQuery.RESOLVED
+        svq.dispute_deadline = None
+        svq.save(update_fields=['status', 'dispute_deadline'])
+
+        if svq.queried_staff:
+            when = timezone.localtime(timezone.now()).strftime('%d %b %Y, %H:%M')
+            create_in_app_notification(
+                svq.queried_staff.user,
+                f"🔒 Uamuzi wa Kudumu: {svq.item_name_cache}",
+                f"Muda wa kujibu tofauti ya {svq.item_name_cache} umeisha bila jibu — "
+                f"uamuzi wa mmiliki umekuwa wa kudumu tarehe {when}. Umerekodiwa kwenye "
+                f"rekodi yako ya utendaji na malipo.",
+                notification_type='warning',
+                link_url=f'/stock/variances/{svq.id}/respond/',
+            )
+            if svq.queried_staff.phone:
+                send_sms_notification_async(
+                    f"Muda wa kujibu tofauti ya {svq.item_name_cache} umeisha — uamuzi "
+                    f"umekuwa wa kudumu.",
+                    normalize_ke_phone(svq.queried_staff.phone),
+                )
 
 
 # ── Shift-change accountability (2026-08-22, Roy) ──────────────────────────────
@@ -610,6 +686,11 @@ def pending_variances(request):
     user_profile = get_user_profile(request)
     business = user_profile.business
 
+    # 2026-08-26 — lazy auto-finalize sweep, same "checked on read" pattern
+    # as KitchenStockReceipt.maybe_auto_close(). Runs before the querysets
+    # below so a just-expired dispute shows up as resolved, not disputed.
+    finalize_expired_variance_disputes(business)
+
     pending   = StockVarianceQuery.objects.filter(
         stock_take__business=business, status=StockVarianceQuery.PENDING,
     ).select_related('stock_take__conducted_by', 'item', 'queried_staff__user').order_by('created_at')
@@ -617,6 +698,14 @@ def pending_variances(request):
     responded = StockVarianceQuery.objects.filter(
         stock_take__business=business, status=StockVarianceQuery.RESPONDED,
     ).select_related('stock_take__conducted_by', 'item', 'queried_staff__user').order_by('responded_at')
+
+    # 2026-08-26 (Roy — theft-verdict redesign): a rejected variance whose
+    # appeal window is still open — the stock is already corrected, the
+    # item already sellable again; this section is purely "still waiting to
+    # see if the staffer responds, or for you to confirm/reconsider."
+    disputed = StockVarianceQuery.objects.filter(
+        stock_take__business=business, status=StockVarianceQuery.DISPUTED,
+    ).select_related('stock_take__conducted_by', 'item', 'queried_staff__user', 'corrective_txn').order_by('dispute_deadline')
 
     resolved  = StockVarianceQuery.objects.filter(
         stock_take__business=business, status=StockVarianceQuery.RESOLVED,
@@ -626,8 +715,10 @@ def pending_variances(request):
     return render(request, 'core/stock_variances_pending.html', {
         'pending':   pending,
         'responded': responded,
+        'disputed':  disputed,
         'resolved':  resolved,
         'is_owner':  user_profile.is_owner_or_manager,
+        'dispute_window_hours': business.variance_dispute_window_hours,
     })
 
 
@@ -639,6 +730,11 @@ def respond_to_variance(request, var_id):
     if not user_profile:
         return redirect('home')
     business = user_profile.business
+
+    # 2026-08-26 — same lazy sweep as pending_variances(), so a staffer
+    # loading this page right after their own window quietly expired sees
+    # "already resolved" instead of a form that's no longer live.
+    finalize_expired_variance_disputes(business)
 
     svq = get_object_or_404(StockVarianceQuery, id=var_id, stock_take__business=business)
 
@@ -655,6 +751,16 @@ def respond_to_variance(request, var_id):
             'svq': svq, 'already_resolved': True,
         })
 
+    # 2026-08-26 (Roy — theft-verdict redesign): DISPUTED means the owner
+    # has already made a preliminary verdict and the stock is already
+    # corrected — this page is now specifically the ACCUSED STAFFER'S
+    # chance to explain before that verdict becomes permanent, within
+    # dispute_deadline. Responding here does NOT change status back to
+    # RESPONDED (that would lose the fact a verdict + deadline already
+    # exist) — it stays DISPUTED, appeal window still running, and the
+    # owner is notified a response has arrived.
+    is_disputed = (svq.status == StockVarianceQuery.DISPUTED)
+
     if request.method == 'POST':
         response_type     = request.POST.get('response_type', '').strip()
         response_customer = request.POST.get('response_customer', '').strip()
@@ -664,29 +770,41 @@ def respond_to_variance(request, var_id):
             return render(request, 'core/stock_variance_respond.html', {
                 'svq': svq, 'error': 'Tafadhali chagua aina ya jibu.',
                 'response_choices': StockVarianceQuery.RESPONSE_CHOICES,
+                'is_disputed': is_disputed,
             })
 
         svq.response_type     = response_type
         svq.response_customer = response_customer
         svq.response_note     = response_note
         svq.responded_at      = timezone.now()
-        svq.status            = StockVarianceQuery.RESPONDED
-        svq.save(update_fields=[
-            'response_type', 'response_customer', 'response_note',
-            'responded_at', 'status',
-        ])
+        update_fields = ['response_type', 'response_customer', 'response_note', 'responded_at']
+        if not is_disputed:
+            svq.status = StockVarianceQuery.RESPONDED
+            update_fields.append('status')
+        svq.save(update_fields=update_fields)
 
-        # Notify owner
         conductor_name = request.user.get_full_name() or request.user.username
         resp_label = dict(StockVarianceQuery.RESPONSE_CHOICES).get(response_type, response_type)
-        _notify_owner(
-            business,
-            f"📊 Jibu la Tofauti: {svq.item_name_cache}",
-            f"{conductor_name} amejibu tofauti ya {svq.item_name_cache}: {resp_label}.",
-        )
+        if is_disputed:
+            deadline_label = (
+                timezone.localtime(svq.dispute_deadline).strftime('%d %b %Y, %H:%M')
+                if svq.dispute_deadline else '—'
+            )
+            _notify_owner(
+                business,
+                f"⏰ Jibu Limepokewa Kabla ya Muda Kuisha: {svq.item_name_cache}",
+                f"{conductor_name} amejibu tofauti ya {svq.item_name_cache} ({resp_label}) — "
+                f"bado unahitaji kuthibitisha au kubadilisha uamuzi wako kabla ya {deadline_label}.",
+            )
+        else:
+            _notify_owner(
+                business,
+                f"📊 Jibu la Tofauti: {svq.item_name_cache}",
+                f"{conductor_name} amejibu tofauti ya {svq.item_name_cache}: {resp_label}.",
+            )
 
         return render(request, 'core/stock_variance_respond.html', {
-            'svq': svq, 'submitted': True,
+            'svq': svq, 'submitted': True, 'is_disputed': is_disputed,
         })
 
     # GET: show optional preset hint
@@ -707,6 +825,7 @@ def respond_to_variance(request, var_id):
         'svq':              svq,
         'response_choices': StockVarianceQuery.RESPONSE_CHOICES,
         'preset_hint':      preset_hint,
+        'is_disputed':      is_disputed,
     })
 
 
@@ -714,166 +833,369 @@ def respond_to_variance(request, var_id):
 
 @owner_or_manager_required
 def review_variance(request, var_id):
+    """Owner's decision on a stock-take variance — accept, dismiss (now a
+    theft verdict, see below), reconsider a past verdict, or finalize a
+    dispute early.
+
+    2026-08-26 REDESIGN (Roy, live — "the purpose of this level of scrutiny
+    is to capture theft"): 'dismiss' ("Kataa") used to mean nothing more
+    than "I don't believe this explanation" — it never corrected the book
+    balance and never distinguished an innocent mistake from something
+    deliberate. Roy's own framing: a business must replenish/correct its
+    stock regardless of WHY it's short — "whether stock is stolen or not,
+    the business owner cannot fail to replenish stock" — but that physical
+    correction is a completely separate question from the ACCUSATION
+    against a specific staffer, which carries real consequences (their
+    recognition score, their pay) and deserves a chance to be explained
+    before it's locked in.
+
+    So 'dismiss' now means "I believe this was NOT an innocent, explainable
+    gap" and creates the SAME kind of corrective transaction 'accept as
+    wastage' already did — immediately and permanently, tagged '[THEFT]' so
+    it reads distinctly from an ordinary cause-unknown correction in
+    Transaction History. The row does NOT go straight to RESOLVED, though —
+    it becomes DISPUTED with a `dispute_deadline`
+    (Business.variance_dispute_window_hours, owner-configurable) during
+    which the accused staffer can respond (see respond_to_variance()) and
+    the owner can still reconsider. `item_has_pending_variance()` already
+    treats DISPUTED the same as RESOLVED for the ITEM's own availability —
+    "another staff's mess should not affect her normal operations" (Roy) —
+    this window is purely about the STAFFER's own record.
+
+    Once a row has EVER been decided (owner_accepted is no longer None,
+    whether it's now DISPUTED or already RESOLVED), any further accept/
+    dismiss call is a pure RECONSIDERATION — same "any number of times,
+    never re-touches the underlying record" pattern already established by
+    review_petty_cash()'s own undo mechanism (2026-07-25). It flips ONLY
+    owner_accepted/compliance_noted/status — the corrective_txn already
+    created at the moment of the FIRST decision is never touched, re-
+    created, or reversed, matching Roy's own explicit rule: "the only thing
+    that should change is the staff's performance record and remuneration
+    ... but not the stock balance." select_for_update() below closes the
+    one real race this creates that didn't matter before: two near-
+    simultaneous first-time decisions on the same row could otherwise both
+    read owner_accepted=None and both create a corrective transaction for
+    the same physical shortfall.
+    """
     if request.method != 'POST':
         return JsonResponse({'ok': False, 'error': 'POST required'}, status=405)
 
     user_profile = get_user_profile(request)
     business = user_profile.business
+    action = request.POST.get('action', '')  # 'accept', 'dismiss', or 'finalize_now'
 
-    svq = get_object_or_404(StockVarianceQuery, id=var_id, stock_take__business=business)
+    from django.db import transaction as _db_txn
+    with _db_txn.atomic():
+        svq = get_object_or_404(
+            StockVarianceQuery.objects.select_for_update(),
+            id=var_id, stock_take__business=business,
+        )
+        is_reconsideration = (svq.owner_accepted is not None)
+        reviewer_name = request.user.get_full_name() or request.user.username
+        now = timezone.now()
+        when = timezone.localtime(now).strftime('%d %b %Y, %H:%M')
 
-    if svq.status == StockVarianceQuery.RESOLVED:
-        return JsonResponse({'ok': False, 'error': 'Already resolved.'})
-
-    action = request.POST.get('action', '')  # 'accept' or 'dismiss'
-
-    if action == 'accept':
-        corrective_txn = None
-        try:
-            # Staff-responded variances use the staff's response type.
-            # Pending variances accept an owner-provided reason via POST.
-            if svq.response_type:
-                _pay      = svq.response_type
-                _customer = svq.response_customer or ''
-            else:
-                _pay      = request.POST.get('owner_response_type', 'cash').strip()
-                _customer = request.POST.get('owner_response_customer', '').strip()
-
-            _owner_note = request.POST.get('owner_response_note', '').strip()
-
-            if svq.direction == StockVarianceQuery.DECREASE and svq.item:
-                if _pay == 'wastage':
-                    # Owner says cause is unknown — record as wastage, no revenue.
-                    # Wastage must be negative so current_balance() decreases.
-                    corrective_txn = Transaction.objects.create(
-                        business=business,
-                        item=svq.item,
-                        type='Wastage',
-                        qty=-abs(svq.variance),
-                        payment_method='',
-                        recipient=_owner_note or 'Stock adjustment — cause unknown',
-                        recorded_by=request.user,
-                        date=svq.stock_take.taken_at.date(),
-                    )
-                else:
-                    # Unrecorded sale — cash / mpesa / credit.
-                    # Issue must be negative so current_balance() decreases.
-                    _pay_for_txn = _pay if _pay in ('cash', 'mpesa', 'credit') else 'cash'
-                    corrective_txn = Transaction.objects.create(
-                        business=business,
-                        item=svq.item,
-                        type='Issue',
-                        qty=-abs(svq.variance),
-                        sale_amount=(svq.estimated_revenue if svq.estimated_revenue else None),
-                        payment_method=_pay_for_txn,
-                        recipient=_customer,
-                        recorded_by=request.user,
-                        date=svq.stock_take.taken_at.date(),
-                        # 2026-07-25 live report (Monsoon Inn): accepting a morning
-                        # stock-take variance was showing up as TODAY's live revenue
-                        # on the home dashboard before any real sale had happened —
-                        # the discrepancy predates its discovery (it's a correction,
-                        # not a fresh POS sale), so it must never inflate the
-                        # real-time "today so far" tracking a business owner uses to
-                        # follow the day's actual trading. Tagged and excluded from
-                        # bar_today_revenue/kitchen_today_revenue (core/views.py) and
-                        # _reconcile()'s shift cash/mpesa totals (core/shift_views.py)
-                        # — the revenue still counts everywhere else (item history,
-                        # analytics/P&L, debt tracker if credit) since it's real money,
-                        # just discovered late; same [ADJ]-tag convention already used
-                        # by adjust_stock_balance for the same "correction, not a
-                        # normal transaction" purpose.
-                        invoice_no='[SVQ]',
-                    )
-            elif (svq.direction == StockVarianceQuery.INCREASE and svq.item):
-                corrective_txn = Transaction.objects.create(
-                    business=business,
-                    item=svq.item,
-                    type='Receipt',
-                    qty=svq.variance,
-                    payment_method='',
-                    recipient=_owner_note or '',
-                    recorded_by=request.user,
-                    date=svq.stock_take.taken_at.date(),
+        if action == 'finalize_now':
+            if svq.status != StockVarianceQuery.DISPUTED:
+                return JsonResponse({'ok': False, 'error': 'Tofauti hii si kwenye muda wa kusubiri jibu.'})
+            svq.status = StockVarianceQuery.RESOLVED
+            svq.dispute_deadline = None
+            svq.save(update_fields=['status', 'dispute_deadline'])
+            msg = f'Uamuzi umethibitishwa na {reviewer_name} tarehe {when} — umekuwa wa kudumu.'
+            if svq.queried_staff:
+                create_in_app_notification(
+                    svq.queried_staff.user,
+                    f"🔒 Uamuzi wa Kudumu: {svq.item_name_cache}",
+                    f"Mmiliki {reviewer_name} amethibitisha uamuzi wa tofauti ya "
+                    f"{svq.item_name_cache} tarehe {when} — umekuwa wa kudumu, bila kusubiri "
+                    f"muda wote uliobaki. Umerekodiwa kwenye rekodi yako ya utendaji na malipo.",
+                    notification_type='warning',
+                    link_url=f'/stock/variances/{svq.id}/respond/',
                 )
-        except Exception as exc:
-            logger.exception("Error creating corrective transaction for variance %s", var_id)
-            return JsonResponse({'ok': False, 'error': str(exc)})
+            return JsonResponse({'ok': True, 'message': msg})
 
-        svq.owner_accepted  = True
-        svq.owner_action_by = request.user
-        svq.owner_acted_at  = timezone.now()
-        svq.corrective_txn  = corrective_txn
-        svq.owner_note      = _owner_note
-        svq.status          = StockVarianceQuery.RESOLVED
-        svq.save(update_fields=[
-            'owner_accepted', 'owner_action_by', 'owner_acted_at',
-            'corrective_txn', 'owner_note', 'status',
-        ])
+        if action == 'accept':
+            if is_reconsideration:
+                # Pure reversal — never creates or touches corrective_txn.
+                was_theft_verdict = (svq.owner_accepted is False)
+                _owner_note = request.POST.get('owner_response_note', '').strip()
+                prior_reviewer = (
+                    (svq.owner_action_by.get_full_name() or svq.owner_action_by.username)
+                    if svq.owner_action_by else '—'
+                )
+                svq.owner_accepted   = True
+                svq.compliance_noted = False
+                svq.owner_action_by  = request.user
+                svq.owner_acted_at   = now
+                svq.status            = StockVarianceQuery.RESOLVED
+                svq.dispute_deadline = None
+                if was_theft_verdict:
+                    svq.owner_note = (
+                        f"MAREKEBISHO: uamuzi wa awali (haukukubaliwa kama maelezo halali) na "
+                        f"{prior_reviewer} umebadilishwa na {reviewer_name} tarehe {when} — sasa "
+                        f"umekubaliwa." + (f' Sababu: {_owner_note}' if _owner_note else '')
+                    )
+                svq.save(update_fields=[
+                    'owner_accepted', 'compliance_noted', 'owner_action_by',
+                    'owner_acted_at', 'status', 'dispute_deadline', 'owner_note',
+                ])
+                msg = (
+                    f'Uamuzi umebadilishwa na {reviewer_name} tarehe {when} — hautahesabika '
+                    f'tena kwenye rekodi ya utendaji.'
+                )
+                if svq.queried_staff:
+                    staff_msg = (
+                        f"Mmiliki {reviewer_name} amebadilisha uamuzi wa awali kuhusu tofauti ya "
+                        f"{svq.item_name_cache} tarehe {when} — haitahesabika tena kwenye rekodi "
+                        f"yako ya utendaji au malipo."
+                    )
+                    if _owner_note:
+                        staff_msg += f' Sababu: {_owner_note}'
+                    create_in_app_notification(
+                        svq.queried_staff.user,
+                        f"✅ Uamuzi Umebadilishwa: {svq.item_name_cache}",
+                        staff_msg, notification_type='info',
+                        link_url=f'/stock/variances/{svq.id}/respond/',
+                    )
+                return JsonResponse({'ok': True, 'message': msg})
 
-        # 2026-07-24 wording/accountability audit: neither branch named who acted
-        # or when, and 'accept' never told the staffer who reported the variance
-        # what happened to their explanation — only 'dismiss' did, an inconsistency
-        # since both are equally a final decision on the same reported variance.
-        reviewer_name = request.user.get_full_name() or request.user.username
-        when = timezone.localtime(svq.owner_acted_at).strftime('%d %b %Y, %H:%M')
-        msg = f'Imekubaliwa na {reviewer_name} tarehe {when}'
-        if corrective_txn:
-            msg += f' — transaction ya {svq.item_name_cache} imeundwa.'
-        else:
-            msg += '.'
+            # ── Original first-time accept path — unchanged behaviour ──────
+            corrective_txn = None
+            try:
+                # Staff-responded variances use the staff's response type.
+                # Pending variances accept an owner-provided reason via POST.
+                if svq.response_type:
+                    _pay      = svq.response_type
+                    _customer = svq.response_customer or ''
+                else:
+                    _pay      = request.POST.get('owner_response_type', 'cash').strip()
+                    _customer = request.POST.get('owner_response_customer', '').strip()
 
-        if svq.queried_staff:
-            create_in_app_notification(
-                svq.queried_staff.user,
-                f"✅ Tofauti Imekubaliwa: {svq.item_name_cache}",
-                f"Mmiliki {reviewer_name} amekubali maelezo yako ya tofauti ya "
-                f"{svq.item_name_cache} tarehe {when}.",
-                notification_type='info',
-                link_url=f'/stock/variances/{svq.id}/respond/',
-            )
+                _owner_note = request.POST.get('owner_response_note', '').strip()
 
-        return JsonResponse({'ok': True, 'message': msg})
+                if svq.direction == StockVarianceQuery.DECREASE and svq.item:
+                    if _pay == 'wastage':
+                        # Owner says cause is unknown — record as wastage, no revenue.
+                        # Wastage must be negative so current_balance() decreases.
+                        corrective_txn = Transaction.objects.create(
+                            business=business,
+                            item=svq.item,
+                            type='Wastage',
+                            qty=-abs(svq.variance),
+                            payment_method='',
+                            recipient=_owner_note or 'Stock adjustment — cause unknown',
+                            recorded_by=request.user,
+                            date=svq.stock_take.taken_at.date(),
+                        )
+                    else:
+                        # Unrecorded sale — cash / mpesa / credit.
+                        # Issue must be negative so current_balance() decreases.
+                        _pay_for_txn = _pay if _pay in ('cash', 'mpesa', 'credit') else 'cash'
+                        corrective_txn = Transaction.objects.create(
+                            business=business,
+                            item=svq.item,
+                            type='Issue',
+                            qty=-abs(svq.variance),
+                            sale_amount=(svq.estimated_revenue if svq.estimated_revenue else None),
+                            payment_method=_pay_for_txn,
+                            recipient=_customer,
+                            recorded_by=request.user,
+                            date=svq.stock_take.taken_at.date(),
+                            # 2026-07-25 live report (Monsoon Inn): accepting a morning
+                            # stock-take variance was showing up as TODAY's live revenue
+                            # on the home dashboard before any real sale had happened —
+                            # the discrepancy predates its discovery (it's a correction,
+                            # not a fresh POS sale), so it must never inflate the
+                            # real-time "today so far" tracking a business owner uses to
+                            # follow the day's actual trading. Tagged and excluded from
+                            # bar_today_revenue/kitchen_today_revenue (core/views.py) and
+                            # _reconcile()'s shift cash/mpesa totals (core/shift_views.py)
+                            # — the revenue still counts everywhere else (item history,
+                            # analytics/P&L, debt tracker if credit) since it's real money,
+                            # just discovered late; same [ADJ]-tag convention already used
+                            # by adjust_stock_balance for the same "correction, not a
+                            # normal transaction" purpose.
+                            invoice_no='[SVQ]',
+                        )
+                elif (svq.direction == StockVarianceQuery.INCREASE and svq.item):
+                    corrective_txn = Transaction.objects.create(
+                        business=business,
+                        item=svq.item,
+                        type='Receipt',
+                        qty=svq.variance,
+                        payment_method='',
+                        recipient=_owner_note or '',
+                        recorded_by=request.user,
+                        date=svq.stock_take.taken_at.date(),
+                    )
+            except Exception as exc:
+                logger.exception("Error creating corrective transaction for variance %s", var_id)
+                return JsonResponse({'ok': False, 'error': str(exc)})
 
-    elif action == 'dismiss':
-        _dismiss_note = request.POST.get('owner_response_note', '').strip()
+            svq.owner_accepted  = True
+            svq.owner_action_by = request.user
+            svq.owner_acted_at  = now
+            svq.corrective_txn  = corrective_txn
+            svq.owner_note      = _owner_note
+            svq.status          = StockVarianceQuery.RESOLVED
+            svq.save(update_fields=[
+                'owner_accepted', 'owner_action_by', 'owner_acted_at',
+                'corrective_txn', 'owner_note', 'status',
+            ])
 
-        svq.owner_accepted   = False
-        svq.owner_action_by  = request.user
-        svq.owner_acted_at   = timezone.now()
-        svq.compliance_noted = True
-        svq.owner_note       = _dismiss_note
-        svq.status           = StockVarianceQuery.RESOLVED
-        svq.save(update_fields=[
-            'owner_accepted', 'owner_action_by', 'owner_acted_at',
-            'compliance_noted', 'owner_note', 'status',
-        ])
+            # 2026-07-24 wording/accountability audit: neither branch named who acted
+            # or when, and 'accept' never told the staffer who reported the variance
+            # what happened to their explanation — only 'dismiss' did, an inconsistency
+            # since both are equally a final decision on the same reported variance.
+            msg = f'Imekubaliwa na {reviewer_name} tarehe {when}'
+            if corrective_txn:
+                msg += f' — transaction ya {svq.item_name_cache} imeundwa.'
+            else:
+                msg += '.'
 
-        reviewer_name = request.user.get_full_name() or request.user.username
-        when = timezone.localtime(svq.owner_acted_at).strftime('%d %b %Y, %H:%M')
+            if svq.queried_staff:
+                create_in_app_notification(
+                    svq.queried_staff.user,
+                    f"✅ Tofauti Imekubaliwa: {svq.item_name_cache}",
+                    f"Mmiliki {reviewer_name} amekubali maelezo yako ya tofauti ya "
+                    f"{svq.item_name_cache} tarehe {when}.",
+                    notification_type='info',
+                    link_url=f'/stock/variances/{svq.id}/respond/',
+                )
 
-        # Notify staff
-        if svq.queried_staff:
-            staff_msg = (
-                f"Mmiliki {reviewer_name} amekataa maelezo yako ya tofauti ya "
-                f"{svq.item_name_cache} tarehe {when}. Imerekodiwa kwenye rekodi yako ya utendaji."
+            return JsonResponse({'ok': True, 'message': msg})
+
+        elif action == 'dismiss':
+            _dismiss_note = request.POST.get('owner_response_note', '').strip()
+
+            if is_reconsideration:
+                # Re-affirming theft after a prior reversal, OR simply
+                # re-confirming while still DISPUTED before the window
+                # expired — Roy's own "if he decides to be firm with his
+                # decision the verdict now becomes permanent." Either way,
+                # never creates a second corrective transaction.
+                was_theft_verdict = (svq.owner_accepted is False)
+                prior_reviewer = (
+                    (svq.owner_action_by.get_full_name() or svq.owner_action_by.username)
+                    if svq.owner_action_by else '—'
+                )
+                svq.owner_accepted   = False
+                svq.compliance_noted = True
+                svq.owner_action_by  = request.user
+                svq.owner_acted_at   = now
+                svq.status           = StockVarianceQuery.RESOLVED
+                svq.dispute_deadline = None
+                if not was_theft_verdict:
+                    svq.owner_note = (
+                        f"MAREKEBISHO: uamuzi ulioondolewa hapo awali na {prior_reviewer} "
+                        f"umerudishwa na {reviewer_name} tarehe {when} — sasa umerekodiwa "
+                        f"tena kwenye rekodi ya utendaji."
+                        + (f' Sababu: {_dismiss_note}' if _dismiss_note else '')
+                    )
+                svq.save(update_fields=[
+                    'owner_accepted', 'compliance_noted', 'owner_action_by',
+                    'owner_acted_at', 'status', 'dispute_deadline', 'owner_note',
+                ])
+                msg = f'Uamuzi umethibitishwa na {reviewer_name} tarehe {when} — umekuwa wa kudumu.'
+                if svq.queried_staff:
+                    staff_msg = (
+                        f"Mmiliki {reviewer_name} ameendelea na uamuzi kuhusu tofauti ya "
+                        f"{svq.item_name_cache} tarehe {when} — umekuwa wa kudumu. Umerekodiwa "
+                        f"kwenye rekodi yako ya utendaji na malipo."
+                    )
+                    if _dismiss_note:
+                        staff_msg += f' Sababu: {_dismiss_note}'
+                    create_in_app_notification(
+                        svq.queried_staff.user,
+                        f"🔒 Uamuzi wa Kudumu: {svq.item_name_cache}",
+                        staff_msg, notification_type='warning',
+                        link_url=f'/stock/variances/{svq.id}/respond/',
+                    )
+                return JsonResponse({'ok': True, 'message': msg})
+
+            # ── First-time reject — the new theft-verdict path ─────────────
+            # "the purpose of this level of scrutiny is to capture theft...
+            # the business owner cannot fail to replenish stock" (Roy) —
+            # unlike the old dismiss (which corrected nothing), this now
+            # creates a corrective transaction just like 'accept as
+            # wastage' does — the physical correction happens immediately
+            # and permanently, completely independent of the appeal window
+            # that follows. Tagged '[THEFT]' (distinct from '[ADJ]'/
+            # '[ADJ-NOLOSS]'/'[SVQ]') so it reads distinctly in Transaction
+            # History — a genuine, real loss (unlike '[ADJ-NOLOSS]'), so it
+            # correctly counts everywhere a real Wastage loss already does
+            # (P&L, analytics) with no special exclusion needed.
+            corrective_txn = None
+            try:
+                if svq.direction == StockVarianceQuery.DECREASE and svq.item:
+                    corrective_txn = Transaction.objects.create(
+                        business=business, item=svq.item, type='Wastage',
+                        qty=-abs(svq.variance), payment_method='',
+                        recipient=_dismiss_note or 'Tofauti ya stock — hakuna maelezo yanayokubalika',
+                        recorded_by=request.user, date=svq.stock_take.taken_at.date(),
+                        invoice_no='[THEFT]',
+                    )
+                elif svq.direction == StockVarianceQuery.INCREASE and svq.item:
+                    corrective_txn = Transaction.objects.create(
+                        business=business, item=svq.item, type='Receipt',
+                        qty=svq.variance, payment_method='',
+                        recipient=_dismiss_note or '',
+                        recorded_by=request.user, date=svq.stock_take.taken_at.date(),
+                    )
+            except Exception as exc:
+                logger.exception("Error creating corrective transaction for variance %s", var_id)
+                return JsonResponse({'ok': False, 'error': str(exc)})
+
+            window_hours = business.variance_dispute_window_hours or 48
+            deadline = now + timedelta(hours=window_hours)
+
+            svq.owner_accepted   = False
+            svq.owner_action_by  = request.user
+            svq.owner_acted_at   = now
+            svq.compliance_noted = True
+            svq.owner_note       = _dismiss_note
+            svq.corrective_txn   = corrective_txn
+            svq.dispute_deadline = deadline
+            svq.status           = StockVarianceQuery.DISPUTED
+            svq.save(update_fields=[
+                'owner_accepted', 'owner_action_by', 'owner_acted_at',
+                'compliance_noted', 'owner_note', 'corrective_txn',
+                'dispute_deadline', 'status',
+            ])
+
+            deadline_label = timezone.localtime(deadline).strftime('%d %b %Y, %H:%M')
+            unit_label = svq.item.unit if svq.item else ''
+
+            if svq.queried_staff:
+                staff_msg = (
+                    f"Mmiliki {reviewer_name} ameamua kuwa tofauti ya {svq.item_name_cache} "
+                    f"({abs(svq.variance):.2g} {unit_label}) haikuwa maelezo halali — imewekwa "
+                    f"kama tofauti isiyoelezeka. Una hadi {deadline_label} kutoa maelezo yako "
+                    f"kabla uamuzi huu kuwa wa kudumu — utaathiri rekodi yako ya utendaji na malipo."
+                )
+                if _dismiss_note:
+                    staff_msg += f' Sababu: {_dismiss_note}'
+                create_in_app_notification(
+                    svq.queried_staff.user,
+                    f"🚨 Uamuzi wa Awali: {svq.item_name_cache}",
+                    staff_msg, notification_type='warning',
+                    link_url=f'/stock/variances/{svq.id}/respond/',
+                )
+                if svq.queried_staff.phone:
+                    send_sms_notification_async(staff_msg, normalize_ke_phone(svq.queried_staff.phone))
+
+            dismiss_msg = (
+                f'Imekataliwa na {reviewer_name} tarehe {when} — stock imesahihishwa mara moja. '
+                f'Mfanyakazi ana hadi {deadline_label} kujibu kabla uamuzi kuwa wa kudumu.'
             )
             if _dismiss_note:
-                staff_msg += f' Sababu: {_dismiss_note}'
-            create_in_app_notification(
-                svq.queried_staff.user,
-                f"⚠️ Tofauti Imekataliwa: {svq.item_name_cache}",
-                staff_msg,
-                notification_type='warning',
-                link_url=f'/stock/variances/{svq.id}/respond/',
-            )
+                dismiss_msg += f' Sababu: {_dismiss_note}'
+            return JsonResponse({
+                'ok': True, 'message': dismiss_msg,
+                'dispute_deadline': deadline.isoformat(),
+            })
 
-        dismiss_msg = f'Imekataliwa na {reviewer_name} tarehe {when} — imerekodiwa kwenye rekodi ya utendaji.'
-        if _dismiss_note:
-            dismiss_msg += f' Sababu: {_dismiss_note}'
-        return JsonResponse({'ok': True, 'message': dismiss_msg})
-
-    return JsonResponse({'ok': False, 'error': 'Invalid action.'})
+        return JsonResponse({'ok': False, 'error': 'Invalid action.'})
 
 
 def adjust_stock_balance(request, item_id):

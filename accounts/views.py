@@ -1066,6 +1066,20 @@ def payment_settings(request):
             messages.success(request, _("Mipangilio ya mapipa imehifadhiwa."))
             return redirect('payment_settings')
 
+        if section == 'variance_policy':
+            # 2026-08-26 (Roy — theft-verdict redesign): how long an accused
+            # staffer has to respond to a rejected ("theft") stock-take
+            # variance before the verdict becomes permanent.
+            try:
+                hours = max(1, int(request.POST.get('variance_dispute_window_hours') or 48))
+                Business.objects.filter(pk=business.pk).update(
+                    variance_dispute_window_hours=hours,
+                )
+                messages.success(request, _("Mipangilio ya tofauti za stock imehifadhiwa."))
+            except (ValueError, TypeError):
+                messages.error(request, _("Tafadhali ingiza idadi sahihi ya masaa."))
+            return redirect('payment_settings')
+
         form = PaymentSettingsForm(request.POST, instance=business)
         if form.is_valid():
             form.save()

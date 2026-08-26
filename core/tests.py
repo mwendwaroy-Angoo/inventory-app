@@ -17624,13 +17624,16 @@ class StockVarianceReviewWordingTest(TestCase):
     def test_dismiss_skip_leaves_owner_note_blank_and_still_resolves(self):
         # The reason-chips "Ruka — bila sababu" path must never block the action —
         # dismiss must complete with an empty note exactly like before this change.
+        # 2026-08-26: first-time dismiss now goes to DISPUTED (theft-verdict appeal
+        # window), not RESOLVED — see StockVarianceReviewTheftVerdictTest for the
+        # full redesign coverage.
         svq = self._make_variance()
         resp = self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'dismiss'})
         data = resp.json()
         self.assertTrue(data['ok'])
         svq.refresh_from_db()
         self.assertEqual(svq.owner_note, '')
-        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+        self.assertEqual(svq.status, self.StockVarianceQuery.DISPUTED)
 
     def test_accept_owner_note_persists_for_display(self):
         svq = self._make_variance()
@@ -20472,9 +20475,32 @@ class StockTakeVarianceItemLockTest(TestCase):
         self.assertFalse(Transaction.objects.filter(item=self.locked_item, type='Issue').exists())
 
     def test_owner_resolving_variance_unlocks_the_item(self):
+        # 2026-08-26 theft-verdict redesign: a first-time 'dismiss' now goes to
+        # DISPUTED (an appeal window for the accused staffer), not straight to
+        # RESOLVED — but item_has_pending_variance() treats DISPUTED exactly
+        # like RESOLVED for the ITEM's own availability, per Roy's explicit
+        # "another staff's mess should not affect her normal operations."
         svq = self._lock(self.locked_item)
         self.client.force_login(self.owner)
         resp = self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'dismiss'})
+        self.assertTrue(resp.json()['ok'])
+        svq.refresh_from_db()
+        self.assertEqual(svq.status, self.StockVarianceQuery.DISPUTED)
+
+        self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.locked_item.id, 'qty': 1, 'price': 300}]),
+            'payment_method': 'cash',
+        })
+        self.assertTrue(Transaction.objects.filter(item=self.locked_item, type='Issue').exists())
+
+    def test_owner_accepting_variance_unlocks_the_item(self):
+        # The 'accept' path is unchanged by the redesign — still goes straight
+        # to RESOLVED with no appeal window (it's not a theft accusation).
+        svq = self._lock(self.locked_item)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'wastage',
+        })
         self.assertTrue(resp.json()['ok'])
         svq.refresh_from_db()
         self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
@@ -44579,3 +44605,519 @@ class RevertDirectSaleToTabReceiptDisplayTest(TestCase):
         live_lines = _live_direct_lines(receipt)
         self.assertIsNotNone(live_lines)
         self.assertEqual(live_lines, [])
+
+
+class StockVarianceTheftVerdictTest(TestCase):
+    """2026-08-26 (Roy, live — "the purpose of this level of scrutiny is to
+    capture theft"): full redesign of review_variance()'s dismiss ('Kataa')
+    action. Before: dismiss meant only "I don't believe this explanation" —
+    the book balance was never corrected and nothing distinguished an
+    innocent mistake from something deliberate. After: dismiss now means "I
+    believe this was NOT innocent" — the SAME kind of corrective transaction
+    'accept' already created is created immediately and permanently
+    (tagged '[THEFT]'), but the row enters a DISPUTED appeal window
+    (Business.variance_dispute_window_hours) before the ACCUSATION against
+    the staffer (never the stock correction itself) becomes permanent. The
+    owner can finalize early, or reconsider (accept<->dismiss) at any point
+    — reconsidering only ever flips owner_accepted/compliance_noted/status,
+    never touching the already-created corrective_txn or the stock balance
+    it moved.
+    """
+
+    def setUp(self):
+        from core.models import StockVarianceQuery, StockTake
+        self.StockVarianceQuery = StockVarianceQuery
+        self.StockTake = StockTake
+
+        self.biz = Business.objects.create(name='Theft Verdict Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='theft_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager_user = User.objects.create_user(username='theft_manager', password='x')
+        UserProfile.objects.create(user=self.manager_user, business=self.biz, role='manager')
+        self.staff_user = User.objects.create_user(
+            username='theft_staff', password='x', first_name='Aisha',
+        )
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff_user, business=self.biz, role='staff', phone='0711222333',
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Theft Verdict Item',
+            material_no='THEFT-01', unit='pcs', selling_price=Decimal('100'),
+            cost_price=Decimal('60'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.stock_take = StockTake.objects.create(business=self.biz, store=self.store)
+        self.client.force_login(self.owner)
+
+    def _make_variance(self, direction=None, book=Decimal('20'), actual=Decimal('15')):
+        return self.StockVarianceQuery.objects.create(
+            stock_take=self.stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=book, actual_count=actual,
+            direction=direction or self.StockVarianceQuery.DECREASE,
+            queried_staff=self.staff_profile,
+        )
+
+    def _dismiss(self, svq, note=''):
+        return self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'dismiss', 'owner_response_note': note,
+        })
+
+    def _accept(self, svq, note=''):
+        return self.client.post(f'/stock/variances/{svq.id}/review/', {
+            'action': 'accept', 'owner_response_type': 'wastage', 'owner_response_note': note,
+        })
+
+    # ── First-time dismiss: the physical correction happens immediately ──
+
+    def test_first_dismiss_creates_corrective_wastage_transaction_immediately(self):
+        svq = self._make_variance()
+        balance_before = self.item.current_balance()
+        resp = self._dismiss(svq, note='Muundo wa wizi unaonekana')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertIsNotNone(svq.corrective_txn)
+        self.assertEqual(svq.corrective_txn.type, 'Wastage')
+        self.assertEqual(svq.corrective_txn.invoice_no, '[THEFT]')
+        self.assertEqual(svq.corrective_txn.qty, Decimal('-5'))
+        # "the business owner cannot fail to replenish stock" — balance is
+        # corrected to the physical count immediately, same as accept would.
+        self.assertEqual(self.item.current_balance(), balance_before - Decimal('5'))
+        self.assertEqual(self.item.current_balance(), Decimal('15'))
+
+    def test_first_dismiss_increase_direction_creates_receipt(self):
+        svq = self._make_variance(direction=self.StockVarianceQuery.INCREASE, book=Decimal('20'), actual=Decimal('25'))
+        resp = self._dismiss(svq)
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertEqual(svq.corrective_txn.type, 'Receipt')
+        self.assertEqual(svq.corrective_txn.qty, Decimal('5'))
+        self.assertEqual(self.item.current_balance(), Decimal('25'))
+
+    def test_theft_tagged_transaction_counts_as_a_real_loss_unlike_adj_noloss(self):
+        # Deliberately NOT excluded from P&L/analytics — a real loss, unlike
+        # the [ADJ-NOLOSS] convention for a phantom-balance correction.
+        svq = self._make_variance()
+        self._dismiss(svq)
+        svq.refresh_from_db()
+        self.assertNotEqual(svq.corrective_txn.invoice_no, '[ADJ-NOLOSS]')
+        self.assertEqual(svq.corrective_txn.loss_value(), Decimal('300'))  # 5 * cost_price 60
+
+    def test_first_dismiss_sets_disputed_status_with_deadline(self):
+        svq = self._make_variance()
+        before = timezone.now()
+        self._dismiss(svq)
+        svq.refresh_from_db()
+        self.assertEqual(svq.status, self.StockVarianceQuery.DISPUTED)
+        self.assertFalse(svq.owner_accepted)
+        self.assertTrue(svq.compliance_noted)
+        self.assertIsNotNone(svq.dispute_deadline)
+        # Default window is 48h.
+        expected = before + timedelta(hours=48)
+        self.assertAlmostEqual(
+            (svq.dispute_deadline - expected).total_seconds(), 0, delta=10,
+        )
+
+    def test_disputed_window_uses_business_configured_hours(self):
+        self.biz.variance_dispute_window_hours = 6
+        self.biz.save(update_fields=['variance_dispute_window_hours'])
+        svq = self._make_variance()
+        before = timezone.now()
+        self._dismiss(svq)
+        svq.refresh_from_db()
+        expected = before + timedelta(hours=6)
+        self.assertAlmostEqual(
+            (svq.dispute_deadline - expected).total_seconds(), 0, delta=10,
+        )
+
+    def test_item_sellable_again_immediately_on_dismiss_not_waiting_for_window(self):
+        from core.stock_take_views import item_has_pending_variance
+        svq = self._make_variance()
+        self.assertTrue(item_has_pending_variance(self.item.id))
+        self._dismiss(svq)
+        # "another staff's mess should not affect her normal operations" —
+        # unblocked the instant the owner decides, never waiting for the
+        # appeal window to close.
+        self.assertFalse(item_has_pending_variance(self.item.id))
+
+    def test_accused_staffer_notified_with_deadline_and_sms(self):
+        svq = self._make_variance()
+        self._dismiss(svq, note='Muundo wa wizi unaonekana')
+        notif = Notification.objects.filter(
+            user=self.staff_user, title__icontains='Uamuzi wa Awali',
+        ).first()
+        self.assertIsNotNone(notif)
+        self.assertIn('tofauti isiyoelezeka', notif.message)
+        self.assertIn('Muundo wa wizi unaonekana', notif.message)
+
+    @patch('core.stock_take_views.send_sms_notification_async')
+    def test_dismiss_sms_fires_to_staff_phone(self, mock_sms):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        self.assertTrue(mock_sms.called)
+
+    def test_notify_owner_helper_sends_email(self):
+        # _notify_owner() is the shared fan-out used for every stock-take
+        # owner notification (a new variance created, an auto-reconciled
+        # gap, a staff response) — dismiss/accept themselves notify the
+        # STAFFER directly (the owner already knows, they just acted), so
+        # this is tested at the shared helper, the real integration point
+        # for Roy's "write in the e-mail notification for stock takes to
+        # the business owners" request.
+        self.owner.email = 'owner@theftverdict.test'
+        self.owner.save(update_fields=['email'])
+        from core.stock_take_views import _notify_owner
+        with patch('core.notifications.send_email_notification_async') as mock_email:
+            _notify_owner(self.biz, 'Test Stock Take Title', 'Test message body')
+        self.assertTrue(mock_email.called)
+        call_args = mock_email.call_args
+        self.assertEqual(call_args[0][0], 'owner@theftverdict.test')
+        self.assertEqual(call_args[0][1], 'Test Stock Take Title')
+
+    def test_owner_gets_email_when_a_new_variance_is_created(self):
+        # End-to-end: run_accountability_stock_take() (the real stock-take
+        # entry point) notifies the owner via _notify_owner() the moment a
+        # genuine, unresolved variance is created — this is the actual
+        # "stock takes" email Roy asked for, not the dismiss/accept action.
+        from core.stock_take_views import run_accountability_stock_take
+        self.owner.email = 'owner@theftverdict.test'
+        self.owner.save(update_fields=['email'])
+        with patch('core.notifications.send_email_notification_async') as mock_email:
+            run_accountability_stock_take(
+                self.biz, self.owner, None,
+                [{'item_id': self.item.id, 'actual_count': 15}],
+                phase='closing',
+            )
+        self.assertTrue(mock_email.called)
+
+    # ── Reconsideration: only the staff record moves, never the stock ────
+
+    def test_reconsider_accept_after_dismiss_never_touches_corrective_txn_or_stock(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        svq.refresh_from_db()
+        original_txn_id = svq.corrective_txn_id
+        balance_after_dismiss = self.item.current_balance()
+
+        resp = self._accept(svq, note='Alikuwa sahihi baada ya kuangalia CCTV')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertTrue(svq.owner_accepted)
+        self.assertFalse(svq.compliance_noted)
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+        self.assertIsNone(svq.dispute_deadline)
+        # Never created a second transaction, never reversed the first one.
+        self.assertEqual(svq.corrective_txn_id, original_txn_id)
+        self.assertEqual(Transaction.objects.filter(item=self.item, type__in=['Wastage', 'Receipt', 'Issue']).count(), 2)  # opening receipt + the one theft txn
+        self.assertEqual(self.item.current_balance(), balance_after_dismiss)
+
+    def test_reconsider_accept_notifies_staffer_it_no_longer_counts(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        Notification.objects.filter(user=self.staff_user).delete()
+        self._accept(svq, note='Nimeangalia tena')
+        notif = Notification.objects.filter(
+            user=self.staff_user, title__icontains='Uamuzi Umebadilishwa',
+        ).first()
+        self.assertIsNotNone(notif)
+        self.assertIn('haitahesabika tena', notif.message)
+
+    def test_reconsider_dismiss_after_accept_never_creates_second_transaction(self):
+        svq = self._make_variance()
+        self._accept(svq)
+        svq.refresh_from_db()
+        original_txn_id = svq.corrective_txn_id
+        self.assertTrue(svq.owner_accepted)
+
+        resp = self._dismiss(svq, note='Nimebadilisha wazo')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertFalse(svq.owner_accepted)
+        self.assertTrue(svq.compliance_noted)
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+        # Reconsideration back to a theft verdict does NOT re-open a new
+        # appeal window — it's a straight re-affirmation on a row that was
+        # already RESOLVED (accepted), so it goes straight back to RESOLVED.
+        self.assertIsNone(svq.dispute_deadline)
+        self.assertEqual(svq.corrective_txn_id, original_txn_id)
+
+    def test_re_dismiss_while_still_disputed_never_creates_second_transaction(self):
+        # Owner dismisses, staffer responds, owner clicks Kataa again
+        # ("if... the business owner decides to be firm with his decision
+        # the verdict now becomes permanent") — must not double-correct.
+        svq = self._make_variance()
+        self._dismiss(svq)
+        svq.refresh_from_db()
+        original_txn_id = svq.corrective_txn_id
+        balance_after_first = self.item.current_balance()
+
+        resp = self._dismiss(svq, note='Bado nasimama na uamuzi wangu')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertEqual(svq.corrective_txn_id, original_txn_id)
+        self.assertEqual(self.item.current_balance(), balance_after_first)
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+        self.assertIsNone(svq.dispute_deadline)
+
+    def test_marekebisho_note_recorded_on_reversal(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        self._accept(svq, note='Kamera ilithibitisha hakuna wizi')
+        svq.refresh_from_db()
+        self.assertIn('MAREKEBISHO', svq.owner_note)
+        self.assertIn('theft_owner', svq.owner_note)
+        self.assertIn('Kamera ilithibitisha hakuna wizi', svq.owner_note)
+
+    # ── finalize_now: owner may skip waiting for the window entirely ─────
+
+    def test_finalize_now_moves_disputed_straight_to_resolved(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'finalize_now'})
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+        self.assertIsNone(svq.dispute_deadline)
+        self.assertFalse(svq.owner_accepted)  # verdict unchanged, just no longer waiting
+
+    def test_finalize_now_notifies_staffer_it_is_permanent(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        Notification.objects.filter(user=self.staff_user).delete()
+        self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'finalize_now'})
+        notif = Notification.objects.filter(
+            user=self.staff_user, title__icontains='Uamuzi wa Kudumu',
+        ).first()
+        self.assertIsNotNone(notif)
+
+    def test_finalize_now_rejected_when_not_disputed(self):
+        svq = self._make_variance()  # never dismissed — still PENDING
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'finalize_now'})
+        data = resp.json()
+        self.assertFalse(data['ok'])
+
+    # ── Lazy sweep: an expired dispute self-finalizes on the next page load ──
+
+    def test_expired_dispute_auto_finalizes_on_pending_variances_page_load(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        svq.refresh_from_db()
+        # Force the deadline into the past.
+        self.StockVarianceQuery.objects.filter(id=svq.id).update(
+            dispute_deadline=timezone.now() - timedelta(minutes=1),
+        )
+        resp = self.client.get('/stock/variances/')
+        self.assertEqual(resp.status_code, 200)
+        svq.refresh_from_db()
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+        self.assertIsNone(svq.dispute_deadline)
+
+    def test_expired_dispute_auto_finalizes_on_respond_page_load(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        self.StockVarianceQuery.objects.filter(id=svq.id).update(
+            dispute_deadline=timezone.now() - timedelta(minutes=1),
+        )
+        self.client.force_login(self.staff_user)
+        resp = self.client.get(f'/stock/variances/{svq.id}/respond/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'imeshughulikiwa')
+        svq.refresh_from_db()
+        self.assertEqual(svq.status, self.StockVarianceQuery.RESOLVED)
+
+    def test_still_within_window_does_not_auto_finalize(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        self.client.get('/stock/variances/')
+        svq.refresh_from_db()
+        self.assertEqual(svq.status, self.StockVarianceQuery.DISPUTED)
+
+    def test_expired_dispute_notifies_staffer_it_is_now_permanent(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        self.StockVarianceQuery.objects.filter(id=svq.id).update(
+            dispute_deadline=timezone.now() - timedelta(minutes=1),
+        )
+        Notification.objects.filter(user=self.staff_user).delete()
+        self.client.get('/stock/variances/')
+        notif = Notification.objects.filter(
+            user=self.staff_user, title__icontains='Uamuzi wa Kudumu',
+        ).first()
+        self.assertIsNotNone(notif)
+
+    # ── Staff response while DISPUTED: stays DISPUTED, notifies owner ────
+
+    def test_staff_response_while_disputed_does_not_flip_status(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        self.client.force_login(self.staff_user)
+        resp = self.client.post(f'/stock/variances/{svq.id}/respond/', {
+            'response_type': 'cash', 'response_note': 'Niliuza kwa cash lakini sikuiweka',
+        })
+        self.assertEqual(resp.status_code, 200)
+        svq.refresh_from_db()
+        # Still DISPUTED, not flipped to RESPONDED — the owner's verdict and
+        # deadline already exist and must not be lost.
+        self.assertEqual(svq.status, self.StockVarianceQuery.DISPUTED)
+        self.assertEqual(svq.response_type, 'cash')
+        self.assertIsNotNone(svq.responded_at)
+
+    def test_staff_response_while_disputed_notifies_owner_distinctly(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        self.client.force_login(self.staff_user)
+        self.client.post(f'/stock/variances/{svq.id}/respond/', {
+            'response_type': 'cash', 'response_note': 'Niliuza kwa cash',
+        })
+        notif = Notification.objects.filter(
+            user=self.owner, title__icontains='Jibu Limepokewa Kabla ya Muda',
+        ).first()
+        self.assertIsNotNone(notif)
+
+    def test_respond_page_shows_disputed_banner_and_deadline(self):
+        svq = self._make_variance()
+        self._dismiss(svq)
+        self.client.force_login(self.staff_user)
+        resp = self.client.get(f'/stock/variances/{svq.id}/respond/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'si maelezo halali')
+
+    # ── Race safety: two near-simultaneous first dismissals ──────────────
+
+    def test_select_for_update_prevents_double_correction_on_concurrent_dismiss(self):
+        # Simulated via direct model calls rather than real threads (SQLite
+        # test DB doesn't support true concurrent writers) — asserts the
+        # SECOND call, once the first has already committed and changed
+        # owner_accepted away from None, is correctly treated as a
+        # reconsideration rather than a second first-time correction.
+        svq = self._make_variance()
+        r1 = self._dismiss(svq)
+        self.assertTrue(r1.json()['ok'])
+        svq.refresh_from_db()
+        txn_after_first = svq.corrective_txn_id
+        balance_after_first = self.item.current_balance()
+
+        r2 = self._dismiss(svq)  # same as a second concurrent submit landing after the first commits
+        self.assertTrue(r2.json()['ok'])
+        svq.refresh_from_db()
+        self.assertEqual(svq.corrective_txn_id, txn_after_first)
+        self.assertEqual(self.item.current_balance(), balance_after_first)
+
+    # ── Manager parity — owner_or_manager_required already covers this ───
+
+    def test_manager_can_dismiss_as_theft(self):
+        self.client.force_login(self.manager_user)
+        svq = self._make_variance()
+        resp = self._dismiss(svq)
+        self.assertTrue(resp.json()['ok'], resp.json())
+        svq.refresh_from_db()
+        self.assertEqual(svq.status, self.StockVarianceQuery.DISPUTED)
+
+    def test_staff_cannot_dismiss_or_finalize(self):
+        # review_variance() is @owner_or_manager_required — a full-page
+        # decorator that redirects (not a JSON 403) on failure.
+        self.client.force_login(self.staff_user)
+        svq = self._make_variance()
+        resp = self.client.post(f'/stock/variances/{svq.id}/review/', {'action': 'dismiss'})
+        self.assertEqual(resp.status_code, 302)
+        svq.refresh_from_db()
+        self.assertEqual(svq.status, self.StockVarianceQuery.PENDING)
+        self.assertIsNone(svq.corrective_txn)
+
+
+class VarianceDisputeWindowSettingsTest(TestCase):
+    """2026-08-26 — Business.variance_dispute_window_hours is owner-
+    configurable via Payment Settings' new 'variance_policy' section."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Variance Settings Biz')
+        self.owner = User.objects.create_user(username='vwin_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def test_default_window_is_48_hours(self):
+        self.assertEqual(self.biz.variance_dispute_window_hours, 48)
+
+    def test_owner_can_save_a_custom_window(self):
+        resp = self.client.post('/business/payment-settings/', {
+            '_section': 'variance_policy', 'variance_dispute_window_hours': '12',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.biz.refresh_from_db()
+        self.assertEqual(self.biz.variance_dispute_window_hours, 12)
+
+    def test_invalid_value_shows_error_and_leaves_setting_unchanged(self):
+        resp = self.client.post('/business/payment-settings/', {
+            '_section': 'variance_policy', 'variance_dispute_window_hours': 'not-a-number',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.biz.refresh_from_db()
+        self.assertEqual(self.biz.variance_dispute_window_hours, 48)
+
+    def test_zero_or_negative_clamped_to_at_least_one_hour(self):
+        resp = self.client.post('/business/payment-settings/', {
+            '_section': 'variance_policy', 'variance_dispute_window_hours': '0',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.biz.refresh_from_db()
+        self.assertGreaterEqual(self.biz.variance_dispute_window_hours, 1)
+
+
+class VarianceLossKesDisputedExclusionTest(TestCase):
+    """2026-08-26 companion to VarianceLossKesAffirmationTest: a DISPUTED row
+    (a theft verdict still within its appeal window) must not yet count
+    against the staffer's own recognition/Haki record — only once it's
+    genuinely RESOLVED (finalized, whether by timeout, 'Thibitisha Sasa', or
+    staying firm after a response) does Roy's "the verdict now becomes
+    permanent" framing actually take effect."""
+
+    def setUp(self):
+        from core.models import Shift, StockTake, StockVarianceQuery
+        self.StockVarianceQuery = StockVarianceQuery
+        self.biz = Business.objects.create(name='VL Disputed Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.staff_user = User.objects.create_user(username='vld_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='VLD Item',
+            material_no='VLD-01', unit='pcs', selling_price=Decimal('100'),
+        )
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            started_at=timezone.now() - timedelta(hours=2), status='OPEN',
+        )
+        self.stock_take = StockTake.objects.create(business=self.biz, shift=self.shift, conducted_by=self.staff_user)
+
+    def _make_variance(self, estimated_revenue, status, owner_accepted=False):
+        from core.models import StockVarianceQuery
+        return StockVarianceQuery.objects.create(
+            stock_take=self.stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('10'), actual_count=Decimal('8'), direction='decrease',
+            estimated_revenue=Decimal(str(estimated_revenue)),
+            queried_staff=self.staff_profile, attributed_shift=self.shift,
+            owner_accepted=owner_accepted, compliance_noted=True, status=status,
+        )
+
+    def test_disputed_row_excluded_while_appeal_window_open(self):
+        self._make_variance(600, status=self.StockVarianceQuery.DISPUTED)
+        contrib = _staff_contribution_helper(self.staff_profile, self.biz)
+        self.assertEqual(contrib['variance_loss_kes'], 0)
+        self.assertEqual(len(contrib['unaffirmed_variances']), 0)
+
+    def test_same_row_counts_once_finalized_resolved(self):
+        svq = self._make_variance(600, status=self.StockVarianceQuery.DISPUTED)
+        self.StockVarianceQuery.objects.filter(id=svq.id).update(
+            status=self.StockVarianceQuery.RESOLVED, dispute_deadline=None,
+        )
+        contrib = _staff_contribution_helper(self.staff_profile, self.biz)
+        self.assertEqual(contrib['variance_loss_kes'], 600)
+        self.assertEqual(len(contrib['unaffirmed_variances']), 1)
+
+    def test_mixed_disputed_and_resolved_sums_only_resolved(self):
+        self._make_variance(300, status=self.StockVarianceQuery.DISPUTED)   # excluded (still disputed)
+        self._make_variance(400, status=self.StockVarianceQuery.RESOLVED)   # counts (finalized theft)
+        contrib = _staff_contribution_helper(self.staff_profile, self.biz)
+        self.assertEqual(contrib['variance_loss_kes'], 400)
+        self.assertEqual(len(contrib['unaffirmed_variances']), 1)
