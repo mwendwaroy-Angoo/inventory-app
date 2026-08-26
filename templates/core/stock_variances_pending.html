@@ -387,6 +387,11 @@
                 style="border:1px solid #444; color:#b0b0b0;">
                 {% trans 'Bado Ninakataa' %}
             </button>
+            <button onclick="revertMiscount({{ v.id }}, '{{ v.item_name_cache|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(96,165,250,0.08); border:1px solid rgba(96,165,250,0.3); color:#60a5fa;">
+                🔄 {% trans 'Ilikuwa Kosa la Kuhesabu' %}
+            </button>
         </div>
         {% endif %}
     </div>
@@ -456,6 +461,11 @@
                 ❌ {% trans 'Rudisha kuwa Imekataliwa' %}
             </button>
             {% endif %}
+            <button onclick="revertMiscount({{ v.id }}, '{{ v.item_name_cache|escapejs }}')"
+                class="btn btn-sm"
+                style="background:rgba(96,165,250,0.08); border:1px solid rgba(96,165,250,0.3); color:#60a5fa;">
+                🔄 {% trans 'Ilikuwa Kosa la Kuhesabu' %}
+            </button>
             {% else %}
             {% if not v.owner_accepted %}
             <button onclick="acceptIncreaseVariance({{ v.id }}, '{{ v.item_name_cache|escapejs }}', '{% if v.matched_preset %}{{ v.matched_preset.cost_price|default:v.item.cost_price|default_if_none:'' }}{% else %}{{ v.item.cost_price|default_if_none:'' }}{% endif %}', '{% if v.matched_preset %}{{ v.matched_preset.label|escapejs }}{% endif %}')"
@@ -714,6 +724,23 @@ function disputedAction(varId, action, itemName) {
     };
     if (!confirm(labels[action])) return;
     _submitReviewVariance(varId, action, '');
+}
+
+// 2026-08-28 (Roy, urgent live request): DIFFERENT from "Badilisha kuwa
+// Sahihi" — that one keeps the stock correction standing (only whether it
+// was malicious changes). This is for when the owner has determined the
+// original physical count itself was WRONG — there was never a real
+// deficit — so the stock correction itself must be undone too, and the
+// staffer told plainly this was a counting error, not something they
+// need to account for.
+function revertMiscount(varId, itemName) {
+    var note = prompt(
+        'Batilisha marekebisho ya "' + itemName + '" — hii itarudisha stock kwenye hesabu ' +
+        'sahihi na kumwambia mfanyakazi kuwa ilikuwa kosa la kuhesabu, si upungufu halisi.\n\n' +
+        'Maelezo (si lazima):', ''
+    );
+    if (note === null) return; // cancelled
+    _submitReviewVariance(varId, 'revert_miscount', note || '');
 }
 
 function finalizeVarianceNow(varId, itemName) {

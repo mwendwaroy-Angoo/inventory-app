@@ -9137,3 +9137,57 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   diagnostic's new preset-dump + duplicate-item-preset-count output. One
   migration (0177, additive — `ItemPortionPreset.cost_price`'s help_text
   change only, no schema change).
+- Revert a stock-take variance as a counting error (2026-08-28, urgent live
+  request with a screenshot). Roy: Chrome Vodka 250 ML's stock-take
+  variance had already been rejected as a theft verdict (`-4`, Transaction
+  #4713, still within its appeal window) — but the PHYSICAL count was
+  actually 4.75, the system showed 0.75, and "there is not like there is a
+  new receipt for it" (i.e., no unrecorded delivery explains it either) —
+  the ORIGINAL stock-take count itself was simply wrong. "I want to return
+  this chrome vodka back to stock... I do not want to use rekebisha stock
+  so that this variance query to the staff shows that the owner reverted
+  and accepted that it was a stock count miscalculation and that the staff
+  does not have to account for it." **Deliberately distinct from the
+  existing accept-reconsideration ("✅ Badilisha kuwa Sahihi")**: that
+  action's whole point, per Roy's own original theft-verdict rule, is that
+  reversing a verdict changes ONLY the staffer's record, "never the stock
+  balance" — correct when the deficit itself is real, just not malicious.
+  This is a genuinely different case: the deficit was never real at all,
+  so the correction itself must be undone too, not merely the accusation.
+  New `action='revert_miscount'` on `review_variance()` — requires a
+  `corrective_txn` to exist; reverses it via a COMPENSATING transaction
+  (this app never deletes/mutates a transaction's qty — same discipline as
+  `StockTransfer.cancel_locked()`'s `[TRF-CANCEL]` rows), tagged
+  `'[SVQ-REVERT]'`, opposite type and sign of the original (a `-4` Wastage
+  correction gets a `+4` Receipt reversal; a Receipt-type correction from
+  an increase-accept would get a Wastage reversal, handled symmetrically
+  though Roy's own case is the decrease/theft-tagged one). The ORIGINAL
+  corrective transaction is retagged `'[ADJ-NOLOSS]'` — reusing the
+  EXACT established "not a real loss" convention already excluded from
+  every P&L/analytics/Haki wastage aggregate in the app (confirmed by
+  reading each: `analytics_views.py`, `daily_financials.py`,
+  `haki_views.py`, `customer_profile.py` all already `.exclude(invoice_no=
+  '[ADJ-NOLOSS]')`) — rather than inventing a parallel exclusion mechanism.
+  `svq.owner_accepted=True`/`compliance_noted=False`/`status=RESOLVED` —
+  "accepted that it was a miscount," never counting against the staffer —
+  and `variance_loss_kes`'s own pre-existing `.exclude(owner_accepted=
+  True)` picks this up automatically, zero extra code needed there.
+  Deliberately works from EITHER `DISPUTED` (Roy's actual screenshot state)
+  OR an already-finalized `RESOLVED` theft verdict — a miscount can
+  legitimately be discovered after the appeal window closes too. New
+  "🔄 Ilikuwa Kosa la Kuhesabu" button added to both the DISPUTED section
+  and the RESOLVED section's reconsider-toggle (decrease-direction only —
+  an increase-direction row's own "not accepted" dismiss already never
+  touches stock, nothing to revert there) in `stock_variances_pending.
+  html`, with a plain `prompt()` for an optional note (matching this app's
+  established "single rare input" convention) and a distinct staffer
+  notification explicitly saying "HAITAHESABIKA kwenye rekodi yako ya
+  utendaji au malipo." 11 new tests (`RevertVarianceMiscountTest`) —
+  balance restoration (the literal reported figures, 0.75→4.75), the
+  compensating-transaction mechanism with a regression lock that the
+  original's own `qty` is never mutated, the `[ADJ-NOLOSS]` retag actually
+  excluding it from a real P&L wastage query, the accountability fields,
+  the Haki `variance_loss_kes` exclusion, the staff notification wording,
+  immediate item unblocking, working from both DISPUTED and finalized-
+  RESOLVED starting states, the "nothing to revert" guard, and the
+  staff-blocked regression lock. No migrations.

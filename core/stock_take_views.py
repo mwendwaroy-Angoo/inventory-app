@@ -1005,6 +1005,98 @@ def review_variance(request, var_id):
                 )
             return JsonResponse({'ok': True, 'message': msg})
 
+        if action == 'revert_miscount':
+            # 2026-08-28 live request (Roy, urgent — Chrome Vodka physically
+            # 4.75, system 0.75 after a -4 theft-verdict correction; "I do
+            # not want to use rekebisha stock so that this variance query
+            # to the staff shows that the owner reverted and accepted that
+            # it was a stock count miscalculation"). Distinct from the
+            # plain accept-reconsideration above: that one deliberately
+            # NEVER touches the stock ("the real deficit stands, only
+            # whether it was malicious changes"). This is for the DIFFERENT
+            # case where the owner has determined there was never a real
+            # deficit AT ALL — the physical count taken at stock-take time
+            # was simply wrong — so the correction itself must be undone,
+            # not just the accusation. Requires a corrective_txn to exist;
+            # reverses it via a COMPENSATING transaction (this app never
+            # deletes a Transaction) rather than mutating its qty, and
+            # retags the ORIGINAL to '[ADJ-NOLOSS]' — the same established,
+            # already-excluded-everywhere convention used for a Rekebisha
+            # correction later found not to be a real loss — so it stops
+            # counting as a real KES loss in P&L/analytics/Haki wastage
+            # figures, exactly as if the shortfall had never been real.
+            if not has_correction:
+                return JsonResponse({'ok': False, 'error': 'Hakuna marekebisho ya kubatilisha kwenye tofauti hii.'})
+
+            orig_txn = svq.corrective_txn
+            reversal_note = request.POST.get('owner_response_note', '').strip()
+
+            try:
+                if orig_txn.qty < 0:
+                    reversal_txn = Transaction.objects.create(
+                        business=business, item=svq.item, type='Receipt',
+                        qty=abs(orig_txn.qty), payment_method='',
+                        recipient=(
+                            reversal_note
+                            or 'Marekebisho ya awali yamebatilishwa — kosa la kuhesabu stock, si upungufu halisi.'
+                        ),
+                        recorded_by=request.user, invoice_no='[SVQ-REVERT]',
+                    )
+                else:
+                    reversal_txn = Transaction.objects.create(
+                        business=business, item=svq.item, type='Wastage',
+                        qty=-abs(orig_txn.qty), payment_method='',
+                        recipient=(
+                            reversal_note
+                            or 'Marekebisho ya awali yamebatilishwa — kosa la kuhesabu stock, si mapokezi halisi.'
+                        ),
+                        recorded_by=request.user, invoice_no='[SVQ-REVERT]',
+                    )
+                if orig_txn.type == 'Wastage' and orig_txn.invoice_no != '[ADJ-NOLOSS]':
+                    orig_txn.invoice_no = '[ADJ-NOLOSS]'
+                    orig_txn.save(update_fields=['invoice_no'])
+            except Exception as exc:
+                logger.exception("Error reverting corrective transaction for variance %s", var_id)
+                return JsonResponse({'ok': False, 'error': str(exc)})
+
+            new_balance = svq.item.current_balance() if svq.item else None
+            svq.owner_accepted   = True
+            svq.compliance_noted = False
+            svq.owner_action_by  = request.user
+            svq.owner_acted_at   = now
+            svq.status            = StockVarianceQuery.RESOLVED
+            svq.dispute_deadline = None
+            svq.owner_note = (
+                f"Kosa la kuhesabu stock lililobainika na {reviewer_name} tarehe {when} — "
+                f"marekebisho ya awali (transaction #{orig_txn.id}) yamebatilishwa kwa "
+                f"transaction #{reversal_txn.id}. Si upungufu halisi."
+                + (f' Maelezo: {reversal_note}' if reversal_note else '')
+            )
+            svq.save(update_fields=[
+                'owner_accepted', 'compliance_noted', 'owner_action_by',
+                'owner_acted_at', 'status', 'dispute_deadline', 'owner_note',
+            ])
+
+            msg = (
+                f'Kosa la kuhesabu limekubaliwa na {reviewer_name} tarehe {when} — stock '
+                f'imerekebishwa kurudi {new_balance} {svq.item.unit if svq.item else ""}. '
+                f'Hii haitahesabika kwenye rekodi ya utendaji ya mfanyakazi.'
+            )
+            if svq.queried_staff:
+                staff_msg = (
+                    f"Mmiliki {reviewer_name} amegundua kuwa tofauti ya {svq.item_name_cache} "
+                    f"tarehe {when} ilikuwa KOSA LA KUHESABU wakati wa hesabu ya stock — SI "
+                    f"upungufu halisi. Marekebisho ya awali yamebatilishwa na stock imerekebishwa. "
+                    f"Hii HAITAHESABIKA kwenye rekodi yako ya utendaji au malipo."
+                )
+                create_in_app_notification(
+                    svq.queried_staff.user,
+                    f"✅ Ilikuwa Kosa la Kuhesabu: {svq.item_name_cache}",
+                    staff_msg, notification_type='info',
+                    link_url=f'/stock/variances/{svq.id}/respond/',
+                )
+            return JsonResponse({'ok': True, 'message': msg})
+
         if action == 'accept':
             if has_correction:
                 # Pure reversal — never creates or touches corrective_txn.

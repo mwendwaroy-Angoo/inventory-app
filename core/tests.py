@@ -45511,3 +45511,149 @@ class DiagnoseStockShortfallsPresetDumpTest(TestCase):
         output = out.getvalue()
         self.assertIn(f'item#{item2.id}', output)
         self.assertIn('presets=1', output)
+
+
+class RevertVarianceMiscountTest(TestCase):
+    """2026-08-28 urgent live request (Roy — Chrome Vodka physically 4.75,
+    system 0.75 after a -4 theft-verdict Wastage correction): DIFFERENT
+    from the existing accept-reconsideration ('Badilisha kuwa Sahihi',
+    which deliberately never touches stock) — this is for when the owner
+    determines the ORIGINAL PHYSICAL COUNT was itself wrong, so there was
+    never a real deficit at all. Reverses the correction via a compensating
+    transaction (never deletes/mutates the original's qty), retags the
+    original Wastage '[ADJ-NOLOSS]' so it stops counting as a real P&L
+    loss, and tells the staffer plainly it was a counting error, not
+    something on their record."""
+
+    def setUp(self):
+        from core.models import StockVarianceQuery, StockTake
+        self.StockVarianceQuery = StockVarianceQuery
+        self.biz = Business.objects.create(name='Revert Miscount Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='revmis_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='revmis_staff', password='x', first_name='Recheal')
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff_user, business=self.biz, role='staff', phone='0711222333',
+        )
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chrome Vodka 250 ML',
+            material_no='REVMIS-01', unit='btl', selling_price=Decimal('300'),
+            cost_price=Decimal('700'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('4.75'),
+        )
+        self.stock_take = StockTake.objects.create(business=self.biz, store=self.store)
+        self.svq = self.StockVarianceQuery.objects.create(
+            stock_take=self.stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('4.75'), actual_count=Decimal('0.75'),
+            direction=self.StockVarianceQuery.DECREASE, queried_staff=self.staff_profile,
+        )
+        self.client.force_login(self.owner)
+        # Dismiss it first — the real starting state (a DISPUTED theft
+        # verdict with a -4 corrective Wastage transaction), matching
+        # Roy's actual screenshot.
+        resp = self.client.post(f'/stock/variances/{self.svq.id}/review/', {'action': 'dismiss'})
+        self.assertTrue(resp.json()['ok'])
+        self.svq.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), Decimal('0.75'))
+
+    def _revert(self, note=''):
+        return self.client.post(f'/stock/variances/{self.svq.id}/review/', {
+            'action': 'revert_miscount', 'owner_response_note': note,
+        })
+
+    def test_revert_restores_the_physical_balance(self):
+        resp = self._revert('Recheal alihesabu vibaya')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertEqual(self.item.current_balance(), Decimal('4.75'))
+
+    def test_revert_creates_a_compensating_transaction_never_mutates_original_qty(self):
+        orig_txn = self.svq.corrective_txn
+        orig_qty = orig_txn.qty
+        self._revert()
+        orig_txn.refresh_from_db()
+        self.assertEqual(orig_txn.qty, orig_qty)  # never mutated
+        reversal = Transaction.objects.filter(item=self.item, invoice_no='[SVQ-REVERT]').first()
+        self.assertIsNotNone(reversal)
+        self.assertEqual(reversal.type, 'Receipt')
+        self.assertEqual(reversal.qty, Decimal('4'))
+
+    def test_revert_retags_original_as_adj_noloss_excluding_it_from_pl(self):
+        # loss_value() itself always computes the raw figure regardless of
+        # tag — the exclusion happens at the AGGREGATE query level (every
+        # P&L/Haki wastage consumer already does .exclude(invoice_no=
+        # '[ADJ-NOLOSS]')), exactly mirroring the established Rekebisha
+        # "sio hasara halisi" convention this reuses.
+        orig_txn = self.svq.corrective_txn
+        self.assertEqual(orig_txn.invoice_no, '[THEFT]')
+        self._revert()
+        orig_txn.refresh_from_db()
+        self.assertEqual(orig_txn.invoice_no, '[ADJ-NOLOSS]')
+        still_counted = Transaction.objects.filter(
+            business=self.biz, type='Wastage',
+        ).exclude(invoice_no='[ADJ-NOLOSS]')
+        self.assertNotIn(orig_txn, list(still_counted))
+
+    def test_revert_sets_accepted_no_compliance_note_resolved(self):
+        self._revert()
+        self.svq.refresh_from_db()
+        self.assertTrue(self.svq.owner_accepted)
+        self.assertFalse(self.svq.compliance_noted)
+        self.assertEqual(self.svq.status, self.StockVarianceQuery.RESOLVED)
+        self.assertIsNone(self.svq.dispute_deadline)
+
+    def test_revert_never_counts_toward_staff_variance_loss(self):
+        self._revert()
+        from core.haki_views import _staff_contribution
+        today = timezone.localdate()
+        contrib = _staff_contribution(
+            self.staff_profile, self.biz, today - timedelta(days=1), today + timedelta(days=1),
+        )
+        self.assertEqual(contrib['variance_loss_kes'], 0)
+
+    def test_revert_notifies_staff_it_is_not_on_their_record(self):
+        self._revert('Recheal alihesabu vibaya')
+        notif = Notification.objects.filter(
+            user=self.staff_user, title__icontains='Kosa la Kuhesabu',
+        ).first()
+        self.assertIsNotNone(notif)
+        self.assertIn('HAITAHESABIKA', notif.message)
+
+    def test_revert_item_immediately_sellable(self):
+        from core.stock_take_views import item_has_pending_variance
+        self._revert()
+        self.assertFalse(item_has_pending_variance(self.item.id))
+
+    def test_revert_requires_a_correction_to_exist(self):
+        fresh_svq = self.StockVarianceQuery.objects.create(
+            stock_take=self.stock_take, item=self.item, item_name_cache=self.item.description,
+            book_balance=Decimal('10'), actual_count=Decimal('8'),
+            direction=self.StockVarianceQuery.DECREASE,
+        )
+        resp = self.client.post(f'/stock/variances/{fresh_svq.id}/review/', {'action': 'revert_miscount'})
+        self.assertFalse(resp.json()['ok'])
+
+    def test_revert_works_after_finalization_too(self):
+        # Even once the appeal window has run out and the verdict is
+        # RESOLVED (not just DISPUTED), the owner can still discover a
+        # miscount and revert it.
+        self.client.post(f'/stock/variances/{self.svq.id}/review/', {'action': 'finalize_now'})
+        self.svq.refresh_from_db()
+        self.assertEqual(self.svq.status, self.StockVarianceQuery.RESOLVED)
+        resp = self._revert()
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertEqual(self.item.current_balance(), Decimal('4.75'))
+
+    def test_revert_blank_note_uses_default_wording(self):
+        resp = self._revert('')
+        self.assertTrue(resp.json()['ok'], resp.json())
+        reversal = Transaction.objects.filter(item=self.item, invoice_no='[SVQ-REVERT]').first()
+        self.assertIn('kosa la kuhesabu', reversal.recipient.lower())
+
+    def test_staff_cannot_revert_miscount(self):
+        self.client.force_login(self.staff_user)
+        resp = self._revert()
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self.item.current_balance(), Decimal('0.75'))
