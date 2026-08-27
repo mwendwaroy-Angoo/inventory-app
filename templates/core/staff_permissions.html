@@ -92,6 +92,58 @@
             </div>
         </div>
 
+        <!-- Record ad-hoc/backdated expenses (2026-08-21 live request — this
+             toggle existed on the model but was never actually wired into
+             this page, found and fixed 2026-08-27 alongside the affirm-
+             stock-take toggle below.) -->
+        <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        💸 {% trans 'Record Matumizi ya Leo (Ad-hoc Expenses)' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans 'Allow this staff member to record an ad-hoc/backdated expense on the Bar/Kitchen board — never affects today\'s expected drawer cash.' %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans 'Off by default. Correcting an already-recorded entry stays owner/manager-only.' %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_record_expenses"
+                           id="can_record_expenses"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_record_expenses %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+
+        <!-- Affirm a stock take without re-typing every matching number
+             (2026-08-27 live request) -->
+        <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                        ✅ {% trans 'Affirm Stock Take (Zote Zinalingana)' %}
+                    </div>
+                    <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                        {% trans 'Allow this staff member to submit a stock take confirming everything matches the system, without re-typing every already-correct number.' %}
+                    </div>
+                    <div style="color:#888; font-size:0.78rem; margin-top:0.3rem;">
+                        {% trans "Off by default. Any number the staffer DOES type still takes priority — the server fills in the rest from each item's own live balance, never a value the staffer could tamper with." %}
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-1">
+                    <input type="checkbox" name="can_affirm_stock_take"
+                           id="can_affirm_stock_take"
+                           class="form-check-input" role="switch"
+                           style="width:3rem; height:1.5rem; cursor:pointer;"
+                           {% if staff_profile.can_affirm_stock_take %}checked{% endif %}>
+                </div>
+            </div>
+        </div>
+
         <!-- Cost price -->
         <div class="p-4" style="border-bottom:1px solid #2a2a2a;">
             <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">

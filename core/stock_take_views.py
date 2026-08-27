@@ -598,6 +598,29 @@ def start_stock_take(request):
         else:
             counts = []
 
+        # 2026-08-27 live report (Roy — a physical count matching the
+        # system exactly leaves nothing to type): affirm_all fills in
+        # every item in this page's own scope that the owner/manager did
+        # NOT type a value for, using that item's own live balance —
+        # server-derived, never trusted from a client value. This page is
+        # already @owner_or_manager_required, so no extra permission check
+        # is needed here (unlike stock_take_api's staff-facing mirror,
+        # which gates this behind UserProfile.can_affirm_stock_take).
+        if (request.POST.get('affirm_all') or '').strip() in ('1', 'true', 'on'):
+            already_ids = set()
+            for row in counts:
+                try:
+                    already_ids.add(int(row.get('item_id', 0)))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            affirm_items_qs = Item.objects.filter(
+                store__business=business, is_produce=False,
+            ).exclude(id__in=already_ids)
+            if scoped_store:
+                affirm_items_qs = affirm_items_qs.filter(store=scoped_store)
+            for _item in affirm_items_qs:
+                counts.append({'item_id': _item.id, 'actual_count': float(_item.current_balance())})
+
         if not counts:
             return JsonResponse({'ok': False, 'error': 'Hakuna hesabu zilizotumwa.'}, status=400)
 

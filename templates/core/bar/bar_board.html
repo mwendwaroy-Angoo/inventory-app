@@ -1825,8 +1825,19 @@
         <button type="button" data-bs-dismiss="modal"
                 style="background:#333; border:1px solid #444; color:#b0b0b0; border-radius:6px;
                        padding:5px 14px; font-size:0.82rem; cursor:pointer;">Ruka</button>
+        <!-- 2026-08-27 live request (Roy) — a physical count matching the
+             system exactly leaves nothing to type; this affirms the rest
+             without re-typing every already-correct number. Only shown to
+             owner/manager or a staffer with UserProfile.can_affirm_stock_
+             take — see submitStockTake(affirmAll)'s own comment for the
+             server-side enforcement (never trusts this button alone). -->
+        <button type="button" id="stock-take-affirm-btn" class="btn btn-outline-secondary btn-sm"
+                onclick="window.submitStockTake(true)"
+                style="display:none; border-color:rgba(110,231,183,0.4); color:#6ee7b7;">
+          ✅ Zote Zinalingana
+        </button>
         <button type="button" id="stock-take-submit-btn" class="btn btn-gold btn-sm"
-                onclick="window.submitStockTake()" style="display:none;">
+                onclick="window.submitStockTake(false)" style="display:none;">
           Hifadhi Hesabu
         </button>
       </div>
@@ -2030,6 +2041,12 @@
   // can_convert_tabs_to_debt may now see/use "Geuza Deni" — everywhere else
   // IS_WAITRESS already hides it, this just narrows those checks further.
   var CAN_CONVERT_DEBT = {% if can_convert_tabs_to_debt %}true{% else %}false{% endif %};
+  // 2026-08-27 live request (Roy — a stock take matching the system exactly
+  // left nothing to type, and the modal's own "enter at least one" guard
+  // then silently refused to submit at all): a trusted staffer may tap
+  // "Zote Zinalingana" to affirm without re-typing every already-correct
+  // number — see UserProfile.can_affirm_stock_take's own docstring.
+  var CAN_AFFIRM_STOCK_TAKE = {% if can_affirm_stock_take %}true{% else %}false{% endif %};
   window.PETTY_CASH_STATION = 'bar';  // 2026-07-27 — which till the shared petty cash modal records against on this board
   window.EXPENSE_STATION = 'bar';  // 2026-08-09 — which counter the shared ad-hoc expense modal tags entries with
   var CSRF        = "{{ csrf_token }}";
@@ -5909,11 +5926,13 @@
     var resEl    = document.getElementById('stock-take-results');
     var errEl    = document.getElementById('stock-take-error');
     var submitBtn = document.getElementById('stock-take-submit-btn');
+    var affirmBtn = document.getElementById('stock-take-affirm-btn');
     loadEl.style.display  = 'block';
     formEl.style.display  = 'none';
     resEl.style.display   = 'none';
     errEl.style.display   = 'none';
     if (submitBtn) submitBtn.style.display = 'none';
+    if (affirmBtn) affirmBtn.style.display = 'none';
     showModal('stockTakeModal');
 
     fetch('/bar/shift/' + shiftId + '/stock-take/')
@@ -5944,6 +5963,10 @@
         formEl.innerHTML = html;
         formEl.style.display = 'block';
         if (submitBtn) submitBtn.style.display = 'inline-block';
+        // 2026-08-27 — only offered to owner/manager or a staffer granted
+        // UserProfile.can_affirm_stock_take (server-enforced regardless of
+        // this button's own visibility — see submitStockTake()).
+        if (affirmBtn && CAN_AFFIRM_STOCK_TAKE) affirmBtn.style.display = 'inline-block';
       })
       .catch(function () {
         loadEl.style.display = 'none';
@@ -5952,12 +5975,22 @@
       });
   };
 
-  window.submitStockTake = function () {
+  // 2026-08-27 live request (Roy) — a physical count matching the system
+  // exactly leaves nothing to type; "✅ Zote Zinalingana" (affirmAll=true)
+  // submits without re-typing every already-correct number. Whatever the
+  // staffer DID type (e.g. the one item they know is actually off) is sent
+  // exactly as before and still takes priority — the server fills in every
+  // OTHER item from its own live balance, never trusting a client value for
+  // an item nobody actually looked at. Real permission enforcement lives
+  // server-side (stock_take_api) — this button is just UI convenience.
+  window.submitStockTake = function (affirmAll) {
     if (!_stockTakeShiftId) return;
     var formEl    = document.getElementById('stock-take-form');
     var resEl     = document.getElementById('stock-take-results');
     var errEl     = document.getElementById('stock-take-error');
     var submitBtn = document.getElementById('stock-take-submit-btn');
+    var affirmBtn = document.getElementById('stock-take-affirm-btn');
+    var activeBtn = affirmAll ? affirmBtn : submitBtn;
 
     var counts = [];
     formEl.querySelectorAll('input[data-item-id]').forEach(function (inp) {
@@ -5966,18 +5999,20 @@
         counts.push({ item_id: parseInt(inp.dataset.itemId), actual_count: parseFloat(val) || 0 });
       }
     });
-    if (counts.length === 0) {
-      errEl.textContent = 'Ingiza angalau hesabu moja.';
+    if (counts.length === 0 && !affirmAll) {
+      errEl.textContent = 'Ingiza angalau hesabu moja, au tumia "Zote Zinalingana" ikiwa una ruhusa.';
       errEl.style.display = 'block';
       return;
     }
     errEl.style.display = 'none';
-    submitBtn.disabled  = true;
-    submitBtn.textContent = 'Inahifadhi...';
+    if (submitBtn) submitBtn.disabled = true;
+    if (affirmBtn) affirmBtn.disabled = true;
+    if (activeBtn) activeBtn.textContent = 'Inahifadhi...';
 
     var fd = new FormData();
     fd.append('counts', JSON.stringify(counts));
     fd.append('phase', _stockTakePhase);
+    if (affirmAll) fd.append('affirm_all', '1');
     fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
     // 2026-08-22 — opening/closing counts now feed the real accountability
     // engine (StockVarianceQuery + notify), so this needs the same
@@ -5987,11 +6022,12 @@
     fetch('/bar/shift/' + _stockTakeShiftId + '/stock-take/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        submitBtn.disabled  = false;
-        submitBtn.textContent = 'Hifadhi Hesabu';
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Hifadhi Hesabu'; }
+        if (affirmBtn) { affirmBtn.disabled = false; affirmBtn.textContent = '✅ Zote Zinalingana'; }
         if (!d.ok) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; return; }
         formEl.style.display = 'none';
-        submitBtn.style.display = 'none';
+        if (submitBtn) submitBtn.style.display = 'none';
+        if (affirmBtn) affirmBtn.style.display = 'none';
         var html = '<div style="font-size:0.78rem; color:#4caf50; margin-bottom:0.5rem;">✓ Hesabu zimehifadhiwa.</div>' +
           '<div style="display:grid; grid-template-columns:1fr auto auto auto; gap:0.3rem 0.6rem; align-items:center;">' +
           '<div style="font-size:0.7rem; color:#888; text-transform:uppercase;">Bidhaa</div>' +
@@ -6037,8 +6073,8 @@
         resEl.style.display = 'block';
       })
       .catch(function () {
-        submitBtn.disabled   = false;
-        submitBtn.textContent = 'Hifadhi Hesabu';
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Hifadhi Hesabu'; }
+        if (affirmBtn) { affirmBtn.disabled = false; affirmBtn.textContent = '✅ Zote Zinalingana'; }
         errEl.textContent    = 'Hitilafu ya mtandao.';
         errEl.style.display  = 'block';
       });

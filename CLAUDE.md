@@ -9279,3 +9279,63 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `BackfillVoidSplitSiblingsTest` — dry-run, real repair, credit-never-
   auto-voided, business-scoping, idempotent re-run, unaffected-business
   no-op). No migrations.
+- Stock take "Zote Zinalingana" (Everything Matches) affirmation + a new
+  delegated staff permission (2026-08-27). Roy's own framing, adopted
+  as-is: "if stock take is accurate according to the system tally without
+  the staff inputing any value... the system misbehaves, so I was
+  thinking of making this an affirmation for staff and it goes through,
+  but the owner should have this as a staff permission for trusted
+  staff." **Root cause, traced to the frontend, not the backend**: the
+  quick "Hesabu Stock" modal's own `submitStockTake()` JS (`bar_board.
+  html`/`kitchen_board.html`) has always blocked submission outright —
+  `if (counts.length === 0) { errEl.textContent = 'Ingiza angalau hesabu
+  moja.'; return; }` — whenever every physical count genuinely matched
+  the system and staff had nothing to type; the backend (`stock_take_
+  api()`) never had an equivalent block and would have happily accepted
+  an empty submission. The guided owner/manager-only page (`start_stock_
+  take()`/`stock_take_form.html`) had the identical JS-level block, this
+  time backed by a REAL server-side `if not counts: return 400` too.
+  **Fix — server-derived affirmation, never a client-trusted shortcut**:
+  new `affirm_all` POST flag on both endpoints. Rather than trust a
+  client-synthesized "every blank item = book balance" array (which the
+  client already fully controls anyway), the SERVER itself resolves,
+  for every station-scoped item NOT present in the client's own `counts`,
+  that item's own CURRENT live balance as the confirmed count — so
+  nobody can lie about a specific item's number even with affirm_all on;
+  only whether SKIPPING individual entry is allowed at all is the trust
+  decision. Whatever the staffer DID type (e.g. the one item they know is
+  genuinely short) is left completely untouched and still creates a real
+  `StockVarianceQuery` exactly as before — affirm_all only ever fills in
+  the REST. New `UserProfile.can_affirm_stock_take` (accounts migration
+  0067, default False, matching this app's own established "trusted
+  staff, owner opts them in" convention for every recent delegated
+  toggle) gates `stock_take_api()`'s staff-facing use of the flag —
+  owner/manager always exempt; `start_stock_take()` needs no extra check
+  at all, since that whole page is already `@owner_or_manager_required`.
+  New "✅ Zote Zinalingana" button added next to the existing submit
+  button on all three surfaces (`bar_board.html`, `kitchen_board.html`,
+  `stock_take_form.html`) — shown to owner/manager unconditionally, to a
+  plain staffer only when the new toggle is on; tapping it never blocks
+  on an empty form (unlike the ordinary submit button) and correctly
+  produces `variance_count=0`/`uncounted_count=0` for a genuinely clean
+  count, since every item now gets a real `ShiftStockCount` row instead
+  of being silently skipped. **A second, real, pre-existing gap found and
+  fixed in the same pass, directly adjacent to this work**:
+  `UserProfile.can_record_expenses` (built 2026-08-21, "staff have no way
+  of backdating expenses") has existed on the model and been read by
+  `record_ad_hoc_expense()`/board templates this whole time, but was
+  NEVER actually wired into `staff_permissions.html`/`accounts.views.
+  staff_permissions()` at all — an owner had no UI to ever grant it,
+  meaning that toggle has been permanently stuck off for every business
+  on the platform since the day it shipped. Wired in alongside the new
+  `can_affirm_stock_take` toggle (same form, same view, same `update_
+  fields` list) rather than leaving it broken while touching the exact
+  same lines for an unrelated new field. 11 new tests
+  (`StockTakeAffirmAllTest` — unpermitted-staff-blocked, permitted-staff-
+  affirms-everything, owner-always-allowed, the mixed typed+affirmed
+  case with the typed value surviving untouched, the server-never-
+  trusts-a-stale-client-value regression lock, station-scoping, midshift
+  still gated, an ordinary non-affirm submission completely unaffected,
+  and the guided page's own end-to-end round-trip;
+  `StaffPermissionsAffirmAndExpenseWiringTest` — both toggles persist
+  on/off through the real form). One migration (accounts 0067, additive).

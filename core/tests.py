@@ -41135,6 +41135,217 @@ class StockTakeApiAccountabilityTest(TestCase):
         self.assertEqual(d['uncounted_count'], 0)
 
 
+class StockTakeAffirmAllTest(TestCase):
+    """2026-08-27 live report (Roy): a physical count that matches the
+    system exactly leaves nothing to type — and the quick "Hesabu Stock"
+    modal's own frontend "enter at least one count" guard then silently
+    refused to let staff submit at all. affirm_all lets a TRUSTED staffer
+    (UserProfile.can_affirm_stock_take, owner/manager always exempt)
+    confirm the rest matches without re-typing every already-correct
+    number — every item the client did NOT type a value for is resolved
+    from its own SERVER-side live balance, never trusted from the client."""
+
+    def setUp(self):
+        from core.models import Shift
+        self.biz = Business.objects.create(name='Affirm All Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='affirm_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='affirm_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(
+            user=self.staff, business=self.biz, role='staff', can_affirm_stock_take=False,
+        )
+        self.item1 = Item.objects.create(
+            business=self.biz, store=self.store, description='Affirm Item 1',
+            material_no='AFF-01', unit='pcs', selling_price=Decimal('50'),
+        )
+        self.item2 = Item.objects.create(
+            business=self.biz, store=self.store, description='Affirm Item 2',
+            material_no='AFF-02', unit='pcs', selling_price=Decimal('80'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item1, type='Receipt', qty=Decimal('10'),
+            created_at=timezone.now() - timedelta(days=1),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item2, type='Receipt', qty=Decimal('4'),
+            created_at=timezone.now() - timedelta(days=1),
+        )
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff, station='bar',
+            started_at=timezone.now(), status='OPEN',
+        )
+
+    def _post(self, user, counts, affirm_all=False, phase='closing', token=None):
+        import json, uuid
+        self.client.force_login(user)
+        data = {
+            'counts': json.dumps(counts), 'phase': phase,
+            'idempotency_token': token or str(uuid.uuid4()),
+        }
+        if affirm_all:
+            data['affirm_all'] = '1'
+        return self.client.post(f'/bar/shift/{self.shift.id}/stock-take/', data)
+
+    def test_unpermitted_staff_blocked_from_affirming(self):
+        resp = self._post(self.staff, [], affirm_all=True)
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(resp.json()['ok'])
+        self.assertEqual(ShiftStockCount.objects.filter(shift=self.shift).count(), 0)
+
+    def test_permitted_staff_can_affirm_all_with_empty_counts(self):
+        self.staff_profile.can_affirm_stock_take = True
+        self.staff_profile.save(update_fields=['can_affirm_stock_take'])
+        resp = self._post(self.staff, [], affirm_all=True)
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(d['variance_count'], 0)
+        self.assertEqual(d['uncounted_count'], 0)
+        # Every station-scoped item was affirmed at its own live balance —
+        # a real ShiftStockCount row per item, never skipped.
+        self.assertEqual(
+            ShiftStockCount.objects.filter(shift=self.shift, phase='closing').count(), 2,
+        )
+        c1 = ShiftStockCount.objects.get(shift=self.shift, item=self.item1)
+        self.assertEqual(c1.actual_count, Decimal('10'))
+        self.assertEqual(c1.book_balance, Decimal('10'))
+
+    def test_owner_can_always_affirm_regardless_of_flag(self):
+        resp = self._post(self.owner, [], affirm_all=True)
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(
+            ShiftStockCount.objects.filter(shift=self.shift, phase='closing').count(), 2,
+        )
+
+    def test_typed_value_takes_priority_over_server_affirmed_one(self):
+        """Mixed case: staffer found item2 genuinely short, types it — the
+        rest (item1) is affirmed at its own book balance. The typed value
+        must never be overridden by the server's own affirm-all fill-in."""
+        self.staff_profile.can_affirm_stock_take = True
+        self.staff_profile.save(update_fields=['can_affirm_stock_take'])
+        resp = self._post(
+            self.staff, [{'item_id': self.item2.id, 'actual_count': 2}], affirm_all=True,
+        )
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(d['variance_count'], 1, 'only item2 (typed, genuinely short) should create a variance')
+
+        c1 = ShiftStockCount.objects.get(shift=self.shift, item=self.item1)
+        self.assertEqual(c1.actual_count, Decimal('10'), 'affirmed at its own book balance, no variance')
+        c2 = ShiftStockCount.objects.get(shift=self.shift, item=self.item2)
+        self.assertEqual(c2.actual_count, Decimal('2'), 'the staffer-typed value must survive untouched')
+
+        from core.models import StockVarianceQuery
+        svq = StockVarianceQuery.objects.get(stock_take__business=self.biz)
+        self.assertEqual(svq.item_id, self.item2.id)
+
+    def test_server_derives_affirmed_value_never_trusts_client_for_untyped_items(self):
+        """Even if a client somehow tried to smuggle a false value for an
+        item it never actually typed, affirm_all's own server-side fill-in
+        can only ever be reached for items ABSENT from counts — so there is
+        no way to lie about a specific number via this mechanism. Confirmed
+        here by changing the item's real balance right before affirming and
+        checking the recorded value matches the NEW live balance, not
+        anything stale a client could have cached."""
+        self.staff_profile.can_affirm_stock_take = True
+        self.staff_profile.save(update_fields=['can_affirm_stock_take'])
+        Transaction.objects.create(
+            business=self.biz, item=self.item1, type='Issue', qty=Decimal('-3'),
+        )  # item1 balance now 7, not 10
+        resp = self._post(self.staff, [], affirm_all=True)
+        self.assertTrue(resp.json()['ok'])
+        c1 = ShiftStockCount.objects.get(shift=self.shift, item=self.item1)
+        self.assertEqual(c1.actual_count, Decimal('7'))
+        self.assertEqual(c1.book_balance, Decimal('7'))
+
+    def test_affirm_all_respects_station_scoping(self):
+        self.staff_profile.can_affirm_stock_take = True
+        self.staff_profile.save(update_fields=['can_affirm_stock_take'])
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        Item.objects.create(
+            business=self.biz, store=kitchen_store, description='Kitchen-only Item',
+            material_no='AFF-03', unit='pcs', selling_price=Decimal('10'),
+        )
+        resp = self._post(self.staff, [], affirm_all=True)  # bar shift
+        self.assertTrue(resp.json()['ok'])
+        # Only the two bar items — never the kitchen-station item.
+        self.assertEqual(
+            ShiftStockCount.objects.filter(shift=self.shift, phase='closing').count(), 2,
+        )
+
+    def test_midshift_affirm_all_still_requires_permission(self):
+        resp = self._post(self.staff, [], affirm_all=True, phase='midshift')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_ordinary_submission_without_affirm_all_is_unaffected(self):
+        """Regression lock: a normal partial submission (no affirm_all)
+        still behaves exactly as before — untouched items are simply never
+        counted, no server-side fill-in happens."""
+        resp = self._post(self.staff, [{'item_id': self.item1.id, 'actual_count': 10}])
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        self.assertEqual(
+            ShiftStockCount.objects.filter(shift=self.shift, phase='closing').count(), 1,
+        )
+        self.assertEqual(d['uncounted_count'], 1)
+
+    def test_guided_page_affirm_all_owner_only_no_extra_permission_needed(self):
+        """start_stock_take() is already @owner_or_manager_required, so
+        affirm_all there needs no separate UserProfile check — this is a
+        different endpoint from stock_take_api, exercised end to end."""
+        self.client.force_login(self.owner)
+        import json, uuid
+        resp = self.client.post('/stock/take/', {
+            'counts': json.dumps([]),
+            'affirm_all': '1',
+            'idempotency_token': str(uuid.uuid4()),
+        })
+        d = resp.json()
+        self.assertTrue(d['ok'], d)
+        from core.models import StockTake
+        take = StockTake.objects.get(id=d['take_id'])
+        self.assertEqual(take.variances.count(), 0)
+
+
+class StaffPermissionsAffirmAndExpenseWiringTest(TestCase):
+    """UserProfile.can_affirm_stock_take (new, 2026-08-27) and
+    can_record_expenses (existing on the model since 2026-08-21 but never
+    actually wired into the staff_permissions page/view — found and fixed
+    in the same pass) both persist correctly via the real form now."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Perm Wiring Biz')
+        self.owner = User.objects.create_user(username='pw_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='pw_staff', password='x')
+        self.up = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def test_can_affirm_stock_take_toggles_on_and_off(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/business/staff/{self.up.id}/permissions/', {
+            'can_affirm_stock_take': 'on',
+        })
+        self.up.refresh_from_db()
+        self.assertTrue(self.up.can_affirm_stock_take)
+
+        self.client.post(f'/business/staff/{self.up.id}/permissions/', {})
+        self.up.refresh_from_db()
+        self.assertFalse(self.up.can_affirm_stock_take)
+
+    def test_can_record_expenses_toggles_on_and_off(self):
+        self.client.force_login(self.owner)
+        self.client.post(f'/business/staff/{self.up.id}/permissions/', {
+            'can_record_expenses': 'on',
+        })
+        self.up.refresh_from_db()
+        self.assertTrue(self.up.can_record_expenses)
+
+        self.client.post(f'/business/staff/{self.up.id}/permissions/', {})
+        self.up.refresh_from_db()
+        self.assertFalse(self.up.can_record_expenses)
+
+
 class VarianceLossKesAffirmationTest(TestCase):
     """2026-08-22 fix — _staff_contribution()'s variance_loss_kes used to sum
     EVERY decrease-direction variance attributed to a staffer's shift

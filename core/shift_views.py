@@ -3242,6 +3242,43 @@ def stock_take_api(request, shift_id):
         # 2026-08-02 regression sweep: same broken shift.store proxy as the
         # GET branch above — fixed to the real _shift_station() discriminator.
         _shift_is_kitchen = (_shift_station(shift) == 'kitchen')
+
+        # 2026-08-27 live report (Roy): a physical count that matches the
+        # system exactly leaves nothing to type — and the modal's own JS
+        # "enter at least one count" guard then silently refuses to submit
+        # at all. affirm_all lets a trusted staffer submit without re-
+        # typing every already-correct number: for every station-scoped
+        # item NOT present in the client's own `counts`, the SERVER
+        # itself resolves that item's current live balance as the
+        # confirmed count — never trusted from the client, so nobody can
+        # lie about a specific number even with this on. Whatever the
+        # staffer DID type (e.g. the one item they know is actually off)
+        # is left completely untouched and still takes priority. Whether
+        # skipping individual entry is allowed at all is a real trust
+        # decision, gated behind UserProfile.can_affirm_stock_take —
+        # owner/manager always exempt, matching every other delegated-
+        # oversight toggle in this app.
+        affirm_all = (request.POST.get('affirm_all') or '').strip() in ('1', 'true', 'on')
+        if affirm_all:
+            if not (getattr(up, 'is_owner_or_manager', False) or up.can_affirm_stock_take):
+                return JsonResponse({
+                    'ok': False,
+                    'error': 'Huna ruhusa ya kuthibitisha bila kuingiza kila idadi — muulize mmiliki akupe ruhusa hii.',
+                }, status=403)
+            already_ids = set()
+            for row in counts:
+                try:
+                    already_ids.add(int(row.get('item_id', 0)))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            remaining_items = (
+                Item.objects.filter(business=up.business, store__is_kitchen=_shift_is_kitchen)
+                .exclude(is_keg=True).exclude(is_produce=True)
+                .exclude(id__in=already_ids)
+            )
+            for _item in remaining_items:
+                counts.append({'item_id': _item.id, 'actual_count': float(_item.current_balance())})
+
         results = []
         counted_item_ids = set()
         for entry in counts:

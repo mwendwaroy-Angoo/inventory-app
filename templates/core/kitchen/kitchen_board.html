@@ -1696,8 +1696,16 @@
         <button type="button" data-bs-dismiss="modal"
                 style="background:#333; border:1px solid #444; color:#b0b0b0; border-radius:6px;
                        padding:5px 14px; font-size:0.82rem; cursor:pointer;">Ruka</button>
+        <!-- 2026-08-27 live request (Roy) — parity with bar_board.html's
+             identical button; see submitStockTake(affirmAll)'s own comment
+             there for the server-side enforcement. -->
+        <button type="button" id="stock-take-affirm-btn" class="btn btn-outline-secondary btn-sm"
+                onclick="window.submitStockTake(true)"
+                style="display:none; border-color:rgba(110,231,183,0.4); color:#6ee7b7;">
+          ✅ Zote Zinalingana
+        </button>
         <button type="button" id="stock-take-submit-btn" class="btn btn-gold btn-sm"
-                onclick="window.submitStockTake()" style="display:none;">
+                onclick="window.submitStockTake(false)" style="display:none;">
           Hifadhi Hesabu
         </button>
       </div>
@@ -1779,6 +1787,8 @@
   var IS_OWNER = {% if is_owner %}true{% else %}false{% endif %};
   var IS_WAITRESS = {% if is_waitress %}true{% else %}false{% endif %};
   var CAN_CONVERT_DEBT = {% if can_convert_tabs_to_debt %}true{% else %}false{% endif %};
+  // 2026-08-27 live request (Roy) — parity with bar_board.html.
+  var CAN_AFFIRM_STOCK_TAKE = {% if can_affirm_stock_take %}true{% else %}false{% endif %};
   var CAN_RECEIVE_STOCK = {% if can_receive_stock %}true{% else %}false{% endif %};
 
   // ── Order Queue Drawer (2026-08-06 — mirrors bar_board.html's identical
@@ -6066,11 +6076,13 @@
     var resEl    = document.getElementById('stock-take-results');
     var errEl    = document.getElementById('stock-take-error');
     var submitBtn = document.getElementById('stock-take-submit-btn');
+    var affirmBtn = document.getElementById('stock-take-affirm-btn');
     loadEl.style.display  = 'block';
     formEl.style.display  = 'none';
     resEl.style.display   = 'none';
     errEl.style.display   = 'none';
     if (submitBtn) submitBtn.style.display = 'none';
+    if (affirmBtn) affirmBtn.style.display = 'none';
     showModal('stockTakeModal');
 
     fetch('/kitchen/shift/' + shiftId + '/stock-take/')
@@ -6101,6 +6113,10 @@
         formEl.innerHTML = html;
         formEl.style.display = 'block';
         if (submitBtn) submitBtn.style.display = 'inline-block';
+        // 2026-08-27 — only offered to owner/manager or a staffer granted
+        // UserProfile.can_affirm_stock_take (server-enforced regardless of
+        // this button's own visibility — see submitStockTake()).
+        if (affirmBtn && CAN_AFFIRM_STOCK_TAKE) affirmBtn.style.display = 'inline-block';
       })
       .catch(function () {
         loadEl.style.display = 'none';
@@ -6109,12 +6125,16 @@
       });
   };
 
-  window.submitStockTake = function () {
+  // 2026-08-27 live request (Roy) — parity with bar_board.html's identical
+  // affirm-all mechanism.
+  window.submitStockTake = function (affirmAll) {
     if (!_stockTakeShiftId) return;
     var formEl    = document.getElementById('stock-take-form');
     var resEl     = document.getElementById('stock-take-results');
     var errEl     = document.getElementById('stock-take-error');
     var submitBtn = document.getElementById('stock-take-submit-btn');
+    var affirmBtn = document.getElementById('stock-take-affirm-btn');
+    var activeBtn = affirmAll ? affirmBtn : submitBtn;
 
     var counts = [];
     formEl.querySelectorAll('input[data-item-id]').forEach(function (inp) {
@@ -6123,18 +6143,20 @@
         counts.push({ item_id: parseInt(inp.dataset.itemId), actual_count: parseFloat(val) || 0 });
       }
     });
-    if (counts.length === 0) {
-      errEl.textContent = 'Ingiza angalau hesabu moja.';
+    if (counts.length === 0 && !affirmAll) {
+      errEl.textContent = 'Ingiza angalau hesabu moja, au tumia "Zote Zinalingana" ikiwa una ruhusa.';
       errEl.style.display = 'block';
       return;
     }
     errEl.style.display = 'none';
-    submitBtn.disabled  = true;
-    submitBtn.textContent = 'Inahifadhi...';
+    if (submitBtn) submitBtn.disabled = true;
+    if (affirmBtn) affirmBtn.disabled = true;
+    if (activeBtn) activeBtn.textContent = 'Inahifadhi...';
 
     var fd = new FormData();
     fd.append('counts', JSON.stringify(counts));
     fd.append('phase', _stockTakePhase);
+    if (affirmAll) fd.append('affirm_all', '1');
     fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
     // 2026-08-22 — opening/closing counts now feed the real accountability
     // engine (StockVarianceQuery + notify), so this needs the same
@@ -6144,11 +6166,12 @@
     fetch('/kitchen/shift/' + _stockTakeShiftId + '/stock-take/', { method: 'POST', body: fd })
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        submitBtn.disabled  = false;
-        submitBtn.textContent = 'Hifadhi Hesabu';
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Hifadhi Hesabu'; }
+        if (affirmBtn) { affirmBtn.disabled = false; affirmBtn.textContent = '✅ Zote Zinalingana'; }
         if (!d.ok) { errEl.textContent = d.error || 'Hitilafu.'; errEl.style.display = 'block'; return; }
         formEl.style.display = 'none';
-        submitBtn.style.display = 'none';
+        if (submitBtn) submitBtn.style.display = 'none';
+        if (affirmBtn) affirmBtn.style.display = 'none';
         var html = '<div style="font-size:0.78rem; color:#4caf50; margin-bottom:0.5rem;">✓ Hesabu zimehifadhiwa.</div>' +
           '<div style="display:grid; grid-template-columns:1fr auto auto auto; gap:0.3rem 0.6rem; align-items:center;">' +
           '<div style="font-size:0.7rem; color:#888; text-transform:uppercase;">Bidhaa</div>' +
@@ -6192,8 +6215,8 @@
         resEl.style.display = 'block';
       })
       .catch(function () {
-        submitBtn.disabled   = false;
-        submitBtn.textContent = 'Hifadhi Hesabu';
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Hifadhi Hesabu'; }
+        if (affirmBtn) { affirmBtn.disabled = false; affirmBtn.textContent = '✅ Zote Zinalingana'; }
         errEl.textContent    = 'Hitilafu ya mtandao.';
         errEl.style.display  = 'block';
       });

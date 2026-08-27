@@ -501,6 +501,23 @@ class UserProfile(models.Model):
         ),
     )
 
+    can_affirm_stock_take = models.BooleanField(
+        default=False,
+        help_text=(
+            '2026-08-27 live request (Roy — a stock take that matches the system exactly '
+            'left staff with nothing to type, and the "Hesabu Stock" modal\'s own "enter at '
+            'least one count" guard then silently refused to let them submit at all): staff '
+            'may tap "Zote Zinalingana" (everything matches) to submit a stock take without '
+            're-typing every already-correct number. The submitted count for any item the '
+            'staffer did NOT type a value for is always derived by the SERVER from that '
+            "item's own live balance — never trusted from the client — so nobody can lie "
+            'about a specific number even with this on; only whether SKIPPING individual '
+            'entry is allowed at all is the trust decision this toggle gates. Owner/manager '
+            'always exempt. Still requires the staffer to have an open shift, same as every '
+            'other stock-take action.'
+        ),
+    )
+
     can_convert_tabs_to_debt = models.BooleanField(
         default=False,
         help_text=(
