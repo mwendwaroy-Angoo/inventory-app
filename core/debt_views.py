@@ -235,7 +235,7 @@ def _get_customer_debt_data(customer, business, scope='all'):
         # Transactions linked to an OPEN tab are tab charges, not standalone debt.
         # They enter the debt ledger only after the tab is settled as credit / converted.
         tab_entry__tab__status='OPEN',
-    ).order_by('date').select_related('item__store', 'tab_entry', 'tab_entry__tab')
+    ).order_by('date').select_related('item__store', 'tab_entry', 'tab_entry__tab', 'recorded_by')
 
     payment_qs = CustomerDebtPayment.objects.filter(
         customer=customer,
@@ -518,7 +518,7 @@ def debt_dashboard(request):
 
     customers_with_credit = Customer.objects.filter(
         business=business,
-    ).prefetch_related('debt_payments')
+    ).prefetch_related('debt_payments').order_by('id')
 
     dashboard_rows = []
     total_outstanding = 0.0
@@ -537,10 +537,45 @@ def debt_dashboard(request):
     # extensive edit history already demonstrates is warranted.
     data_by_customer_id = {}
 
+    # 2026-08-27 live report (Roy): "excess entries or exaggerations of
+    # debt items and amounts" — _get_customer_debt_data() matches
+    # Transaction.recipient=customer.name (a plain EXACT string, not this
+    # customer's own id), so two Customer rows sharing the exact same name
+    # string (see _find_duplicate_customer_groups' own docstring — "two
+    # Eugenes with the same amount and same items") each independently
+    # compute and would each add the SAME full outstanding into
+    # total_outstanding below. duplicate_groups (further down) already
+    # WARNS about this, but the dashboard's own headline total was still
+    # silently inflated by it until this fix.
+    #
+    # Deliberately EXACT-string matching here (never the broader case/
+    # whitespace-insensitive key _find_duplicate_customer_groups uses for
+    # its warning) — that broader key can also match two customers whose
+    # names differ only by case/spacing, and _get_customer_debt_data's own
+    # exact-string filter means such a pair's two `data` dicts are NOT
+    # actually identical, they reflect a real, DIFFERENT (non-overlapping)
+    # set of transactions each. Skipping the second one there would silently
+    # UNDER-count real outstanding debt instead of fixing an over-count —
+    # exactly the kind of "amount out of the user's control" this report is
+    # about, just in the other direction. Only a byte-identical name string
+    # is safe to dedupe this way, since that's the one case where the two
+    # computations are provably summing the exact same transactions.
+    #
+    # Every customer still gets its own data_by_customer_id entry (needed
+    # by duplicate_groups below), so nothing here changes which duplicates
+    # get flagged — merging them away (via 🔀 Sahihisha Jina la Mteja) is
+    # still the real fix, for exact AND near-duplicate names alike.
+    seen_exact_names = set()
+
     for customer in customers_with_credit:
         data = _get_customer_debt_data(customer, business, scope)
         data_by_customer_id[customer.id] = data
         if data['outstanding'] > 0 or data['txn_count'] > 0:
+            exact_name = (customer.name or '').strip()
+            if exact_name and exact_name in seen_exact_names:
+                continue
+            if exact_name:
+                seen_exact_names.add(exact_name)
             dashboard_rows.append(data)
             total_outstanding += data['outstanding']
             if data['has_overdue']:
@@ -1912,6 +1947,30 @@ def debtors_list_api(request):
     a raw Sum('sale_amount') — see this app's own hard rule on why revenue
     must never be aggregated that way (keg/produce/preset sales don't
     always set sale_amount).
+
+    2026-08-27 live report (Roy): "certain debts show different debts from
+    the staff's side compared to the owner's side ... excess entries or
+    exaggerations of debt items and amounts out of the control of the
+    user." Root-caused to the exact same duplicate-Customer-row mechanism
+    _find_duplicate_customer_groups() already documents and flags on the
+    owner's debt_dashboard() ("two Eugenes with the same amount and same
+    items", 2026-08-09) — Transaction.recipient/CustomerDebtPayment.
+    customer_id match differently (a plain name string vs a real FK), so
+    two Customer rows sharing one name each independently compute the SAME
+    full total_credit while a payment recorded against only ONE of them
+    reduced only that row's own paid bucket. debt_dashboard() at least
+    WARNS about this (duplicate_groups); this staff-facing panel had no
+    such awareness at all — it would show a duplicate name as two separate
+    list entries, each quoting the FULL (undivided) outstanding amount,
+    which reads as "excess"/"exaggerated" debt that's structurally not the
+    customer's fault. Fixed by aggregating `paid` PER NAME (summing every
+    Customer id that shares it, not just one) and de-duplicating the
+    listing to one row per distinct name — mirrors _find_duplicate_
+    customer_groups' own case/whitespace-insensitive key exactly, so this
+    can never disagree with what that detector considers "the same
+    customer." The underlying duplicate ROWS are still not merged here —
+    that stays the owner's explicit "🔀 Sahihisha Jina la Mteja" action —
+    this just stops the staff-facing figure from double-counting them.
     """
     up = get_user_profile(request)
     business = up.business
@@ -1933,10 +1992,21 @@ def debtors_list_api(request):
     elif scope == 'bar':
         credit_qs = credit_qs.filter(item__store__is_kitchen=False)
 
-    credit_by_name = defaultdict(float)
+    # Grouped by the SAME case/whitespace-insensitive key
+    # _find_duplicate_customer_groups() uses — a real person's credit can
+    # be split across two Transaction.recipient spellings just as easily as
+    # across two Customer rows (both are plain strings, not FKs), so this
+    # panel's own "how much does this person owe" figure must combine them
+    # the same way that detector already considers "the same customer",
+    # never the raw exact-string dict keying this used before.
+    credit_by_name_key = defaultdict(float)
+    display_name_by_key = {}
     for t in credit_qs:
-        if t.recipient:
-            credit_by_name[t.recipient] += float(t.revenue())
+        if not t.recipient:
+            continue
+        key = t.recipient.strip().lower()
+        credit_by_name_key[key] += float(t.revenue())
+        display_name_by_key.setdefault(key, t.recipient)
 
     payment_qs = CustomerDebtPayment.objects.filter(business=business).exclude(reverted=True)
     if scope == 'kitchen':
@@ -1947,14 +2017,30 @@ def debtors_list_api(request):
     for p in payment_qs.values_list('customer_id', 'amount_paid'):
         paid_by_customer_id[p[0]] += float(p[1])
 
-    customers = Customer.objects.filter(business=business, name__in=credit_by_name.keys())
-    if q:
-        customers = customers.filter(name__icontains=q)
+    all_matching_customers = list(
+        Customer.objects.filter(business=business).order_by('id')
+    )
+
+    # Aggregate paid PER NAME KEY across every Customer row sharing it, so a
+    # payment recorded against ANY duplicate (or any case/whitespace variant
+    # of the same name) correctly reduces the whole group's outstanding
+    # total, not just that one id's.
+    paid_by_name_key = defaultdict(float)
+    representative_by_key = {}
+    for c in all_matching_customers:
+        key = (c.name or '').strip().lower()
+        if key not in credit_by_name_key:
+            continue
+        paid_by_name_key[key] += paid_by_customer_id.get(c.id, 0.0)
+        representative_by_key.setdefault(key, c)  # first (lowest id) wins
 
     debtors = []
-    for cust in customers:
-        total_credit = credit_by_name.get(cust.name, 0.0)
-        paid = paid_by_customer_id.get(cust.id, 0.0)
+    for key, cust in representative_by_key.items():
+        display_name = display_name_by_key.get(key, cust.name)
+        if q and q.lower() not in display_name.lower() and q.lower() not in (cust.name or '').lower():
+            continue
+        total_credit = credit_by_name_key.get(key, 0.0)
+        paid = paid_by_name_key.get(key, 0.0)
         outstanding = max(0.0, total_credit - paid)
         if outstanding > 0:
             debtors.append({

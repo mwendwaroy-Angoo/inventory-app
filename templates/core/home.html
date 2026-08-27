@@ -188,8 +188,8 @@
                 <span style="color:#9b59b6; font-size:.75rem; font-weight:700;">👔 MANAGER</span>
                 <span style="color:#f0ece4; font-size:.82rem; font-weight:600;">{{ mgr.user.get_full_name|default:mgr.user.username }}</span>
             </div>
-            <span style="font-size:.75rem; color:#b0b0b0;">
-                Aliingia {{ mgr.user.last_login|date:"H:i" }}
+            <span style="font-size:.75rem; color:#b0b0b0;" title="Kwa msingi wa shughuli ya hivi karibuni, si muda wa kuingia — hupotea baada ya kutokuwa hai kwa dakika 20">
+                Hai — alionekana {{ mgr.last_seen_at|date:"H:i" }}
             </span>
         </div>
         {% endfor %}

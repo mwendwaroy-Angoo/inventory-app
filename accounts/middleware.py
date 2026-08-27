@@ -1,9 +1,18 @@
+from datetime import timedelta
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import SESSION_KEY, logout
 from django.http import JsonResponse
 from django.shortcuts import redirect
-from django.utils import translation
+from django.utils import timezone, translation
+
+# How stale `UserProfile.last_seen_at` may be before we bother writing a
+# fresh value. Throttles the write to roughly once per this many minutes per
+# user instead of once per request — see UserProfile.last_seen_at's own
+# docstring for why (avoids adding to the already-documented DB write-load
+# concern behind this app's 502 incidents).
+ACTIVITY_STALE_MINUTES = 5
 
 
 class UserLanguageMiddleware:
@@ -151,4 +160,18 @@ class SingleSessionMiddleware:
                         'Umefunguliwa nje — akaunti yako imefunguliwa kwenye kifaa kingine. '
                         'Logged out: your account was signed in on another device.',
                     )
+            if profile:
+                self._stamp_activity(profile)
         return self.get_response(request)
+
+    @staticmethod
+    def _stamp_activity(profile):
+        """Throttled UserProfile.last_seen_at write — see its own docstring.
+        A queryset .update() (not profile.save()) so this never triggers a
+        full model save for an unrelated field on every request."""
+        now = timezone.now()
+        stale_cutoff = now - timedelta(minutes=ACTIVITY_STALE_MINUTES)
+        if profile.last_seen_at and profile.last_seen_at >= stale_cutoff:
+            return
+        type(profile).objects.filter(pk=profile.pk).update(last_seen_at=now)
+        profile.last_seen_at = now

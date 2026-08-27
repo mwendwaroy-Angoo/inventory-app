@@ -27726,6 +27726,132 @@ class DebtorsListApiTest(TestCase):
         names = [d['name'] for d in resp.json()['debtors']]
         self.assertEqual(names, ['Big Debt', 'Small Debt'])
 
+    # ── 2026-08-27 live report (Roy): "certain debts show different debts
+    # from the staff's side compared to the owner's side ... excess entries
+    # or exaggerations of debt items and amounts out of the control of the
+    # user." Root-caused to the exact duplicate-Customer-row mechanism
+    # already documented on debt_dashboard() (see
+    # DuplicateCustomerDebtDoubleDisplayTest) but never accounted for on
+    # THIS staff-facing panel at all. ──────────────────────────────────────
+
+    def test_exact_duplicate_customer_shown_once_not_twice(self):
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Eugene', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Eugene', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-6'),
+            sale_amount=Decimal('480'), payment_method='credit', recipient='Eugene',
+        )
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/debt/customers/debtors/')
+        debtors = resp.json()['debtors']
+        eugene_rows = [d for d in debtors if d['name'] == 'Eugene']
+        self.assertEqual(len(eugene_rows), 1, 'a duplicate name must never show as two separate list entries')
+        self.assertEqual(eugene_rows[0]['outstanding'], 480.0, 'must not be doubled')
+
+    def test_payment_against_either_duplicate_reduces_the_combined_total(self):
+        from core.models import Customer, CustomerDebtPayment
+        eugene1 = Customer.objects.create(business=self.biz, name='Eugene', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Eugene', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-6'),
+            sale_amount=Decimal('480'), payment_method='credit', recipient='Eugene',
+        )
+        # Paid against the FIRST duplicate only — before this fix, the
+        # panel's raw per-customer-id bucket would have left the SECOND
+        # duplicate's own entry looking like the full 480 was still owed.
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=eugene1, amount_paid=Decimal('480'), source='bar',
+        )
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/debt/customers/debtors/')
+        self.assertEqual(resp.json()['debtors'], [], 'the combined debt is fully paid — must not still appear')
+
+    def test_case_and_whitespace_variant_names_are_combined_correctly(self):
+        """A real person's credit split across two spellings ('Eugene' /
+        'eugene ') must be summed into ONE combined figure here — this
+        panel rebuilds its own credit/paid totals directly from Transaction/
+        CustomerDebtPayment rows (never reusing a per-customer exact-match
+        computation), so — unlike debt_dashboard()'s own dedup — combining
+        these is safe and correct, not an under-count risk."""
+        from core.models import Customer, CustomerDebtPayment
+        eugene1 = Customer.objects.create(business=self.biz, name='Eugene', credit_approved=True)
+        eugene2 = Customer.objects.create(business=self.biz, name='eugene ', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-6'),
+            sale_amount=Decimal('480'), payment_method='credit', recipient='Eugene',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='eugene ',
+        )
+        CustomerDebtPayment.objects.create(
+            business=self.biz, customer=eugene2, amount_paid=Decimal('80'), source='bar',
+        )
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/debt/customers/debtors/')
+        debtors = resp.json()['debtors']
+        self.assertEqual(len(debtors), 1)
+        self.assertEqual(debtors[0]['outstanding'], 480.0)
+
+    def test_genuinely_different_customers_never_merged(self):
+        """Regression lock: two real, unrelated customers must never be
+        combined just because this fix now groups by name."""
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Bosco', credit_approved=True)
+        Customer.objects.create(business=self.biz, name='Charles', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Bosco',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('40'), payment_method='credit', recipient='Charles',
+        )
+        self.client.force_login(self.bar_staff)
+        resp = self.client.get('/debt/customers/debtors/')
+        debtors = {d['name']: d['outstanding'] for d in resp.json()['debtors']}
+        self.assertEqual(debtors, {'Bosco': 60.0, 'Charles': 40.0})
+
+    def test_duplicate_dedup_never_crosses_station_scope(self):
+        """2026-08-27 (Roy's own explicit reminder): "each station has its
+        own debt ledger and as such each staff according to permission and
+        role should see their own." The duplicate-name dedup above operates
+        strictly WITHIN whatever credit_qs/payment_qs the viewer's own
+        _debt_scope() already restricted them to (both are station-filtered
+        BEFORE any name-grouping happens) — a bar-scoped staffer must never
+        see a kitchen-origin debt bleed into a same-named bar customer's
+        combined total, and vice versa. Uses ONE Customer name ('Eugene')
+        with debt on BOTH stations to prove the scoped totals stay separate."""
+        from core.models import Customer
+        Customer.objects.create(business=self.biz, name='Eugene', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('60'), payment_method='credit', recipient='Eugene',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Eugene',
+        )
+
+        self.client.force_login(self.bar_staff)
+        resp_bar = self.client.get('/debt/customers/debtors/')
+        bar_debtors = resp_bar.json()['debtors']
+        self.assertEqual(len(bar_debtors), 1)
+        self.assertEqual(bar_debtors[0]['outstanding'], 60.0, 'bar staff must see only the bar-origin debt')
+
+        self.client.force_login(self.kitchen_staff)
+        resp_kitchen = self.client.get('/debt/customers/debtors/')
+        kitchen_debtors = resp_kitchen.json()['debtors']
+        self.assertEqual(len(kitchen_debtors), 1)
+        self.assertEqual(kitchen_debtors[0]['outstanding'], 100.0, 'kitchen staff must see only the kitchen-origin debt')
+
+        self.client.force_login(self.owner)
+        resp_owner = self.client.get('/debt/customers/debtors/')
+        owner_debtors = resp_owner.json()['debtors']
+        self.assertEqual(len(owner_debtors), 1, 'owner sees ONE combined row (all-scope), not per-station duplicates')
+        self.assertEqual(owner_debtors[0]['outstanding'], 160.0)
+
 
 class TabEntryDateLabelTest(TestCase):
     """2026-08-02 live request (Roy, using his own tab as the example): a
@@ -37056,11 +37182,22 @@ class DuplicateCustomerDebtDoubleDisplayTest(TestCase):
         self.assertEqual(data2['outstanding'], 480.0, "eugene2 (the duplicate) still shows the same debt as open")
 
     def test_debt_dashboard_lists_both_duplicates_separately(self):
+        """2026-08-27 (Roy, live report: "excess entries or exaggerations
+        of debt items and amounts") — this used to assert the buggy
+        double-listing (len==2) as a deliberately-locked-in "known, not yet
+        fixed" behavior. Now that the dashboard's own headline total
+        (total_outstanding) is confirmed to have been inflated by exactly
+        this, the row list is deduped to one row per EXACT-string duplicate
+        name — the same 480.0 owed, shown once, not twice. The
+        duplicate_groups warning (next test) still flags both underlying
+        rows so the owner can merge them."""
         self.client.force_login(self.owner)
         resp = self.client.get('/debt/')
         rows = resp.context['rows']
         eugene_rows = [r for r in rows if r['customer'].name == 'Eugene']
-        self.assertEqual(len(eugene_rows), 2)
+        self.assertEqual(len(eugene_rows), 1)
+        self.assertEqual(resp.context['total_outstanding'], 480.0,
+            "the dashboard-wide total must not double-count an exact-name duplicate")
 
     def test_debt_dashboard_flags_the_duplicate_group(self):
         self.client.force_login(self.owner)
@@ -37100,12 +37237,66 @@ class DuplicateCustomerDebtDoubleDisplayTest(TestCase):
         self.assertEqual(len(groups), 1)
         self.assertEqual(len(groups[0]), 3)
 
+    def test_case_variant_duplicate_is_never_deduped_in_the_dashboard_total(self):
+        """2026-08-27: debt_dashboard()'s row/total dedup must use EXACT
+        string matching, never the broader case-insensitive key
+        _find_duplicate_customer_groups uses for its warning — a
+        case/whitespace-variant pair reflects genuinely DIFFERENT
+        (non-overlapping) transactions each (Transaction.recipient='eugene '
+        never matches recipient='Eugene'), so deduping them would silently
+        UNDER-count real, separate debt instead of fixing an over-count."""
+        variant = Customer.objects.create(business=self.biz, name='eugene ', credit_approved=True)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit', recipient='eugene ',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/')
+        rows = resp.context['rows']
+        variant_row = next(r for r in rows if r['customer'].id == variant.id)
+        self.assertEqual(variant_row['outstanding'], 80.0)
+        # Total must include BOTH the original 480 (Eugene, deduped to one
+        # row) AND this genuinely separate 80 (the variant) — 560, not 480
+        # (over-deduped) and not 1040 (still double-counting the exact pair).
+        self.assertEqual(resp.context['total_outstanding'], 560.0)
+
     def test_non_owner_never_sees_duplicate_groups(self):
         staff = User.objects.create_user(username='dupdebt_staff', password='x')
         UserProfile.objects.create(user=staff, business=self.biz, role='staff')
         self.client.force_login(staff)
         resp = self.client.get('/debt/')
         self.assertEqual(resp.context['duplicate_groups'], [])
+
+    def test_dashboard_dedup_stays_within_the_viewers_own_station_scope(self):
+        """Roy's own explicit reminder: "each station has its own debt
+        ledger and as such each staff according to permission and role
+        should see their own." This dedup fix operates entirely on
+        data['outstanding'] AFTER _get_customer_debt_data(customer,
+        business, scope) has already applied the viewer's own station
+        scope — so a kitchen-only staffer's deduped total must reflect only
+        kitchen-origin debt for the duplicate pair, never the bar-origin
+        480 from setUp."""
+        self.biz.has_kitchen = True
+        self.biz.save(update_fields=['has_kitchen'])
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        kitchen_item = Item.objects.create(
+            business=self.biz, store=kitchen_store, description='Chipo',
+            material_no='DD-KIT-01', unit='Plate', selling_price=Decimal('100'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Eugene',
+        )
+        kitchen_staff = User.objects.create_user(username='dupdebt_kstaff', password='x')
+        UserProfile.objects.create(user=kitchen_staff, business=self.biz, role='kitchen')
+
+        self.client.force_login(kitchen_staff)
+        resp = self.client.get('/debt/')
+        eugene_rows = [r for r in resp.context['rows'] if r['customer'].name == 'Eugene']
+        self.assertEqual(len(eugene_rows), 1, 'still deduped to one row within kitchen scope')
+        self.assertEqual(eugene_rows[0]['outstanding'], 100.0,
+            'kitchen staff must see only the kitchen-origin 100, never the bar-origin 480')
+        self.assertEqual(resp.context['total_outstanding'], 100.0)
 
 
 class CombinedLedgerDebtAttributionTest(TestCase):
@@ -41771,6 +41962,60 @@ class StaffRecognitionTierTest(TestCase):
         ))
         self.assertLessEqual(best['score'], 100)
 
+    # ── 2026-08-27 (Roy) — audience-aware wording ────────────────────────
+    #
+    # "in haki from the business owner side shows 'anahitaji kuboresha'...
+    # on the staff's side in kazi yangu says 'anahitaji kuboresha'... the
+    # system should be talking to the staff... 'unahitaji kuboresha' since
+    # it is being addressed to the staff, enforce this anywhere there is
+    # such communication."
+
+    def test_default_audience_is_owner_third_person(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(
+            shift_count=5, total_revenue=0, debts_recovered_kes=0, clean_keg_record=False,
+        ))
+        self.assertEqual(result['tier'], 'developing')
+        self.assertEqual(result['tier_label'], 'Anahitaji Kuboresha')
+
+    def test_staff_audience_uses_second_person_for_developing_tier(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(
+            shift_count=5, total_revenue=0, debts_recovered_kes=0, clean_keg_record=False,
+        ), audience='staff')
+        self.assertEqual(result['tier'], 'developing')
+        self.assertEqual(result['tier_label'], 'Unahitaji Kuboresha')
+        self.assertNotIn('Anahitaji', result['tier_label'])
+
+    def test_staff_audience_uses_second_person_for_bronze_tier(self):
+        from core.haki_views import compute_staff_recognition
+        result = compute_staff_recognition(self._contrib(
+            shift_count=20, total_revenue=20000, debts_recovered_kes=0,
+            clean_keg_record=False,
+        ), audience='staff')
+        self.assertEqual(result['tier'], 'bronze')
+        self.assertIn('Unaendelea', result['tier_label'])
+        self.assertNotIn('Anaendelea', result['tier_label'])
+
+    def test_gold_silver_and_unrated_labels_are_audience_independent(self):
+        """These labels carry no person-conjugated verb — must render
+        identically regardless of audience."""
+        from core.haki_views import compute_staff_recognition
+        gold_owner = compute_staff_recognition(self._contrib(), audience='owner')
+        gold_staff = compute_staff_recognition(self._contrib(), audience='staff')
+        self.assertEqual(gold_owner['tier_label'], gold_staff['tier_label'])
+
+        silver_kwargs = dict(
+            shift_count=20, total_revenue=35000, debts_recovered_kes=5000,
+        )
+        silver_owner = compute_staff_recognition(self._contrib(**silver_kwargs), audience='owner')
+        silver_staff = compute_staff_recognition(self._contrib(**silver_kwargs), audience='staff')
+        self.assertEqual(silver_owner['tier_label'], silver_staff['tier_label'])
+
+        unrated_owner = compute_staff_recognition(self._contrib(shift_count=1), audience='owner')
+        unrated_staff = compute_staff_recognition(self._contrib(shift_count=1), audience='staff')
+        self.assertEqual(unrated_owner['tier_label'], unrated_staff['tier_label'])
+
 
 class StaffRecognitionWiringTest(TestCase):
     """Confirms contrib['recognition'] actually reaches every real page
@@ -41812,6 +42057,59 @@ class StaffRecognitionWiringTest(TestCase):
         resp = self.client.get(f'/staff/{self.staff_profile.id}/journey/')
         self.assertEqual(resp.status_code, 200)
         self.assertIn('recognition', resp.context['contrib'])
+
+    # ── 2026-08-27 (Roy) — audience-aware wording reaches the real pages ──
+
+    def _make_developing_tier_staffer(self):
+        """5 shifts, zero revenue — lands squarely in the 'developing' tier
+        so the two verb-conjugated labels actually differ by audience."""
+        for _ in range(5):
+            Shift.objects.create(business=self.biz, staff=self.staff_user, started_at=timezone.now())
+
+    def test_owner_contribution_report_shows_third_person_developing_label(self):
+        self._make_developing_tier_staffer()
+        self.client.force_login(self.owner)
+        resp = self.client.get('/staff/contribution/')
+        row = next(r for r in resp.context['rows'] if r['profile'].id == self.staff_profile.id)
+        self.assertEqual(row['recognition']['tier'], 'developing')
+        self.assertEqual(row['recognition']['tier_label'], 'Anahitaji Kuboresha')
+        self.assertContains(resp, 'Anahitaji Kuboresha')
+
+    def test_kazi_yangu_shows_second_person_developing_label(self):
+        """The exact bug Roy reported: Kazi Yangu is the staffer reading
+        about THEMSELVES — must be 2nd person, never 'Anahitaji'."""
+        self._make_developing_tier_staffer()
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        self.assertEqual(resp.context['recognition']['tier'], 'developing')
+        self.assertEqual(resp.context['recognition']['tier_label'], 'Unahitaji Kuboresha')
+        self.assertContains(resp, 'Unahitaji Kuboresha')
+        self.assertNotContains(resp, 'Anahitaji Kuboresha')
+
+    def test_kazi_yangu_all_time_summary_also_uses_second_person(self):
+        self._make_developing_tier_staffer()
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        self.assertEqual(resp.context['all_time']['recognition']['tier_label'], 'Unahitaji Kuboresha')
+
+    def test_staff_journey_owner_view_shows_third_person_label(self):
+        self._make_developing_tier_staffer()
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/staff/{self.staff_profile.id}/journey/')
+        self.assertEqual(resp.context['contrib']['recognition']['tier_label'], 'Anahitaji Kuboresha')
+
+    def test_recognition_statement_always_reads_as_addressed_to_the_staffer(self):
+        """A personal, shareable/printable statement — 2nd person regardless
+        of whether the owner or the staffer themselves is viewing it."""
+        self._make_developing_tier_staffer()
+        self.client.force_login(self.owner)
+        resp_owner = self.client.get(f'/staff/{self.staff_profile.id}/statement/')
+        self.assertEqual(resp_owner.context['recognition']['tier_label'], 'Unahitaji Kuboresha')
+
+        self.client.logout()
+        self.client.force_login(self.staff_user)
+        resp_staff = self.client.get(f'/staff/{self.staff_profile.id}/statement/')
+        self.assertEqual(resp_staff.context['recognition']['tier_label'], 'Unahitaji Kuboresha')
 
 
 class TabTransferSettledDestinationTest(TestCase):
@@ -43206,6 +43504,15 @@ class WaitressTransactionHistoryRecordedByTest(TestCase):
         from django.db import connection
 
         self.client.force_login(self.owner)
+        # 2026-08-27: prime the session first — SingleSessionMiddleware's
+        # UserProfile.last_seen_at activity stamp fires exactly ONCE per
+        # ACTIVITY_STALE_MINUTES window (see its own docstring), so an
+        # unprimed first request legitimately carries one extra one-time
+        # write query that a second, immediately-following request won't
+        # repeat — unrelated to transaction count, but it would otherwise
+        # make the two comparison requests below uneven for a reason that
+        # has nothing to do with what this test is actually checking.
+        self.client.get('/history/')
         with CaptureQueriesContext(connection) as small:
             self.client.get('/history/')
         small_count = len(small.captured_queries)
@@ -46392,3 +46699,273 @@ class BackfillVoidSplitSiblingsTest(TestCase):
         out = StringIO()
         call_command('backfill_void_split_siblings', stdout=out)
         self.assertIn('Split groups affected: 0', out.getvalue())
+
+
+class ManagerOnDutyStripTest(TestCase):
+    """2026-08-27 live report (Roy, with a home-dashboard screenshot): the
+    purple "Manager on Duty" strip kept showing a manager who had logged in
+    at 03:21 and left 12 hours ago — it was driven purely by
+    User.last_login >= start-of-today, with no concept of the manager
+    actually having gone. Now driven by UserProfile.last_seen_at (an
+    activity-tracked field stamped by SingleSessionMiddleware, see
+    accounts/tests.py's UserProfileActivityTrackingTest for that side) held
+    against a short idle window (core.views.MANAGER_ACTIVITY_IDLE_MINUTES)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Manager Duty Biz')
+        self.owner = User.objects.create_user(username='mgrduty_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager_user = User.objects.create_user(username='mgrduty_mgr', password='x')
+        self.manager_profile = UserProfile.objects.create(
+            user=self.manager_user, business=self.biz, role='manager',
+        )
+
+    def test_recently_active_manager_appears_on_the_strip(self):
+        self.manager_profile.last_seen_at = timezone.now()
+        self.manager_profile.save(update_fields=['last_seen_at'])
+
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertIn(self.manager_user.username.encode(), resp.content)
+        self.assertIn('👔 MANAGER'.encode(), resp.content)
+
+    def test_manager_idle_past_the_threshold_disappears_from_the_strip(self):
+        from core.views import MANAGER_ACTIVITY_IDLE_MINUTES
+        self.manager_profile.last_seen_at = timezone.now() - timedelta(
+            minutes=MANAGER_ACTIVITY_IDLE_MINUTES + 1
+        )
+        self.manager_profile.save(update_fields=['last_seen_at'])
+
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertNotIn(self.manager_user.username.encode(), resp.content)
+
+    def test_manager_who_has_never_been_active_never_appears(self):
+        self.assertIsNone(self.manager_profile.last_seen_at)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertNotIn(self.manager_user.username.encode(), resp.content)
+
+    def test_ordinary_staff_role_never_appears_on_the_manager_strip(self):
+        staff_user = User.objects.create_user(username='mgrduty_staff', password='x')
+        staff_profile = UserProfile.objects.create(
+            user=staff_user, business=self.biz, role='staff',
+        )
+        staff_profile.last_seen_at = timezone.now()
+        staff_profile.save(update_fields=['last_seen_at'])
+
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertNotIn(staff_user.username.encode(), resp.content)
+
+    def test_non_owner_viewer_never_sees_the_strip(self):
+        self.manager_profile.last_seen_at = timezone.now()
+        self.manager_profile.save(update_fields=['last_seen_at'])
+
+        self.client.force_login(self.manager_user)
+        resp = self.client.get('/')
+        # '👔 MANAGER' (the strip's own literal badge text, distinct from the
+        # unrelated HOME_IS_MANAGER_VIEWER JS var name that also contains
+        # the bare substring "MANAGER" and would give a false positive).
+        self.assertNotIn('👔 MANAGER'.encode(), resp.content)
+
+    def test_active_manager_from_a_different_business_never_leaks_in(self):
+        other_biz = Business.objects.create(name='Manager Duty Biz — Other')
+        other_owner = User.objects.create_user(username='mgrduty_other_owner', password='x')
+        UserProfile.objects.create(user=other_owner, business=other_biz, role='owner')
+        other_manager = User.objects.create_user(username='mgrduty_other_mgr', password='x')
+        other_profile = UserProfile.objects.create(
+            user=other_manager, business=other_biz, role='manager',
+        )
+        other_profile.last_seen_at = timezone.now()
+        other_profile.save(update_fields=['last_seen_at'])
+
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertNotIn(other_manager.username.encode(), resp.content)
+
+
+class DebtProfileRecordedByDisplayTest(TestCase):
+    """2026-08-27 live request (Roy): "add the staff who recorded debt
+    alongside date and time" — the Unpaid Credit Transactions table on a
+    customer's debt profile showed a plain date (no time) and no indication
+    of which staff member actually rang the item up on credit, unlike the
+    Payment History table right below it (which already had both). Fixed by
+    surfacing Transaction.recorded_by + created_at (date+time) on the same
+    table."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Debt Recorder Display Biz')
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='drd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='drd_staff', first_name='Jane', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Tusker',
+            material_no='DRD-01', selling_price=Decimal('200'), cost_price=Decimal('100'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='DebtRecordCust')
+
+    def test_unpaid_transaction_shows_who_recorded_it_and_the_time(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'),
+            payment_method='credit', recipient='DebtRecordCust', recorded_by=self.staff,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Jane')
+        entry = resp.context['unpaid_transactions'][0]
+        # created_at is a real datetime — the template must render the
+        # H:i portion too, not just the date. Compare against the LOCAL
+        # (Nairobi) rendering, matching Django's |date: filter behaviour
+        # under USE_TZ=True — the raw stored value is UTC.
+        local_created_at = timezone.localtime(entry['txn'].created_at)
+        self.assertIn(
+            local_created_at.strftime('%d %b %Y, %H:%M'),
+            resp.content.decode(),
+        )
+
+    def test_transaction_recorded_by_none_shows_a_dash_not_a_crash(self):
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'),
+            payment_method='credit', recipient='DebtRecordCust', recorded_by=None,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_recorded_by_query_is_select_related_not_n_plus_one(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        for _ in range(2):
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('-1'), sale_amount=Decimal('50'),
+                payment_method='credit', recipient='DebtRecordCust', recorded_by=self.staff,
+            )
+        self.client.force_login(self.owner)
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertEqual(resp.status_code, 200)
+        query_count_with_two = len(ctx.captured_queries)
+
+        for _ in range(8):
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue',
+                qty=Decimal('-1'), sale_amount=Decimal('50'),
+                payment_method='credit', recipient='DebtRecordCust', recorded_by=self.staff,
+            )
+        with CaptureQueriesContext(connection) as ctx2:
+            resp2 = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertEqual(resp2.status_code, 200)
+        query_count_with_ten = len(ctx2.captured_queries)
+
+        # select_related must keep the query count flat regardless of how
+        # many unpaid transactions there are — a per-row recorded_by lookup
+        # (the N+1 shape) would grow this by ~8 more queries here.
+        self.assertLess(query_count_with_ten - query_count_with_two, 5)
+
+
+class KaziYanguFullHistoryTest(TestCase):
+    """2026-08-27 live request (Roy): "ensure that staff can see all their
+    data since they began" — my_work_and_pay() (Kazi Yangu) was hardcoded
+    to the current calendar month for the contribution summary, and capped
+    Payment History / advance-request history at the last 12/10 rows.
+    Fixed with an additive full-tenure contribution block (all_time,
+    computed the same way staff_journey()'s owner-facing tenure report
+    already does) plus unlimited pay_history/advance_requests/
+    all_deductions querysets."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Kazi Full History Biz', haki_enabled=True)
+        self.owner = User.objects.create_user(username='kfh_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff_user = User.objects.create_user(username='kfh_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+
+    def test_all_time_context_present_and_includes_activity_before_this_month(self):
+        old_date = timezone.now() - timedelta(days=200)
+        Shift.objects.create(business=self.biz, staff=self.staff_user, started_at=old_date)
+
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('all_time', resp.context)
+        # This-month figure never sees a shift from ~200 days ago.
+        self.assertEqual(resp.context['shift_count'], 0)
+        # But the full-tenure figure does.
+        self.assertEqual(resp.context['all_time']['shift_count'], 1)
+
+    def test_tenure_start_matches_earliest_shift(self):
+        old_date = timezone.now() - timedelta(days=100)
+        Shift.objects.create(business=self.biz, staff=self.staff_user, started_at=old_date)
+        newer_date = timezone.now() - timedelta(days=10)
+        Shift.objects.create(business=self.biz, staff=self.staff_user, started_at=newer_date)
+
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        self.assertEqual(resp.context['tenure_start'], old_date.date())
+
+    def test_pay_history_shows_more_than_the_old_twelve_row_cap(self):
+        today = timezone.localdate()
+        for i in range(15):
+            period_date = today.replace(day=1) - timedelta(days=31 * i)
+            SalaryPayment.objects.create(
+                business=self.biz, staff=self.staff_profile,
+                period=period_date.strftime('%Y-%m'), amount=Decimal('1000'),
+                due_date=period_date, paid=True, paid_at=timezone.now(),
+            )
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        self.assertEqual(len(resp.context['pay_history']), 15)
+
+    def test_advance_requests_shows_more_than_the_old_ten_row_cap(self):
+        from core.models import SalaryAdvanceRequest
+        for i in range(12):
+            SalaryAdvanceRequest.objects.create(
+                business=self.biz, staff=self.staff_profile,
+                amount_requested=Decimal('500'), reason=f'Dharura {i}',
+                period=timezone.localdate().strftime('%Y-%m'),
+            )
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        self.assertEqual(len(resp.context['advance_requests']), 12)
+
+    def test_all_deductions_includes_rows_from_a_prior_period(self):
+        from core.models import SalaryDeduction
+        old_period = (timezone.localdate().replace(day=1) - timedelta(days=60)).strftime('%Y-%m')
+        current_period = timezone.localdate().strftime('%Y-%m')
+        SalaryDeduction.objects.create(
+            business=self.biz, staff=self.staff_profile, period=old_period,
+            amount=Decimal('200'), reason='Old rejected write-off',
+        )
+        SalaryDeduction.objects.create(
+            business=self.biz, staff=self.staff_profile, period=current_period,
+            amount=Decimal('300'), reason='This period rejected write-off',
+        )
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        # This-period-only figure (unchanged, pre-existing behaviour) sees
+        # only the current-period row.
+        self.assertEqual(len(resp.context['deductions']), 1)
+        self.assertEqual(resp.context['deduction_total'], Decimal('300'))
+        # The new full-history figure sees both.
+        self.assertEqual(len(resp.context['all_deductions']), 2)
+        self.assertEqual(resp.context['all_deductions_total'], Decimal('500'))
+
+    def test_staffer_with_no_activity_at_all_still_renders_cleanly(self):
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/me/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['all_time']['shift_count'], 0)
+        self.assertEqual(resp.context['pay_history'].count() if hasattr(resp.context['pay_history'], 'count') else len(resp.context['pay_history']), 0)
+
+    def test_owner_never_reaches_this_staff_only_page(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/me/')
+        self.assertEqual(resp.status_code, 302)

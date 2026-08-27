@@ -67,6 +67,27 @@ def _period_date_range(period_str):
     return date(year, month, 1), date(year, month, last_day)
 
 
+def _staff_tenure_window(staff_profile, business):
+    """Earliest activity -> now (or departure) for one staff member — the
+    same "full tenure" window staff_journey() (owner-facing) has always used.
+    Factored out 2026-08-27 so my_work_and_pay() (Kazi Yangu, staff's own
+    self-service page) can show the SAME "all my data since I began" window
+    to the staffer themselves, per Roy's live request: "ensure that staff
+    can see all their data since they began" — previously Kazi Yangu's
+    contribution summary was hardcoded to the current calendar month only."""
+    staff_user = staff_profile.user
+    first_shift = Shift.objects.filter(business=business, staff=staff_user).order_by('started_at').first()
+    first_txn = Transaction.objects.filter(business=business, recorded_by=staff_user).order_by('date').first()
+    candidates = [d for d in [
+        first_shift.started_at.date() if first_shift else None,
+        first_txn.date if first_txn else None,
+    ] if d]
+    tenure_start = min(candidates) if candidates else timezone.localdate()
+    tenure_end = (timezone.localtime(staff_profile.departed_at).date()
+                  if staff_profile.departed_at else timezone.localdate())
+    return tenure_start, tenure_end
+
+
 # ── Contribution helper ───────────────────────────────────────────────────────
 
 def _staff_contribution(staff_profile, business, date_from, date_to):
@@ -308,9 +329,23 @@ def _staff_contribution(staff_profile, business, date_from, date_to):
 RECOGNITION_MIN_SHIFTS = 5  # below this, there's simply not enough data to rate fairly.
 
 
-def compute_staff_recognition(contrib):
+def compute_staff_recognition(contrib, audience='owner'):
     """Combine an already-computed _staff_contribution() dict into one
     recognition tier — 'gold' | 'silver' | 'bronze' | 'developing' | 'unrated'.
+
+    `audience`: 'owner' (default — the reader is looking AT a staffer, e.g.
+    staff_contribution_report/staff_journey) keeps the existing 3rd-person
+    Swahili wording ("Anahitaji Kuboresha" = "[they] need to improve").
+    'staff' (the reader IS the staffer this is about, e.g. Kazi Yangu's own
+    self-service page) switches the two verb-conjugated tier labels to
+    direct 2nd-person address ("Unahitaji Kuboresha" = "YOU need to
+    improve"). 2026-08-27 live correction (Roy): "in haki from the business
+    owner side shows 'anahitaji kuboresha' ... on the staff's side in kazi
+    yangu says 'anahitaji kuboresha' ... the system should be talking to
+    the staff ... 'unahitaji kuboresha' since it is being addressed to the
+    staff — enforce this anywhere there is such communication." 'Bora
+    Kabisa' (gold) and 'Mzuri' (silver) are plain adjectives with no person
+    marker either way, so only bronze/developing need a variant.
 
     Points (positive side, capped at 100 total before deductions):
       - Consistency: shift_count, full marks at 30+ shifts (the existing
@@ -410,14 +445,17 @@ def compute_staff_recognition(contrib):
     # of how high the point score otherwise is.
     capped = dismissed >= 3 or petty_rejected >= 3 or variance_pct > 0.05
 
+    _bronze_label = '🥉 Unaendelea Vizuri' if audience == 'staff' else '🥉 Anaendelea Vizuri'
+    _developing_label = 'Unahitaji Kuboresha' if audience == 'staff' else 'Anahitaji Kuboresha'
+
     if score >= 80 and not capped:
         tier, tier_label = 'gold', '🥇 Bora Kabisa'
     elif score >= 55:
         tier, tier_label = 'silver', '🥈 Mzuri'
     elif score >= 30:
-        tier, tier_label = 'bronze', '🥉 Anaendelea Vizuri'
+        tier, tier_label = 'bronze', _bronze_label
     else:
-        tier, tier_label = 'developing', 'Anahitaji Kuboresha'
+        tier, tier_label = 'developing', _developing_label
 
     return {
         'tier': tier, 'tier_label': tier_label, 'score': score,
@@ -940,20 +978,44 @@ def my_work_and_pay(request):
     date_from = today.replace(day=1)  # Current month
     current_period = today.strftime('%Y-%m')
     contrib = _staff_contribution(user_profile, business, date_from, today)
-    contrib['recognition'] = compute_staff_recognition(contrib)
+    # audience='staff': this page is Kazi Yangu, ALWAYS the staffer reading
+    # about themselves (owners are redirected away above) — 2nd-person
+    # wording ("unahitaji kuboresha"), never 3rd person. See
+    # compute_staff_recognition()'s own docstring for the full reasoning.
+    contrib['recognition'] = compute_staff_recognition(contrib, audience='staff')
     salary  = _salary_status(user_profile, business)
 
-    # Payment history: last 6 months (all individual payment rows, newest first)
+    # 2026-08-27 live request (Roy): "ensure that staff can see all their
+    # data since they began" — this whole page was hardcoded to the current
+    # calendar month, and pay/advance history were capped at the last 6-12
+    # rows. Full-tenure contribution summary (revenue/shifts/hours/debts
+    # recovered/milestones/recognition), computed the exact same way
+    # staff_journey() (the owner-facing tenure report) already does, so the
+    # staffer sees the identical numbers the owner would if they looked.
+    tenure_start, tenure_end = _staff_tenure_window(user_profile, business)
+    contrib_all_time = _staff_contribution(user_profile, business, tenure_start, tenure_end)
+    contrib_all_time['recognition'] = compute_staff_recognition(contrib_all_time, audience='staff')
+
+    # Payment history: ALL rows, not just the last 12 (small per-staff
+    # table, no date filtering needed — same precedent as staff_journey()'s
+    # own salary_payments query).
     pay_history = SalaryPayment.objects.filter(
         business=business,
         staff=user_profile,
-    ).order_by('-period', '-paid_at')[:12]
+    ).order_by('-period', '-paid_at')
 
     # Deductions this period — shown to staff so they understand any shortfall
     deductions = list(SalaryDeduction.objects.filter(
         business=business, staff=user_profile, period=current_period,
     ).order_by('-created_at'))
     deduction_total = sum(d.amount for d in deductions)
+
+    # ALL deductions ever, not just this period — part of "all their data
+    # since they began."
+    all_deductions = list(SalaryDeduction.objects.filter(
+        business=business, staff=user_profile,
+    ).order_by('-created_at'))
+    all_deductions_total = sum(d.amount for d in all_deductions)
 
     # Paid this period
     paid_rows = list(SalaryPayment.objects.filter(
@@ -968,9 +1030,11 @@ def my_work_and_pay(request):
     expected, _paid_total_calc, remaining_balance = _salary_period_balance(
         business, user_profile, current_period,
     )
+    # 2026-08-27: ALL advance requests ever, not just the last 10 — same
+    # "since they began" fix as pay_history above.
     advance_requests = list(SalaryAdvanceRequest.objects.filter(
         business=business, staff=user_profile,
-    ).select_related('reviewed_by').order_by('-requested_at')[:10])
+    ).select_related('reviewed_by').order_by('-requested_at'))
 
     # 2026-07-30 — Maombi/Maagizo redesign: surface pending owner instructions
     # right here too, not only on the /staff-requests/ page — Kazi Yangu is
@@ -993,12 +1057,17 @@ def my_work_and_pay(request):
         'period_label': date_from.strftime('%B %Y'),
         'deductions': deductions,
         'deduction_total': deduction_total,
+        'all_deductions': all_deductions,
+        'all_deductions_total': all_deductions_total,
         'paid_rows': paid_rows,
         'paid_total': paid_total,
         'current_period': current_period,
         'expected_salary': expected,
         'remaining_balance': remaining_balance,
         'advance_requests': advance_requests,
+        'all_time': contrib_all_time,
+        'tenure_start': tenure_start,
+        'tenure_end': tenure_end,
     })
 
 
@@ -1060,7 +1129,14 @@ def haki_recognition_statement(request, profile_id):
     date_from = today.replace(day=1)
 
     contrib = _staff_contribution(staff_profile, business, date_from, today)
-    contrib['recognition'] = compute_staff_recognition(contrib)
+    # audience='staff' unconditionally: this is a personal statement — a
+    # printable/shareable "taarifa" document meant to be handed TO (or
+    # shared with) the staff member it's about, whether it's the staffer
+    # themselves pulling it up (Kazi Yangu's "🌟 Taarifa Yangu") or the
+    # owner reviewing/printing it to give them — it always reads as
+    # addressed to the staffer, never a 3rd-person report FOR the owner
+    # (that's staff_contribution_report's job instead).
+    contrib['recognition'] = compute_staff_recognition(contrib, audience='staff')
     salary  = _salary_status(staff_profile, business)
 
     pay_history = SalaryPayment.objects.filter(
@@ -1261,15 +1337,7 @@ def staff_journey(request, profile_id):
     staff_user = staff_profile.user
 
     # ── Tenure window: earliest activity → now (or departure) ──────────────────
-    first_shift = Shift.objects.filter(business=business, staff=staff_user).order_by('started_at').first()
-    first_txn = Transaction.objects.filter(business=business, recorded_by=staff_user).order_by('date').first()
-    candidates = [d for d in [
-        first_shift.started_at.date() if first_shift else None,
-        first_txn.date if first_txn else None,
-    ] if d]
-    tenure_start = min(candidates) if candidates else timezone.localdate()
-    tenure_end = (timezone.localtime(staff_profile.departed_at).date()
-                  if staff_profile.departed_at else timezone.localdate())
+    tenure_start, tenure_end = _staff_tenure_window(staff_profile, business)
 
     contrib = _staff_contribution(staff_profile, business, tenure_start, tenure_end)
     contrib['recognition'] = compute_staff_recognition(contrib)

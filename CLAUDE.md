@@ -9399,3 +9399,150 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   changed, the voided-sibling-excluded case, the never-split regression
   lock, and one `Exchange`-specific test proving the fix propagates
   through that shared call path with zero extra code). No migrations.
+- Four live requests in one message (2026-08-27): manager-on-duty banner
+  staleness, debt-payment recorder attribution, Kazi Yangu full history,
+  and a standing 2nd-vs-3rd-person wording rule. **(1) Manager on Duty
+  strip staleness**: Roy — "the manager's 'aliingia' ... shift has been
+  running for so long when he left 12 hours ago." Root cause:
+  `home()`'s `active_managers` (the purple owner-dashboard banner —
+  distinct from the real per-Shift rows below it, which already close
+  correctly) was driven purely by `User.last_login__gte=start-of-today`,
+  with zero concept of the manager actually having left. New
+  `UserProfile.last_seen_at` (accounts migration 0068) — stamped by
+  `SingleSessionMiddleware` on every authenticated request, throttled to
+  once per `ACTIVITY_STALE_MINUTES` (5) via a plain `.update()` (never a
+  full `.save()`) specifically to avoid adding write load on top of the
+  already-documented `SESSION_SAVE_EVERY_REQUEST` disk-activity concern
+  behind this app's own 502 incidents. `active_managers` now filters on
+  `last_seen_at__gte=now - MANAGER_ACTIVITY_IDLE_MINUTES(20)` instead —
+  a manager silently drops off the strip 20 minutes after their last real
+  request, rather than showing a stale same-day login timestamp all day.
+  Banner wording changed from "Aliingia HH:MM" (logged in at) to "Hai —
+  alionekana HH:MM" (active — last seen at), matching what the figure now
+  actually means. **(2) Debt-payment recorder + date/time**: the
+  "Unpaid Credit Transactions" table on `customer_debt_profile.html`
+  showed a bare date and no indication of which staffer actually rang the
+  item up on credit — the sibling "Payment History" table right below it
+  already had both. Added a "Recorded By" column (`Transaction.
+  recorded_by`, already an existing field, simply never surfaced here) and
+  switched the Date cell from `txn.date` (date only) to
+  `txn.created_at` (date + time), matching the payment table's own
+  `"d M Y, H:i"` format; `recorded_by` added to `_get_customer_debt_data`'s
+  own `select_related()` to keep this free of N+1 (locked in by a
+  dedicated query-count test). **(3) Kazi Yangu full history**: "ensure
+  that staff can see all their data since they began." `my_work_and_pay()`
+  was hardcoded to the current calendar month for its contribution
+  summary, and capped Payment History / advance-request history at the
+  last 12/10 rows. New shared `_staff_tenure_window(staff_profile,
+  business)` (factored out of `staff_journey()`'s own pre-existing
+  "earliest activity → now or departure" computation, now reused by both)
+  feeds a new, additive `all_time` contribution block — same figures
+  (revenue, shifts, hours, debts recovered, milestones, recognition tier)
+  as the existing "this month" card, but spanning the staffer's whole
+  tenure — rendered as a new "📜 Historia Yako Kamili" card, plus a
+  collapsible full deduction history (`all_deductions`/
+  `all_deductions_total`, every period, not just the current one).
+  `pay_history`/`advance_requests` queries had their `[:12]`/`[:10]`
+  slices removed entirely (small per-staff tables, no date filtering
+  needed — same precedent `staff_journey()`'s own salary history query
+  already established). **(4) 2nd-person wording for staff-addressed
+  text**: Roy's own concrete example — Haki's recognition tier label
+  "Anahitaji Kuboresha" (3rd person: "[they] need to improve") is correct
+  on the OWNER-facing `haki_contribution.html` (reading ABOUT a staffer)
+  but wrong on the STAFF's own `haki_kazi_yangu.html` (should be
+  "Unahitaji Kuboresha" — "YOU need to improve," since it's addressed
+  directly TO the staffer) — plus his general instruction to "enforce this
+  anywhere there is such communication between workers across the app."
+  `compute_staff_recognition(contrib, audience='owner')` gained the
+  `audience` param — only the two verb-conjugated tier labels (bronze
+  "Anaendelea"/"Unaendelea Vizuri", developing "Anahitaji"/"Unahitaji
+  Kuboresha") actually differ by person; gold/silver/unrated carry no
+  person-conjugated verb and render identically either way. Every call
+  site audited and set explicitly: `my_work_and_pay()` (Kazi Yangu, always
+  the staffer reading about themselves — `audience='staff'`);
+  `haki_recognition_statement()` (a personal, shareable/printable
+  statement — `audience='staff'` UNCONDITIONALLY, regardless of whether
+  the owner or the staffer is the one currently viewing/printing it, since
+  the document itself always reads as addressed to the staffer it's
+  about); `staff_contribution_report()` and `staff_journey()` (both
+  strictly owner/manager-only — left at the default `audience='owner'`,
+  unchanged). 44 new tests across
+  `UserProfileActivityTrackingTest`/`ManagerOnDutyStripTest` (accounts +
+  core), `DebtProfileRecordedByDisplayTest`, `KaziYanguFullHistoryTest`,
+  and additions to `StaffRecognitionTierTest`/`StaffRecognitionWiringTest`
+  — including the exact reported-bug reproduction (a developing-tier
+  staffer sees "Unahitaji Kuboresha" on Kazi Yangu, "Anahitaji Kuboresha"
+  on the owner's report), a direct regression lock that gold/silver/
+  unrated are audience-independent, full-tenure activity older than the
+  current month showing on `all_time` while the this-month figure stays
+  clean, and query-count regression locks for both new select_related
+  additions. Two migrations (accounts 0068, additive).
+- Debt-tracker duplicate-customer audit — staff vs owner showing different
+  debts (2026-08-27, same-day follow-up). Roy: "I am looking at certain
+  debts that show different debts from the staff's side compared to the
+  owner's side in the debt tracker, could you audit this too and see if
+  you might flag any excess entries or exaggerations of debt items and
+  amounts out of the control of the user." Traced directly to the EXACT
+  duplicate-Customer-row mechanism this file already documented and partly
+  mitigated on 2026-08-09 ("two Eugenes with the same amount and same
+  items") — `_get_customer_debt_data()`/`Transaction.recipient` match by a
+  plain NAME STRING, not the `Customer` FK, so two `Customer` rows sharing
+  a name each independently compute and display the SAME underlying debt.
+  `debt_dashboard()` already WARNS about this via `duplicate_groups`
+  (owner/manager only) — but its own headline `total_outstanding` figure
+  was STILL silently inflated by it (each duplicate's identical outstanding
+  summed in twice), and `debtors_list_api()` (the STAFF-facing "💳 Wateja
+  wenye Deni" panel on all three counters) had NO awareness of this at
+  all — exactly matching Roy's description: staff would see a duplicate
+  name as two separate list entries, each quoting the FULL undivided
+  amount, reading as "excess"/"exaggerated" debt through no fault of the
+  customer. **Two distinct fixes, deliberately different matching
+  strictness, reasoned through carefully**: `debt_dashboard()`'s row/total
+  dedup uses EXACT string matching only (never the broader case/whitespace
+  -insensitive key `_find_duplicate_customer_groups` uses for its
+  warning) — because it reuses `_get_customer_debt_data()`'s own per
+  -customer (exact-name-filtered) output; two customers whose names differ
+  only by case/spacing reflect genuinely DIFFERENT, non-overlapping
+  transaction sets, so deduping them the broader way would silently
+  UNDER-count real debt instead of fixing an over-count (locked in by a
+  dedicated regression test proving a case-variant customer's own separate
+  80 KES debt survives alongside the exact-duplicate pair's correctly
+  -deduped 480). `debtors_list_api()` was rebuilt to aggregate credit AND
+  paid totals directly from `Transaction`/`CustomerDebtPayment` rows keyed
+  by the case/whitespace-insensitive name (same key as `_find_duplicate_
+  customer_groups`) rather than reusing any per-customer computation — this
+  is safe there specifically because it's summing real rows fresh, not
+  trusting two duplicate calls to agree; a payment recorded against EITHER
+  duplicate now correctly reduces the whole group's combined outstanding.
+  Both fixes verified to respect station scoping end-to-end (Roy's own
+  explicit reminder mid-session: "each station has its own debt ledger and
+  as such each staff according to permission and role should see their
+  own") — `debtors_list_api()`'s scope filter is applied to `credit_qs`/
+  `payment_qs` BEFORE any name-grouping happens, and `debt_dashboard()`'s
+  scope is fixed per-request through `_get_customer_debt_data(customer,
+  business, scope)` before the dedup ever runs — so neither fix can leak
+  debt across a bar/kitchen boundary, confirmed by a direct test giving
+  one duplicate-named customer debt on BOTH stations and checking a
+  bar-scoped, a kitchen-scoped, and the owner's combined view each see
+  only their own correct total. Existing `test_debt_dashboard_lists_both_
+  duplicates_separately` (which had deliberately locked in the old,
+  buggy double-listing as "known, not yet fixed") rewritten to assert the
+  new deduped-to-one-row, correctly-summed-total behavior instead — the
+  `duplicate_groups` warning itself is completely unchanged, still the
+  real fix path via "🔀 Sahihisha Jina la Mteja." 8 new tests
+  (`DebtorsListApiTest` +4, `DuplicateCustomerDebtDoubleDisplayTest`
+  station-scoping +1, case-variant-not-undercounted +1, plus the rewritten
+  double-listing test). No migrations.
+- Test-infrastructure fix, same session: `WaitressTransactionHistoryRecordedByTest.
+  test_history_query_count_does_not_grow_per_transaction` (2026-08-24) started
+  failing after the `last_seen_at` activity-tracking middleware landed above —
+  its own first-vs-second `/history/` request comparison was legitimately
+  sensitive to the middleware's one-time-per-session write query (fires on the
+  first authenticated request in a session, throttled away on the next).
+  Fixed by priming the session with a throwaway request before the real
+  comparison, matching this file's own established "the middleware write is a
+  real, deliberate one-time cost — account for it, don't chase it away" pattern.
+  Not a regression in the reported feature (query count still correctly stays
+  flat as transaction count grows) — a test-authoring artifact of adding a new,
+  legitimate one-time middleware query, same bug class already documented
+  several times in this file for day-boundary/wall-clock-timing test fragility.

@@ -178,6 +178,68 @@
     {% endif %}
 </div>
 
+<!-- 2026-08-27 live request (Roy): "ensure that staff can see all their
+     data since they began" — the card above is this MONTH only, tied to
+     the payroll period. This is the same figure the owner would see on
+     Staff Journey if they looked, computed from your very first shift or
+     transaction through today (or your departure date). -->
+<div class="kazi-card" style="border-color:rgba(201,168,76,0.25);">
+    <div class="kazi-card-title">📜 {% trans 'Historia Yako Kamili' %}
+        <span style="color:#888; font-size:0.72rem; font-weight:400;">
+            ({{ tenure_start|date:"d M Y" }} — {{ tenure_end|date:"d M Y" }})
+        </span>
+    </div>
+    <div class="stat-row">
+        <div class="stat-item">
+            <div class="si-label">{% trans 'Mapato Yote' %}</div>
+            <div class="si-value" style="color:var(--gold);">KES {{ all_time.total_revenue|floatformat:0 }}</div>
+        </div>
+        <div class="stat-item">
+            <div class="si-label">{% trans 'Zamu Zote' %}</div>
+            <div class="si-value" style="color:#e0e0e0;">{{ all_time.shift_count }}</div>
+        </div>
+        <div class="stat-item">
+            <div class="si-label">{% trans 'Saa Zote' %}</div>
+            <div class="si-value" style="color:#e0e0e0;">{{ all_time.hours }}</div>
+        </div>
+        <div class="stat-item">
+            <div class="si-label">{% trans 'Madeni yaliyorudishwa (yote)' %}</div>
+            <div class="si-value" style="color:#6ee7b7;">KES {{ all_time.debts_recovered_kes|floatformat:0 }}</div>
+        </div>
+    </div>
+    {% if all_time.recognition.tier and all_time.recognition.tier != 'unrated' %}
+    <div class="mt-3">
+        <span style="font-size:0.85rem; font-weight:700; padding:0.25rem 0.75rem; border-radius:20px; {% if all_time.recognition.tier == 'gold' %}background:rgba(251,191,36,0.15); color:#fbbf24;{% elif all_time.recognition.tier == 'silver' %}background:rgba(203,213,225,0.15); color:#cbd5e1;{% elif all_time.recognition.tier == 'bronze' %}background:rgba(217,119,6,0.15); color:#d97706;{% else %}background:rgba(248,113,113,0.12); color:#f87171;{% endif %}">
+            {{ all_time.recognition.tier_label }} ({{ all_time.recognition.score }}/100)
+        </span>
+    </div>
+    {% endif %}
+    {% if all_time.milestones %}
+    <div class="mt-3 d-flex gap-2 flex-wrap">
+        {% for badge in all_time.milestones %}
+        <span style="font-size:0.78rem; background:rgba(201,168,76,0.12); color:var(--gold); border:1px solid rgba(201,168,76,0.25); border-radius:20px; padding:0.2rem 0.65rem;">
+            {{ badge }}
+        </span>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if all_deductions %}
+    <details class="mt-3">
+        <summary style="cursor:pointer; font-size:0.78rem; color:#888;">
+            {% trans 'Historia Kamili ya Makato' %} (-KES {{ all_deductions_total|floatformat:0 }})
+        </summary>
+        <div class="mt-2">
+            {% for ded in all_deductions %}
+            <div class="ded-row">
+                <span style="color:#f0ece4; flex:1;">{{ ded.period }} — {{ ded.reason|truncatechars:80 }}</span>
+                <span style="color:#f87171; font-weight:700; white-space:nowrap;">-KES {{ ded.amount|floatformat:0 }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </details>
+    {% endif %}
+</div>
+
 <!-- 2026-08-22 (Roy — shift-change accountability): staff must be able to
      see their own unaffirmed stock-variance record — "so that they do not
      claim that they were paid unfairly." Only rows still counting AGAINST

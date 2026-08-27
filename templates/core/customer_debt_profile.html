@@ -533,6 +533,7 @@
             <thead style="background:rgba(255,255,255,0.02);">
                 <tr style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--gold);">
                     <th class="ps-4 py-2">{% trans 'Date' %}</th>
+                    <th class="py-2">{% trans 'Recorded By' %}</th>
                     <th class="py-2">{% trans 'Item' %}</th>
                     <th class="py-2 text-end">{% trans 'Amount Owed' %}</th>
                     <th class="py-2 text-end pe-4">{% trans 'Days Outstanding' %}</th>
@@ -542,7 +543,19 @@
             <tbody>
                 {% for entry in unpaid_transactions %}
                 <tr class="txn-row {% if entry.is_overdue %}overdue-row{% endif %}" id="debt-txn-row-{{ entry.txn.id }}">
-                    <td class="ps-4">{{ entry.txn.date|date:"d M Y" }}</td>
+                    <td class="ps-4">{{ entry.txn.created_at|date:"d M Y, H:i" }}</td>
+                    <td style="color:#b0b0b0; font-size:0.82rem;">
+                        <!-- 2026-08-27 live request (Roy): "add the staff who recorded
+                             debt alongside date and time" — the item was already sold
+                             on credit by SOMEONE (recorded_by), even though a tab merge/
+                             conversion may credit a different name than who's actually
+                             holding this table's business logic. -->
+                        {% if entry.txn.recorded_by %}
+                            {{ entry.txn.recorded_by.get_full_name|default:entry.txn.recorded_by.username }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
                     <td>
                         {{ entry.txn.item.description }}
                         {% if entry.transfer_note %}

@@ -5,6 +5,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
+from datetime import timedelta
 
 from .models import Business, UserProfile
 
@@ -479,6 +480,52 @@ class SingleSessionAjaxKickTest(TestCase):
         # Even with a mismatched session key (superuser has no UserProfile at all here)
         resp = self.client.get('/', HTTP_SEC_FETCH_MODE='cors')
         self.assertEqual(resp.status_code, 200)
+
+
+class UserProfileActivityTrackingTest(TestCase):
+    """2026-08-27: UserProfile.last_seen_at is stamped by SingleSessionMiddleware
+    on every authenticated request, throttled to once per ACTIVITY_STALE_MINUTES
+    so it doesn't add write load on top of the already-documented
+    SESSION_SAVE_EVERY_REQUEST disk-activity concern. Powers the home dashboard's
+    "Manager on Duty" strip (core.views.home) — see core/tests.py for that side."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Activity Tracking Biz')
+        self.user = User.objects.create_user(username='at_user', password='x')
+        self.profile = UserProfile.objects.create(user=self.user, business=self.biz, role='manager')
+
+    def test_first_authenticated_request_stamps_last_seen_at(self):
+        self.assertIsNone(self.profile.last_seen_at)
+        self.client.force_login(self.user)
+        self.client.get('/')
+        self.profile.refresh_from_db()
+        self.assertIsNotNone(self.profile.last_seen_at)
+
+    def test_second_request_within_throttle_window_does_not_rewrite(self):
+        self.client.force_login(self.user)
+        self.client.get('/')
+        self.profile.refresh_from_db()
+        first_stamp = self.profile.last_seen_at
+
+        self.client.get('/')
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.last_seen_at, first_stamp)
+
+    def test_request_after_throttle_window_rewrites(self):
+        self.client.force_login(self.user)
+        self.client.get('/')
+        self.profile.refresh_from_db()
+        stale_time = timezone.now() - timedelta(minutes=10)
+        UserProfile.objects.filter(pk=self.profile.pk).update(last_seen_at=stale_time)
+
+        self.client.get('/')
+        self.profile.refresh_from_db()
+        self.assertGreater(self.profile.last_seen_at, stale_time)
+
+    def test_anonymous_request_never_stamps_anything(self):
+        self.client.get('/accounts/login/')
+        self.profile.refresh_from_db()
+        self.assertIsNone(self.profile.last_seen_at)
 
 
 class SafeBusinessDeleteTest(TestCase):

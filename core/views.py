@@ -39,6 +39,13 @@ from datetime import date, timedelta
 import json
 import os
 
+# Idle window for the home dashboard's "Manager on Duty" strip — a manager's
+# UserProfile.last_seen_at (activity-tracked, see its own docstring) must be
+# within this many minutes of now to still show as "on duty". 2026-08-27:
+# replaces the old last_login>=start-of-today check, which never noticed a
+# manager had actually left.
+MANAGER_ACTIVITY_IDLE_MINUTES = 20
+
 # ── HELPERS ──────────────────────────────────────────────────────────────────
 
 
@@ -677,19 +684,26 @@ def home(request):
             except Exception:
                 context['stale_open_tabs'] = []
 
-            # Active managers logged in today (shown to owner on dashboard)
+            # Managers currently active on the dashboard "on duty" strip.
+            # 2026-08-27 live report (Roy): this used to be purely
+            # last_login>=start-of-today, so a manager who logged in at 03:21
+            # and left 12 hours ago still showed as "on duty" all day — Django
+            # tracks login time only, never logout/idle time. Now reads the
+            # activity-tracked UserProfile.last_seen_at (stamped on every
+            # authenticated request by SingleSessionMiddleware, throttled — see
+            # its own docstring) against a short idle window instead, so a
+            # manager silently drops off this strip once idle past the
+            # threshold rather than showing a stale same-day timestamp forever.
             if user_profile.is_owner:
                 try:
                     from accounts.models import UserProfile as _ManagerUP
-                    _today_start = timezone.localtime(timezone.now()).replace(
-                        hour=0, minute=0, second=0, microsecond=0
-                    )
+                    _active_cutoff = timezone.now() - timedelta(minutes=MANAGER_ACTIVITY_IDLE_MINUTES)
                     context['active_managers'] = list(
                         _ManagerUP.objects.filter(
                             business=business,
                             role='manager',
-                            user__last_login__gte=_today_start,
-                        ).select_related('user').order_by('user__last_login')
+                            last_seen_at__gte=_active_cutoff,
+                        ).select_related('user').order_by('-last_seen_at')
                     )
                 except Exception:
                     context['active_managers'] = []

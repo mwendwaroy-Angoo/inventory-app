@@ -631,6 +631,22 @@ class UserProfile(models.Model):
         default=False,
         help_text='If True, this user may be logged in from multiple devices at once (e.g. for dev/testing).'
     )
+    last_seen_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text=(
+            '2026-08-27 live report (Roy): the home dashboard\'s "Manager on Duty" strip '
+            'was driven purely by User.last_login >= start-of-today — a manager who logged '
+            'in at 03:21 and left 12 hours ago still showed as "on duty" all day, since '
+            'Django tracks login time only, never logout/idle time. Stamped by '
+            'SingleSessionMiddleware on every authenticated request, throttled to once per '
+            'ACTIVITY_STALE_MINUTES via a queryset .update() (never a full save()) to avoid '
+            'adding write load on top of the already-documented SESSION_SAVE_EVERY_REQUEST '
+            'disk-activity concern (see CLAUDE.md\'s 2026-08-11 502-incident entries). '
+            'home()\'s active_managers query now reads this instead of last_login, so a '
+            'manager silently drops off the strip once idle past the threshold rather than '
+            'showing a stale same-day login timestamp indefinitely.'
+        ),
+    )
 
     # ── Staff Departure (soft-delete) ─────────────────────────────────────
     # 2026-07-25: what was `delete_staff` used to hard-delete the User row —
