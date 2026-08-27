@@ -31362,6 +31362,124 @@ class ReturnPrimitiveTest(TestCase):
         ret.refresh_from_db()
         self.assertEqual(ret.status, Return.STATUS_APPROVED)
 
+    # ── 2026-08-27 money-path audit finding ─────────────────────────────
+    # Return.process_locked() computed refund_amount from orig.revenue()
+    # alone — correct in isolation, but a ✂️ Gawanya/🤝 Deni payment-method
+    # split (Transaction.split_payment_method_locked) reduces the ORIGINAL
+    # row's own sale_amount while leaving its qty untouched (only the
+    # original row ever carries the sale's real physical qty — see that
+    # method's own docstring). qty_returned is validated against the FULL
+    # original qty (correctly unaffected by a split), but the refund/
+    # revenue-reversal amount was silently computed from only PART of the
+    # money — a real, previously-undiscovered arithmetic mismatch.
+
+    def test_return_after_split_uses_true_total_not_just_original_share(self):
+        """The literal reported-shape bug: a 500 KES sale split into 200
+        cash + 300 mpesa, then returned in full, must refund/reverse the
+        TRUE 500 total — not just the 200 still sitting on the original
+        row."""
+        sale = self._sale(qty=1, amount=Decimal('500'), payment_method='cash')
+        _orig, _child = Transaction.split_payment_method_locked(
+            txn_id=sale.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        sale.refresh_from_db()
+        self.assertEqual(sale.revenue(), 200.0, 'sanity: the split correctly reduced the original row alone')
+
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=1, reason='Imeharibika', processed_by=self.owner)
+        self.assertEqual(
+            ret.refund_amount, Decimal('500.00'),
+            'must reflect the TRUE total sale value (200 kept + 300 split off), not just 200',
+        )
+
+    def test_return_after_split_partial_qty_prorates_true_total(self):
+        """2 units sold for 400, split 150 cash + 250 mpesa; returning 1 of
+        2 units must refund half of the TRUE 400 total (200), not half of
+        the reduced 150 remaining on the original row (75)."""
+        sale = self._sale(qty=2, amount=Decimal('400'), payment_method='cash')
+        Transaction.split_payment_method_locked(
+            txn_id=sale.id, business=self.biz, split_amount=Decimal('250'), new_method='mpesa',
+        )
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=1, reason='X', processed_by=self.owner)
+        self.assertEqual(ret.refund_amount, Decimal('200.00'))
+
+    def test_return_after_split_reverses_true_total_revenue(self):
+        """End-to-end revenue check: after the return, total recognized
+        revenue across every Issue transaction for this item today must
+        net to exactly what the customer genuinely kept (0 — the whole
+        sale was returned), not a phantom 300 left over from the
+        split-off mpesa portion never being reversed."""
+        sale = self._sale(qty=1, amount=Decimal('500'), payment_method='cash')
+        Transaction.split_payment_method_locked(
+            txn_id=sale.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        Return.process_locked(sale.id, self.biz, qty_returned=1, reason='X', processed_by=self.owner)
+        today = timezone.localdate()
+        total_rev = sum(
+            t.revenue() for t in
+            Transaction.objects.filter(business=self.biz, item=self.item, type='Issue', date=today)
+        )
+        self.assertAlmostEqual(total_rev, 0.0, places=2)
+
+    def test_return_after_split_stock_reversal_unaffected(self):
+        """Regression lock: the split-awareness fix only changes the MONEY
+        side — stock reversal (already correctly based on the untouched
+        original qty) must be byte-identical to before."""
+        before_balance = self.item.current_balance()
+        sale = self._sale(qty=2, amount=Decimal('400'), payment_method='cash')
+        Transaction.split_payment_method_locked(
+            txn_id=sale.id, business=self.biz, split_amount=Decimal('250'), new_method='mpesa',
+        )
+        Return.process_locked(sale.id, self.biz, qty_returned=2, reason='X', processed_by=self.owner)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.current_balance(), before_balance)
+
+    def test_return_split_awareness_ignores_a_voided_sibling(self):
+        """A split sibling that was itself already voided (its own revenue
+        corrected away via Futa) must NOT be counted toward the true sale
+        total — that portion is no longer real, recognized revenue."""
+        sale = self._sale(qty=1, amount=Decimal('500'), payment_method='cash')
+        _orig, child = Transaction.split_payment_method_locked(
+            txn_id=sale.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        child.payment_method = 'void'
+        child.qty = Decimal('0')
+        child.save(update_fields=['payment_method', 'qty'])
+
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=1, reason='X', processed_by=self.owner)
+        self.assertEqual(
+            ret.refund_amount, Decimal('200.00'),
+            'the voided 300 mpesa portion is already corrected away — only the live 200 counts',
+        )
+
+    def test_return_without_any_split_is_completely_unaffected(self):
+        """Regression lock: the ordinary, never-split case (100% of
+        existing usage) must be byte-identical to before the fix."""
+        sale = self._sale(qty=2, amount=Decimal('400'))
+        ret = Return.process_locked(sale.id, self.biz, qty_returned=1, reason='X', processed_by=self.owner)
+        self.assertEqual(ret.refund_amount, Decimal('200.00'))
+
+    def test_exchange_after_split_uses_true_total(self):
+        """Exchange.process_locked() calls Return.process_locked() with
+        force_approve=True internally — the same fix must propagate to it
+        with zero extra code, since it's the identical call path."""
+        from core.models import Exchange
+        new_item = Item.objects.create(
+            business=self.biz, store=self.store, description='Chrome Gin',
+            material_no='RET-02', unit='pcs', selling_price=Decimal('500'),
+            cost_price=Decimal('300'), opening_bin_balance=10,
+        )
+        sale = self._sale(qty=1, amount=Decimal('500'), payment_method='cash')
+        Transaction.split_payment_method_locked(
+            txn_id=sale.id, business=self.biz, split_amount=Decimal('300'), new_method='mpesa',
+        )
+        exch = Exchange.process_locked(
+            original_transaction_id=sale.id, business=self.biz, qty_returned=1,
+            new_item_id=new_item.id, new_qty=1, reason='Exchange', processed_by=self.owner,
+        )
+        self.assertEqual(exch.return_record.refund_amount, Decimal('500.00'))
+        exch.new_transaction.refresh_from_db()
+        self.assertEqual(exch.new_transaction.sale_amount, Decimal('500.00'))
+
 
 class ExchangePrimitiveTest(TestCase):
     """2026-08-16 live request (Roy): "a customer had a counter item worth

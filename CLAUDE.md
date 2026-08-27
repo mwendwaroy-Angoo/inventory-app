@@ -9339,3 +9339,63 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   and the guided page's own end-to-end round-trip;
   `StaffPermissionsAffirmAndExpenseWiringTest` — both toggles persist
   on/off through the real form). One migration (accounts 0067, additive).
+- Money-path/stock-behaviour audit (2026-08-27), Roy: "audit all money
+  paths, transactionals flow and stock behaviours and enforce both
+  integrity and logical arithmetic operations." A targeted, evidence-
+  based pass — not a re-derivation of the huge amount already audited
+  across this app's history — focused on (1) re-verifying the same-day
+  Futa split-cascade fix has no interaction bugs with `was_credit`/
+  `debt_collected_amount`/`OwnerConsumptionTransferRequest` (traced
+  `Transaction.save()`'s `was_credit` stamp — only fires on a transition
+  FROM 'credit', never involves the cash/mpesa rows the cascade touches;
+  confirmed a tab-less credit transaction can NEVER be flipped to cash/
+  mpesa outside the tab-linked debt-tracker path, so it can never reach
+  the "direct sales" Futa list at all — ruled out clean); (2) a fresh
+  `Sum('sale_amount')` sweep for any NEW un-guarded raw aggregate since
+  the 2026-07-31 sweep (none found — `KitchenBatch.split_by_date_locked`'s
+  own `_recompute_revenue()` and every keg/bunch/batch revenue query are
+  correctly scoped to envelope-only rows, which `record_sale()` always
+  stamps with a real `sale_amount`); (3) a full division-by-zero sweep
+  across every `/` operation in `core/models.py` touching cost/price/
+  revenue/qty (all ~15 sites independently checked — every one already
+  correctly guarded, several with a falsy-Decimal check that also
+  doubles as the zero-guard, one with a belt-and-suspenders `try/except
+  ZeroDivisionError` on top of its own falsy check). **Found and fixed
+  one real, confirmed bug**: `Return.process_locked()` (and, via the
+  same call path, `Exchange.process_locked()`) computed `refund_amount`
+  from `orig.revenue()` alone — correct in isolation, but a ✂️ Gawanya/
+  🤝 Deni payment-method split (`Transaction.split_payment_method_
+  locked()`, 2026-07-26 onward) reduces the ORIGINAL row's own `sale_
+  amount` while leaving its `qty` completely untouched (only the
+  original row ever carries the sale's real physical quantity — see
+  that method's own docstring). `qty_returned` was already correctly
+  validated against the FULL original `qty` (unaffected by a split),
+  but the refund/revenue-reversal amount was silently computed from
+  only PART of the money — concretely: a 500 KES sale split into 200
+  cash + 300 mpesa, then returned in full, refunded/reversed only 200,
+  permanently leaving 300 KES of revenue recognized for a physical unit
+  that's back on the shelf. New `Return._true_sale_total(orig)`
+  classmethod sums `orig.revenue()` plus every LIVE (non-void)
+  `split_children` sibling's own `revenue()` — a void sibling is
+  deliberately excluded, since that portion was already corrected away
+  and is no longer real, recognized revenue — and `process_locked()`
+  now prorates `qty_returned/original_qty_sold` against this TRUE total
+  instead of `orig.revenue()` alone. Fully backward compatible: for the
+  overwhelming common case (never split), `split_children` is empty and
+  the total is byte-identical to `orig.revenue()` alone — confirmed by
+  a dedicated regression-lock test, and by all 22 pre-existing `Return`/
+  `Exchange` tests passing unmodified. Not reachable through any built
+  UI today (`process_return`'s own module docstring documents the
+  return-flow UI as a deliberate deferral, confirmed via a template
+  grep — zero references anywhere), so no live-data backfill is needed;
+  fixed now so a future session building that UI doesn't inherit a live
+  landmine. Separately confirmed `revert_direct_sale_to_tab_locked()`
+  does NOT share this bug shape — it corrects one specific, already-
+  known transaction's own amount directly, never prorating against a
+  presumed "whole sale" total the way Return's qty-based refund math
+  does. 7 new tests (`ReturnPrimitiveTest` — the literal reported-shape
+  scenario reproduced exactly, partial-qty proration, end-to-end revenue
+  reversal, a stock-reversal regression lock proving only the money side
+  changed, the voided-sibling-excluded case, the never-split regression
+  lock, and one `Exchange`-specific test proving the fix propagates
+  through that shared call path with zero extra code). No migrations.

@@ -3340,6 +3340,31 @@ class Return(models.Model):
         return agg['total'] or Decimal('0')
 
     @classmethod
+    def _true_sale_total(cls, orig):
+        """Total revenue ever recognized for `orig`'s own physical sale —
+        found 2026-08-27 money-path audit. `orig.revenue()` alone only
+        reflects `orig`'s own REMAINING share once a ✂️ Gawanya/🤝 Deni
+        payment-method split has happened against it: split_payment_
+        method_locked() reduces the ORIGINAL row's sale_amount but never
+        touches its qty (see that method's own docstring — only the
+        original row ever carries the sale's real physical qty). Without
+        this, `qty_returned` is validated against the FULL original qty
+        (correctly unaffected by a split) while the refund/revenue-
+        reversal amount was computed from only PART of the money — e.g. a
+        500 KES sale split into 200 cash + 300 mpesa, then returned in
+        full, silently refunded/reversed only 200, permanently leaving
+        300 KES of revenue recognized for a physical unit that's back on
+        the shelf. Sums every live (non-void) split_children sibling's own
+        revenue() alongside orig's — a void sibling is excluded since that
+        portion was already corrected away and never a real, still-
+        recognized sale. No-op (returns exactly orig.revenue()) for the
+        overwhelming common case where orig was never split at all."""
+        total = Decimal(str(orig.revenue()))
+        for child in orig.split_children.exclude(payment_method='void'):
+            total += Decimal(str(child.revenue()))
+        return total
+
+    @classmethod
     def process_locked(cls, original_transaction_id, business, qty_returned, reason,
                         processed_by=None, force_approve=False):
         """The one entry point. Raises ValueError for an invalid request
@@ -3366,7 +3391,7 @@ class Return(models.Model):
                 raise ValueError('Kiasi kinachorudishwa ni zaidi ya kilichouzwa.')
 
             original_qty_sold = abs(orig.qty) or Decimal('1')
-            refund_amount = (Decimal(str(orig.revenue())) * qty_returned / original_qty_sold)
+            refund_amount = (cls._true_sale_total(orig) * qty_returned / original_qty_sold)
             refund_amount = refund_amount.quantize(Decimal('0.01'))
 
             threshold = business.return_approval_threshold
