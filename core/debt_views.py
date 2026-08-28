@@ -2323,6 +2323,36 @@ def request_write_off(request, txn_id):
     if not reason:
         return JsonResponse({'ok': False, 'error': 'Andika sababu ya kuomba kufuta.'}, status=400)
 
+    # 2026-08-28 live request (Roy, with a debt-tracker screenshot): a
+    # single Transaction consolidating several identical units into one
+    # line ("Kc smooth 250ml — KES 800" = 2 units at 400 each) had no way
+    # to Futa just ONE of them — the whole line always went together.
+    # qty_to_erase is optional and blank/omitted/"all of it" behaves
+    # EXACTLY as before (the whole, un-split transaction). A genuine
+    # partial pick splits it first (Transaction.split_quantity_locked) and
+    # every remaining line below operates on the SPLIT-OFF portion only —
+    # the original transaction's own remaining qty/amount stays completely
+    # untouched, still owed, still visible as its own separate line.
+    qty_to_erase_raw = (request.POST.get('qty_to_erase') or '').strip()
+    if qty_to_erase_raw:
+        try:
+            from decimal import Decimal as _Decimal
+            qty_to_erase = _Decimal(qty_to_erase_raw)
+        except Exception:
+            return JsonResponse({'ok': False, 'error': 'Idadi si sahihi.'}, status=400)
+        full_qty = abs(txn.qty)
+        if 0 < qty_to_erase < full_qty:
+            try:
+                _orig_txn, txn = Transaction.split_quantity_locked(
+                    txn_id=txn.id, business=up.business,
+                    qty_to_split=qty_to_erase, staff_user=request.user,
+                )
+            except ValueError as e:
+                return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+        elif qty_to_erase <= 0 or qty_to_erase > full_qty:
+            return JsonResponse({'ok': False, 'error': 'Idadi lazima iwe kati ya 1 na jumla ya vitengo.'}, status=400)
+        # qty_to_erase == full_qty: no split needed, proceeds on the whole txn below.
+
     # 2026-07-31 live request: "when an item is out on a running tab or debt
     # section... when the item is erased the system should append the
     # balances accordingly." A genuinely mistaken debt entry (wrong item/

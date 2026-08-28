@@ -9546,3 +9546,102 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   flat as transaction count grows) — a test-authoring artifact of adding a new,
   legitimate one-time middleware query, same bug class already documented
   several times in this file for day-boundary/wall-clock-timing test fragility.
+- Debt write-off: quantity-split for a consolidated multi-unit line (2026-08-28),
+  live request with a screenshot: "if I users wanted to delete just one item that
+  were recorded two like for instance that chrome vodka as you can see there is
+  800, one is 400, meaning that if it is 800 it means two, so i need it to be
+  that if i click on futa, the system in such instances asks whether you are
+  deleting one item or more or all for such specific consolidations." Some
+  direct-credit sales legitimately consolidate several identical units into ONE
+  `Transaction` row (a cart line for "2× Chrome Vodka" at checkout creates a
+  single `qty=-2` row, not two separate rows) — "Futa" (write-off/erase) on such
+  a line always acted on the WHOLE consolidated amount, with no way to correct
+  or erase just one of the units. New `Transaction.split_quantity_locked(cls,
+  txn_id, business, qty_to_split, staff_user=None)` (`core/models.py`) —
+  deliberately a NEW method, not a reuse of `split_payment_method_locked()`/
+  `split_to_credit_locked()` (both existing splits are PAYMENT-CHANNEL
+  corrections that always put `qty=0` on the sibling, since the physical item
+  already left the shelf once — this is a genuine PHYSICAL split, where the
+  sibling must carry its own real, non-zero share of `qty`). Locked
+  (`select_for_update()`), refuses anything but a whole-number `qty` of 2 or
+  more on the ORIGINAL transaction (a consolidated line is always an integer
+  count of identical units — a fractional/keg/preset-priced line has nothing
+  meaningful to "split into 1 unit"), refuses a tab-linked transaction (that
+  has its own dedicated per-entry tools already) and anything not a plain,
+  still-unpaid direct credit line. Splits `sale_amount` proportionally
+  (`original_revenue × qty_to_split / full_qty`, quantized to cents, remainder
+  = original minus split share — never independently recomputed from
+  `item.selling_price`, so a manually-adjusted or discounted original amount
+  divides correctly instead of being silently overwritten) and copies every
+  envelope FK (`keg_barrel`/`produce_bunch`/`kitchen_batch`) onto the new
+  sibling so `Transaction.cost()`'s existing proportional-share formula prices
+  both halves correctly with no new logic. New sibling is `split_from`-linked
+  (the same lineage field the payment-channel splits already use), so it's
+  automatically visible everywhere that already reads `split_from`/
+  `split_children` — the live-receipt self-healing (`_live_direct_lines()`)
+  and the Futa split-cascade voiding logic both already generalise to this
+  new use of the field with zero extra code. Wired into `request_write_off()`
+  (`core/debt_views.py`) via an optional `qty_to_erase` POST field — when
+  given and strictly between 0 and the full qty, calls `split_quantity_locked`
+  first so the write-off request that follows operates on the freshly-created,
+  correctly-sized sibling transaction instead of the original; `qty_to_erase`
+  equal to the full qty is a no-op (proceeds on the whole line, unchanged
+  behaviour), and an out-of-range value is rejected with a clear error before
+  anything is touched. New quantity-picker UI in the write-off modal
+  (`customer_debt_profile.html`) — "1 tu" / a custom number input / "Vyote" —
+  shown only when the underlying `Transaction.qty` is a whole number ≥ 2 with
+  no linked tab entry (mirroring the model method's own eligibility rule
+  exactly, so the button never offers a choice the backend would reject), with
+  a live KES preview of what one unit is worth before submitting. 12 new tests
+  (`TransactionSplitQuantityLockedTest`, `DebtWriteOffQuantitySplitViewTest`) —
+  model-layer split math and every rejection path (fractional/single-unit/
+  tab-linked/non-credit/out-of-range), the full-qty-is-a-no-op case, and an
+  end-to-end regression lock that erasing one of two units restores only that
+  unit's own stock while leaving the other unit's transaction and debt
+  untouched. No migrations (reuses the existing `split_from` field). 2605
+  tests pass (core + accounts).
+- home() dashboard slowness (2026-08-28), live report: "the system is slow
+  when navigating from any other section of the app to home... it is too
+  slow." Root-caused via a full read of the 653-line `home()` view to three
+  separate, independently-fixable cost centers, all converted to real DB-side
+  aggregates instead of Python-loop summation — the same discipline already
+  proven correct by `till_expected_cash()` in the same file (used directly as
+  the reference pattern, not reinvented). (1) `station_revenue_window_info()`
+  (via `_window_revenue()`/`_window_revenue_owner_facilitated()`,
+  `core/shift_views.py`) fetched every matching Issue transaction into Python
+  just to sum `.revenue()` one-by-one — called once for the day's total, once
+  for the owner-facilitated subset, AND once PER PENDING SHIFT in its own
+  breakdown list, for BOTH bar and kitchen stations, on every single owner/
+  manager home() load — the single largest cost, scaling directly with a
+  business's daily transaction volume and open-shift count. Both rewritten to
+  a single `.aggregate(Sum(...))` call using the app's own established
+  Case/When revenue formula (`_window_revenue_expr()` — `sale_amount` when
+  set, else `abs(qty) × item.selling_price` — the exact same formula
+  `Transaction.revenue()` computes in Python, now computed once in SQL
+  instead of once per row fetched into Python). (2) `home()`'s own
+  `_period_rev()` closure (the daily/weekly/monthly revenue-targets widget)
+  did the identical Python-loop summation, called 3× on every authenticated
+  user's load with no role gate at all — same fix, same formula, via a
+  local `_rev_expr` built the same way. (3) The UBA §M0-5 dashboard tile
+  registry (`core/dashboard_tiles.py`) was eagerly computed on every load
+  even though `home.html` doesn't read `uba_dashboard_tiles` yet (documented
+  as a deliberate no-op at the time it was built) — for a keg business, its
+  one registered example tile ran the real, non-trivial
+  `keg_metrics.staff_shrinkage()` report and the result was thrown away
+  unread every single time. Stopped computing it — the context key stays
+  present as an empty list, satisfying the registry's own "complete no-op"
+  contract, rather than paying for a report nothing displays. Confirmed the
+  actual revenue FIGURES are byte-identical before and after — the aggregate
+  formula is mathematically the same sum the Python loop was already
+  computing, just pushed into the database — locked in by a dedicated test
+  asserting exact KES values, not just that the page loads. 9 new tests
+  (`HomeDashboardRevenueWindowQueryEfficiencyTest`,
+  `WindowRevenueAggregateCorrectnessTest`) — a query-count-does-not-scale
+  regression lock (adds 60 transactions + 6 open shifts between two `/`
+  loads, asserts the query-count delta stays under 15 rather than growing
+  with activity), the untouched-figures regression lock, the dead-tile-key
+  no-op confirmation, and direct unit coverage of both new aggregate
+  helpers (explicit `sale_amount`, the `qty×selling_price` fallback, void/
+  `[SVQ]` exclusion, station scoping, the owner-facilitated subset, and the
+  no-owner-on-business zero case). No migrations (pure query-shape change,
+  no schema touched). 2605+9 tests pass (core + accounts).

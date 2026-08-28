@@ -384,18 +384,48 @@ def _station_reset_anchor(business, is_kitchen):
     return dt, kind, shift
 
 
+def _window_revenue_expr():
+    """The exact Case/When mirror of Transaction.revenue()'s own Python
+    formula (sale_amount when set, else abs(qty) x item.selling_price),
+    for use inside a real DB-side .aggregate(Sum(...)) instead of fetching
+    every matching row into Python just to sum them. Safe wherever the
+    caller's own queryset is already filtered to type='Issue' — revenue()'s
+    transfer_id/type checks both return 0 for anything that isn't a real
+    Issue sale, and a Transfer-type row is never also type='Issue' (see
+    revenue()'s own docstring), so that queryset-level filter alone is
+    equivalent to those Python-side early-returns."""
+    return Case(
+        When(sale_amount__isnull=False, then=F('sale_amount')),
+        default=Abs(F('qty')) * Coalesce(F('item__selling_price'), Value(0)),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
+
 def _window_revenue(business, is_kitchen, start, end):
     """Cash+mpesa Issue revenue for one station, strictly within [start, end).
     Same filter shape as home()'s bar_today_revenue/kitchen_today_revenue —
     kept as one shared helper so the tile total and its own breakdown can
-    never silently drift apart from each other."""
-    txns = Transaction.objects.filter(
+    never silently drift apart from each other.
+
+    2026-08-28 live report (Roy: "the system is slow when navigating... to
+    home"): this used to fetch every matching Transaction row and sum
+    revenue() in Python — station_revenue_window_info() calls this once
+    for the day's total, once for the owner-facilitated subset, AND once
+    PER SHIFT in its pending_shifts breakdown (all with heavily-overlapping
+    windows), on every single home() load for an owner/manager, across BOTH
+    stations. A real, DB-side aggregate — matching the exact Case/When
+    pattern till_expected_cash() already uses for the same reason —
+    produces the identical number without ever materializing the matching
+    rows into Python."""
+    result = Transaction.objects.filter(
         business=business, type='Issue',
         created_at__gte=start, created_at__lt=end,
         payment_method__in=['cash', 'mpesa'],
         item__store__is_kitchen=is_kitchen,
-    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
-    return sum(t.revenue() for t in txns)
+    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').aggregate(
+        t=Sum(_window_revenue_expr())
+    )['t']
+    return float(result or 0)
 
 
 def _window_revenue_owner_facilitated(business, is_kitchen, start, end):
@@ -411,14 +441,16 @@ def _window_revenue_owner_facilitated(business, is_kitchen, start, end):
     )
     if not owner_ids:
         return 0
-    txns = Transaction.objects.filter(
+    result = Transaction.objects.filter(
         business=business, type='Issue',
         created_at__gte=start, created_at__lt=end,
         payment_method__in=['cash', 'mpesa'],
         item__store__is_kitchen=is_kitchen,
         recorded_by_id__in=owner_ids,
-    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').select_related('item')
-    return sum(t.revenue() for t in txns)
+    ).exclude(payment_method='void').exclude(invoice_no='[SVQ]').aggregate(
+        t=Sum(_window_revenue_expr())
+    )['t']
+    return float(result or 0)
 
 
 def station_revenue_window_info(business, is_kitchen, now=None):

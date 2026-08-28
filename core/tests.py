@@ -14053,6 +14053,215 @@ class DebtEraseMistakeTest(TestCase):
         self.assertEqual(SalaryDeduction.objects.filter(write_off=wo).count(), 1)
 
 
+class TransactionSplitQuantityLockedTest(TestCase):
+    """2026-08-28 live request (Roy, debt-tracker screenshot): a debt line
+    consolidating several identical units into one Transaction ("Kc smooth
+    250ml — KES 800" = 2 units at 400 each) had no way to Futa just ONE
+    unit — model-layer coverage for Transaction.split_quantity_locked()."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Split Qty Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kc Smooth 250ml',
+            material_no='SPLITQTY-01', selling_price=Decimal('400'),
+        )
+
+    def _credit_txn(self, qty='-2', amount='800', recipient='Bosco'):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal(qty), recipient=recipient,
+            payment_method='credit', sale_amount=Decimal(amount),
+        )
+
+    def test_splits_one_of_two_units_proportionally(self):
+        txn = self._credit_txn()
+        orig, new = Transaction.split_quantity_locked(
+            txn_id=txn.id, business=self.biz, qty_to_split=Decimal('1'),
+        )
+        self.assertEqual(orig.qty, Decimal('-1'))
+        self.assertEqual(orig.sale_amount, Decimal('400.00'))
+        self.assertEqual(orig.payment_method, 'credit')
+        self.assertEqual(new.qty, Decimal('-1'))
+        self.assertEqual(new.sale_amount, Decimal('400.00'))
+        self.assertEqual(new.payment_method, 'credit')
+        self.assertEqual(new.recipient, 'Bosco')
+        self.assertEqual(new.split_from_id, orig.id)
+
+    def test_sum_of_both_rows_always_equals_the_original_revenue(self):
+        """Odd amount that doesn't divide evenly — 3 units, KES 1000 —
+        proves the split is penny-accurate with no rounding leakage."""
+        txn = self._credit_txn(qty='-3', amount='1000')
+        orig, new = Transaction.split_quantity_locked(
+            txn_id=txn.id, business=self.biz, qty_to_split=Decimal('1'),
+        )
+        self.assertEqual(orig.qty, Decimal('-2'))
+        self.assertEqual(new.qty, Decimal('-1'))
+        self.assertEqual(orig.sale_amount + new.sale_amount, Decimal('1000.00'))
+
+    def test_rejects_tab_linked_transaction(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bosco', status='SETTLED', source='bar', store=self.store,
+        )
+        txn = self._credit_txn()
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Kc Smooth', amount=Decimal('800'), is_paid=False,
+        )
+        with self.assertRaises(ValueError):
+            Transaction.split_quantity_locked(txn_id=txn.id, business=self.biz, qty_to_split=Decimal('1'))
+
+    def test_rejects_non_credit_transaction(self):
+        txn = self._credit_txn()
+        txn.payment_method = 'cash'
+        txn.save(update_fields=['payment_method'])
+        with self.assertRaises(ValueError):
+            Transaction.split_quantity_locked(txn_id=txn.id, business=self.biz, qty_to_split=Decimal('1'))
+
+    def test_rejects_fractional_quantity(self):
+        txn = self._credit_txn(qty='-2.5', amount='1000')
+        with self.assertRaises(ValueError):
+            Transaction.split_quantity_locked(txn_id=txn.id, business=self.biz, qty_to_split=Decimal('1'))
+
+    def test_rejects_single_unit_line(self):
+        txn = self._credit_txn(qty='-1', amount='400')
+        with self.assertRaises(ValueError):
+            Transaction.split_quantity_locked(txn_id=txn.id, business=self.biz, qty_to_split=Decimal('1'))
+
+    def test_rejects_qty_out_of_range(self):
+        txn = self._credit_txn(qty='-3', amount='1200')
+        with self.assertRaises(ValueError):
+            Transaction.split_quantity_locked(txn_id=txn.id, business=self.biz, qty_to_split=Decimal('0'))
+        txn2 = self._credit_txn(qty='-3', amount='1200')
+        with self.assertRaises(ValueError):
+            # equal to the full quantity — nothing left on the original side
+            Transaction.split_quantity_locked(txn_id=txn2.id, business=self.biz, qty_to_split=Decimal('3'))
+
+
+class DebtWriteOffQuantitySplitViewTest(TestCase):
+    """View-layer coverage: request_write_off()'s new optional
+    qty_to_erase POST param, threading through to the model-layer split
+    above and to _execute_write_off_approval() for the self-service
+    'Ilikuwa Kosa' case (stock restoration must be scoped to exactly the
+    split-off portion, never the whole original line)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WO Qty Split Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='woqty_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kc Smooth 250ml',
+            material_no='WOQTY-01', selling_price=Decimal('400'),
+        )
+        Transaction.objects.create(business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'))
+
+    def _credit_txn(self, qty='-2', amount='800', recipient='Bosco'):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal(qty), recipient=recipient,
+            payment_method='credit', sale_amount=Decimal(amount),
+        )
+
+    def test_erase_one_of_two_units_restores_only_that_units_stock(self):
+        Customer.objects.create(business=self.biz, name='Bosco', credit_approved=True)
+        txn = self._credit_txn()
+        before = self.item.current_balance()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Bosco alichukua kimoja tu, si viwili', 'is_mistake': '1', 'qty_to_erase': '1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data.get('executed'))
+
+        # The ORIGINAL transaction is untouched except its own reduced qty/amount —
+        # still a live, owed credit line for the remaining unit.
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('-1'))
+        self.assertEqual(txn.sale_amount, Decimal('400.00'))
+        self.assertEqual(txn.payment_method, 'credit')
+
+        # Exactly ONE unit's worth of stock was restored, not both.
+        self.assertEqual(self.item.current_balance(), before + 1)
+
+        # The customer still owes exactly the remaining unit.
+        from core.debt_views import _get_customer_debt_data
+        customer = Customer.objects.get(business=self.biz, name='Bosco')
+        data2 = _get_customer_debt_data(customer, self.biz, scope='all')
+        self.assertEqual(data2['outstanding'], 400.0)
+
+    def test_erase_all_units_via_qty_to_erase_behaves_like_no_split(self):
+        """Picking the full quantity must be indistinguishable from the
+        original (pre-feature) whole-line erase — no split row created."""
+        txn = self._credit_txn()
+        before_count = Transaction.objects.filter(business=self.biz).count()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Wrong customer entirely', 'is_mistake': '1', 'qty_to_erase': '2',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('0'))
+        self.assertEqual(txn.payment_method, 'void')
+        # No new split-off row was created.
+        self.assertEqual(Transaction.objects.filter(business=self.biz).count(), before_count)
+
+    def test_qty_to_erase_beyond_full_quantity_rejected(self):
+        txn = self._credit_txn()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'test', 'is_mistake': '1', 'qty_to_erase': '5',
+        })
+        self.assertEqual(resp.status_code, 400)
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('-2'), 'must be left completely untouched on rejection')
+
+    def test_qty_to_erase_on_tab_linked_transaction_rejected(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Bosco', status='SETTLED', source='bar', store=self.store,
+        )
+        txn = self._credit_txn()
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Kc Smooth', amount=Decimal('800'), is_paid=False,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'test', 'is_mistake': '1', 'qty_to_erase': '1',
+        })
+        self.assertEqual(resp.status_code, 400)
+
+    def test_real_writeoff_with_quantity_split_requires_approval_and_only_voids_the_split_portion(self):
+        """A real Write-off (deni halisi, not 'Ilikuwa Kosa') always needs
+        owner/manager approval regardless of quantity-splitting — the split
+        happens up front, then the normal approve flow takes over,
+        affecting only the split-off transaction."""
+        txn = self._credit_txn()
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Real uncollectable half', 'qty_to_erase': '1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertFalse(data.get('executed'))
+
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.get(id=data['request_id'])
+        # The write-off request must point at the SPLIT-OFF sibling, not
+        # the original (now-reduced) transaction.
+        self.assertNotEqual(wo.transaction_id, txn.id)
+        self.assertEqual(wo.transaction.qty, Decimal('-1'))
+
+        approve_resp = self.client.post(f'/debt/write-off/{wo.id}/approve/')
+        self.assertTrue(approve_resp.json().get('ok'), approve_resp.json())
+        wo.transaction.refresh_from_db()
+        self.assertEqual(wo.transaction.payment_method, 'void')
+        # Real write-off never touches qty (goods really left the shelf) —
+        # only the ORIGINAL (remaining) transaction stays as live credit.
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('-1'))
+        self.assertEqual(txn.payment_method, 'credit')
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Analytics Module Audit — Theme 1 (money-path idempotency), 2026-07-21
 # ══════════════════════════════════════════════════════════════════════════════
@@ -46969,3 +47178,226 @@ class KaziYanguFullHistoryTest(TestCase):
         self.client.force_login(self.owner)
         resp = self.client.get('/me/')
         self.assertEqual(resp.status_code, 302)
+
+
+class HomeDashboardRevenueWindowQueryEfficiencyTest(TestCase):
+    """2026-08-28 live report (Roy: "the system is slow when navigating
+    from any other section of the app to home... it is too slow").
+    Root-caused to three separate home() cost centers, each fixed here:
+
+    (1) station_revenue_window_info() (via _window_revenue()/
+        _window_revenue_owner_facilitated()) fetched EVERY matching Issue
+        transaction into Python just to sum revenue() — called once for
+        the day's total, once for the owner-facilitated subset, AND once
+        PER SHIFT in its own pending_shifts breakdown, for BOTH bar and
+        kitchen stations, on every single owner/manager home() load.
+    (2) home()'s own _period_rev() (revenue targets widget) did the exact
+        same thing, called 3x (daily/weekly/monthly) for every
+        authenticated user, no role gate.
+    (3) The UBA §M0-5 dashboard tile registry was eagerly computed every
+        load even though home.html doesn't read it yet — for a keg
+        business, its one example tile ran the real
+        keg_metrics.staff_shrinkage() report and threw the result away.
+
+    All three converted to real DB-side aggregates (or, for #3, simply
+    stopped computing what nothing displays) — this proves the fix by
+    checking that home()'s query count stays roughly flat as transaction
+    volume and shift count grow, instead of scaling with them."""
+
+    def setUp(self):
+        from accounts.models import BusinessType
+        bar_type, _c = BusinessType.objects.get_or_create(name='Bar / Pub (Local Joint)')
+        self.biz = Business.objects.create(
+            name='Home Perf Biz', business_type=bar_type, has_kitchen=True,
+        )
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='hpe_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='Tusker',
+            material_no='HPE-01', unit='Pcs', selling_price=Decimal('250'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            material_no='HPE-02', unit='Plate', selling_price=Decimal('100'),
+        )
+        self.client.force_login(self.owner)
+
+    def _add_activity(self, n_txns, n_shifts):
+        import uuid
+        for i in range(n_shifts):
+            staff = User.objects.create_user(username=f'hpe_staff_{uuid.uuid4().hex[:8]}', password='x')
+            UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+            Shift.objects.create(
+                business=self.biz, staff=staff, status='OPEN', station='bar',
+                started_at=timezone.now() - timedelta(hours=1),
+            )
+        for i in range(n_txns):
+            item = self.item if i % 2 == 0 else self.kitchen_item
+            Transaction.objects.create(
+                business=self.biz, item=item, type='Issue',
+                qty=Decimal('-1'), sale_amount=Decimal('100'),
+                payment_method='cash' if i % 2 == 0 else 'mpesa',
+                recorded_by=self.owner,
+            )
+
+    def test_query_count_does_not_scale_with_transaction_or_shift_count(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self._add_activity(n_txns=3, n_shifts=1)
+        with CaptureQueriesContext(connection) as small:
+            resp_small = self.client.get('/')
+        self.assertEqual(resp_small.status_code, 200)
+        small_count = len(small.captured_queries)
+
+        self._add_activity(n_txns=60, n_shifts=6)
+        with CaptureQueriesContext(connection) as large:
+            resp_large = self.client.get('/')
+        self.assertEqual(resp_large.status_code, 200)
+        large_count = len(large.captured_queries)
+
+        self.assertLess(
+            large_count - small_count, 15,
+            f"home() went from {small_count} to {large_count} queries after adding "
+            "60 more transactions and 6 more open shifts — revenue-window queries "
+            "must be flat DB-side aggregates, not one Python-summed fetch per shift.",
+        )
+
+    def test_revenue_figures_unaffected_by_the_aggregate_rewrite(self):
+        """The actual numbers must still be exactly correct — same fixtures,
+        same result, only how it's computed changed."""
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'),
+            payment_method='cash', recorded_by=self.owner,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'),
+            payment_method='mpesa', recorded_by=self.owner,
+        )
+        resp = self.client.get('/')
+        self.assertEqual(resp.context['bar_today_revenue'], 300.0)
+        self.assertEqual(resp.context['kitchen_today_revenue'], 150.0)
+        self.assertEqual(resp.context['revenue_targets']['daily']['actual'], 450.0)
+
+    def test_uba_dashboard_tiles_key_still_present_but_empty(self):
+        """Kept present (empty) rather than removed — the registry
+        mechanism itself (core.dashboard_tiles) is still real, wired
+        infrastructure for a future sprint; only the wasted eager
+        computation was removed. Matches DashboardTileRegistryTest's own
+        'still renders, key still there' contract."""
+        resp = self.client.get('/')
+        self.assertIn('uba_dashboard_tiles', resp.context)
+        self.assertEqual(resp.context['uba_dashboard_tiles'], [])
+
+
+class WindowRevenueAggregateCorrectnessTest(TestCase):
+    """Direct unit coverage for shift_views._window_revenue()/
+    _window_revenue_owner_facilitated() now computing via a DB-side
+    Case/When aggregate instead of Python-summing revenue() per row —
+    proves the numeric result is identical to the old per-row approach for
+    every input shape that formula handles: sale_amount set, sale_amount
+    blank (falls back to qty x selling_price), void excluded, [SVQ]
+    excluded, and the payment_method/station filters."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Window Revenue Agg Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='wrag_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='WRAG-01', selling_price=Decimal('250'),
+        )
+
+    def test_sums_explicit_sale_amount(self):
+        from core.shift_views import _window_revenue
+        start = timezone.now() - timedelta(hours=1)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'),
+            payment_method='cash',
+        )
+        end = timezone.now() + timedelta(hours=1)
+        self.assertEqual(_window_revenue(self.biz, is_kitchen=False, start=start, end=end), 300.0)
+
+    def test_falls_back_to_qty_times_selling_price_when_sale_amount_blank(self):
+        from core.shift_views import _window_revenue
+        start = timezone.now() - timedelta(hours=1)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), sale_amount=None,
+            payment_method='mpesa',
+        )
+        end = timezone.now() + timedelta(hours=1)
+        # 2 x 250 = 500
+        self.assertEqual(_window_revenue(self.biz, is_kitchen=False, start=start, end=end), 500.0)
+
+    def test_excludes_void_and_svq(self):
+        from core.shift_views import _window_revenue
+        start = timezone.now() - timedelta(hours=1)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'), payment_method='void',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('400'), payment_method='cash',
+            invoice_no='[SVQ]',
+        )
+        end = timezone.now() + timedelta(hours=1)
+        self.assertEqual(_window_revenue(self.biz, is_kitchen=False, start=start, end=end), 0.0)
+
+    def test_station_scoping(self):
+        from core.shift_views import _window_revenue
+        kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='Chipo',
+            material_no='WRAG-02', selling_price=Decimal('100'),
+        )
+        start = timezone.now() - timedelta(hours=1)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='cash',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        end = timezone.now() + timedelta(hours=1)
+        self.assertEqual(_window_revenue(self.biz, is_kitchen=False, start=start, end=end), 250.0)
+        self.assertEqual(_window_revenue(self.biz, is_kitchen=True, start=start, end=end), 100.0)
+
+    def test_owner_facilitated_subset(self):
+        from core.shift_views import _window_revenue_owner_facilitated
+        staff = User.objects.create_user(username='wrag_staff', password='x')
+        UserProfile.objects.create(user=staff, business=self.biz, role='staff')
+        start = timezone.now() - timedelta(hours=1)
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='cash',
+            recorded_by=self.owner,
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('250'), payment_method='cash',
+            recorded_by=staff,
+        )
+        end = timezone.now() + timedelta(hours=1)
+        # Owner-facilitated subset only counts the owner's own sale (250),
+        # never the staff member's (never doubles the full 500 total).
+        self.assertEqual(
+            _window_revenue_owner_facilitated(self.biz, is_kitchen=False, start=start, end=end), 250.0,
+        )
+
+    def test_no_owner_on_business_returns_zero(self):
+        from core.shift_views import _window_revenue_owner_facilitated
+        biz2 = Business.objects.create(name='No Owner Biz')
+        start = timezone.now() - timedelta(hours=1)
+        end = timezone.now() + timedelta(hours=1)
+        self.assertEqual(
+            _window_revenue_owner_facilitated(biz2, is_kitchen=False, start=start, end=end), 0,
+        )

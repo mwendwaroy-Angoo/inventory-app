@@ -1659,6 +1659,109 @@ class Transaction(models.Model):
             return all_ids
 
     @classmethod
+    def split_quantity_locked(cls, txn_id, business, qty_to_split, staff_user=None):
+        """Split OFF a specific PHYSICAL QUANTITY from a still-credit
+        transaction into its own new sibling transaction.
+
+        2026-08-28 live request (Roy, with a debt-tracker screenshot): a
+        single Transaction consolidating several identical units into one
+        line ("Kc smooth 250ml — KES 800" = 2 units at 400 each) had no way
+        to write off/erase just ONE unit as a mistake — the Futa flow
+        always acted on the WHOLE line's qty/amount together. This is the
+        model-layer primitive `request_write_off()` (core/debt_views.py)
+        now calls first when the staffer picks fewer than the full quantity
+        in the write-off modal's new "1 item / more / all" step.
+
+        Deliberately DIFFERENT from split_payment_method_locked/
+        split_to_credit_locked (both payment-channel corrections for an
+        ALREADY fully-sold item — qty=0 on the sibling, since no additional
+        stock moves): this is a genuine QUANTITY split. Both `qty` AND
+        `sale_amount` divide proportionally between the original (reduced)
+        transaction and the new sibling, so a subsequent "Ilikuwa Kosa"
+        erase against just the sibling restores exactly the right amount of
+        stock (via _reverse_stock_movement_envelope's normal qty-based
+        logic), while the original keeps the REMAINING quantity/amount
+        exactly as owed as before — the two rows' revenue always sums back
+        to the original transaction's own revenue(), so this can never
+        inflate or deflate what the customer owes in total, only change
+        which specific line(s) represent it.
+
+        Restricted to a still-'credit', non-tab-linked (tab_entry is None
+        — a tab's own entry.amount/is_paid governs a tab-linked line, not
+        this field directly, so splitting the underlying Transaction alone
+        would desync them) Issue transaction with a genuine WHOLE-NUMBER
+        quantity of at least 2 — "how many discrete items" doesn't apply to
+        a fractional preset sale (e.g. a quarter-bottle pour), and a
+        single-unit line has nothing to split in the first place.
+
+        Known, documented limitation: operates on the transaction's own
+        full qty/revenue regardless of whether part of it has already been
+        paid off via the (amount-based, not per-transaction-tracked) FIFO
+        walk in _get_customer_debt_data() — the split is always sum-
+        preserving so the TOTAL owed is never wrong either way, but which
+        specific new row a payment appears to have covered can shift. Not
+        a concern for the reported use case (an entirely still-unpaid
+        multi-unit line), and out of scope to fully solve here.
+
+        Returns (original_txn, new_txn) — original_txn keeps
+        payment_method='credit' (or whatever it already was) and its
+        reduced qty/amount; new_txn is the split-off portion, identically
+        tagged (same recipient/date/created_at/envelope FKs), linked via
+        split_from for the same lineage tracking every other split in this
+        app already uses.
+        """
+        from django.db import transaction as _txn
+        with _txn.atomic():
+            txn = cls.objects.select_for_update().get(pk=txn_id, business=business)
+            try:
+                has_tab_entry = txn.tab_entry is not None
+            except Exception:
+                has_tab_entry = False
+            if txn.type != 'Issue' or has_tab_entry:
+                raise ValueError('Muamala huu hauwezi kugawanywa kwa idadi — si deni la moja kwa moja.')
+            if txn.payment_method != 'credit':
+                raise ValueError('Kiingilio hiki si deni linalosubiri malipo.')
+
+            full_qty = abs(txn.qty)
+            if full_qty != full_qty.to_integral_value() or full_qty < 2:
+                raise ValueError('Kiingilio hiki hakina vitengo vingi vya kugawanya.')
+
+            try:
+                qty_to_split = Decimal(str(qty_to_split))
+            except Exception:
+                raise ValueError('Idadi si sahihi.')
+            if qty_to_split != qty_to_split.to_integral_value() or qty_to_split <= 0 or qty_to_split >= full_qty:
+                raise ValueError('Idadi lazima iwe nambari kamili kati ya 1 na jumla ya vitengo.')
+
+            original_revenue = Decimal(str(txn.revenue()))
+            # Proportional, penny-accurate: split_share + remaining_share
+            # always equals original_revenue exactly (no rounding leakage).
+            split_share = (original_revenue * qty_to_split / full_qty).quantize(Decimal('0.01'))
+            remaining_share = original_revenue - split_share
+
+            qty_sign = Decimal('-1') if txn.qty < 0 else Decimal('1')
+            txn.qty = qty_sign * (full_qty - qty_to_split)
+            txn.sale_amount = remaining_share
+            txn.save(update_fields=['qty', 'sale_amount'])
+
+            new_txn = cls.objects.create(
+                item=txn.item, business=txn.business, type='Issue',
+                qty=qty_sign * qty_to_split,
+                sale_amount=split_share,
+                payment_method=txn.payment_method,
+                recipient=txn.recipient,
+                invoice_no=txn.invoice_no,
+                recorded_by=staff_user or txn.recorded_by,
+                date=txn.date,
+                created_at=txn.created_at,
+                keg_barrel_id=txn.keg_barrel_id,
+                produce_bunch_id=txn.produce_bunch_id,
+                kitchen_batch_id=txn.kitchen_batch_id,
+                split_from=txn,
+            )
+            return txn, new_txn
+
+    @classmethod
     def split_to_credit_locked(cls, txn_id, business, split_amount, recipient, staff_user=None):
         """UBA P0-A — boundary-split sibling of split_payment_method_locked(),
         for a direct sale's UNPAID remainder becoming credit rather than a

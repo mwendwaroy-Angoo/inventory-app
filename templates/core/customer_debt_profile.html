@@ -626,7 +626,7 @@
                             ✂️🏠 {% trans 'Sehemu' %}
                         </button>
                         {% endif %}
-                        <button onclick="openWriteOffModal({{ entry.txn.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
+                        <button onclick="openWriteOffModal({{ entry.txn.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }}, {{ entry.txn.qty }}, {{ entry.tab_entry_id|default:'null' }})"
                             style="background:rgba(192,57,90,0.06);border:1px solid rgba(192,57,90,0.25);border-radius:6px;
                                    color:#c0395a;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;">
                             📝 {% if is_owner %}Futa / Omba{% else %}Omba Kufutwa{% endif %}
@@ -807,6 +807,25 @@ function revertDebtPayment(paymentId, amount) {
                 {% endif %}
                 <form id="woForm">
                     <input type="hidden" id="woTxnId" name="txn_id">
+                    <!-- 2026-08-28 live request (Roy, debt-tracker screenshot): a line
+                         consolidating several identical units into one Transaction
+                         (e.g. "Kc smooth 250ml — KES 800" = 2 units at 400 each) had no
+                         way to Futa just ONE unit — the whole line always went together.
+                         Only shown when the transaction has a genuine whole-number
+                         quantity >= 2 and isn't tab-linked (see openWriteOffModal). -->
+                    <div class="mb-3" id="woQtySection" style="display:none; background:rgba(201,168,76,0.05); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:0.65rem 0.8rem;">
+                        <label style="font-size:0.8rem; color:#b0b0b0; display:block; margin-bottom:0.4rem;">
+                            Kiingilio hiki kina <span id="woFullQty" style="color:#fbbf24; font-weight:700;"></span> vitengo
+                            (KES <span id="woUnitPrice" style="color:#fbbf24; font-weight:700;"></span> kila kimoja).
+                            Unataka kufuta vitengo vingapi?
+                        </label>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <button type="button" onclick="_woSetQty(1)" class="btn btn-sm" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#f0ece4; font-size:0.76rem;">1 tu</button>
+                            <input type="number" id="woQtyInput" min="1" step="1" style="width:90px; background:#111; border:1px solid rgba(255,255,255,0.12); border-radius:8px; color:#f0ece4; padding:0.4rem 0.6rem; font-size:0.85rem;">
+                            <button type="button" id="woQtyAllBtn" onclick="_woSetQtyAll()" class="btn btn-sm" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#f0ece4; font-size:0.76rem;">Vyote</button>
+                        </div>
+                        <div id="woQtyAmountPreview" style="font-size:0.76rem; color:#888; margin-top:0.35rem;"></div>
+                    </div>
                     <!-- 2026-07-31 — "when an item is out on a running tab or debt
                          section... when the item is erased the system should append
                          the balances accordingly." A real Write-off means the goods
@@ -1352,16 +1371,73 @@ window.unlinkCustomerAsOwner = function (customerId, btn) {
         .catch(function () { alert('Hitilafu ya mtandao'); btn.disabled = false; });
 };
 
-function openWriteOffModal(txnId, itemName, amount) {
+var _woFullQty = null;      // whole-unit count for the current line, or null when not applicable
+var _woFullAmount = null;   // the line's full outstanding amount (KES)
+
+function openWriteOffModal(txnId, itemName, amount, qty, tabEntryId) {
     document.getElementById('woTxnId').value   = txnId;
     document.getElementById('woItemName').textContent = itemName + ' — KES ' + parseFloat(amount).toLocaleString('en-KE', {maximumFractionDigits:0});
     document.getElementById('woReason').value  = '';
     document.getElementById('woIsMistake').checked = false;
     document.getElementById('woError').textContent = '';
     _woUpdateMistakeHint();
+
+    // 2026-08-28 live request (Roy): "if it is 800 it means two ... the
+    // system in such instances asks whether you are deleting one item or
+    // more or all." Only offered for a genuine whole-number multi-unit,
+    // non-tab-linked line — a fractional preset sale or a tab-linked entry
+    // (governed by its own BarTabEntry, not this field directly) keeps the
+    // original single-step "erase the whole line" flow unchanged.
+    var absQty = Math.abs(parseFloat(qty));
+    var eligible = !tabEntryId && Number.isFinite(absQty) && absQty >= 2 && Number.isInteger(absQty);
+    var qtySection = document.getElementById('woQtySection');
+    if (eligible) {
+        _woFullQty = absQty;
+        _woFullAmount = parseFloat(amount);
+        document.getElementById('woFullQty').textContent = absQty;
+        document.getElementById('woUnitPrice').textContent = (_woFullAmount / absQty).toLocaleString('en-KE', {maximumFractionDigits:2});
+        var input = document.getElementById('woQtyInput');
+        input.max = absQty;
+        input.value = absQty;  // defaults to "all" — same effective behaviour as before this feature
+        _woUpdateQtyPreview();
+        qtySection.style.display = 'block';
+    } else {
+        _woFullQty = null; _woFullAmount = null;
+        qtySection.style.display = 'none';
+    }
+
     var modal = new bootstrap.Modal(document.getElementById('writeOffModal'));
     modal.show();
 }
+
+function _woSetQty(n) {
+    document.getElementById('woQtyInput').value = n;
+    _woUpdateQtyPreview();
+}
+function _woSetQtyAll() {
+    if (_woFullQty) document.getElementById('woQtyInput').value = _woFullQty;
+    _woUpdateQtyPreview();
+}
+function _woUpdateQtyPreview() {
+    if (!_woFullQty) return;
+    var n = parseInt(document.getElementById('woQtyInput').value, 10) || 0;
+    var preview = document.getElementById('woQtyAmountPreview');
+    if (n <= 0 || n > _woFullQty) {
+        preview.textContent = 'Weka nambari kati ya 1 na ' + _woFullQty + '.';
+        return;
+    }
+    var portion = (_woFullAmount * n / _woFullQty);
+    if (n === _woFullQty) {
+        preview.textContent = 'Kiingilio chote (KES ' + portion.toLocaleString('en-KE', {maximumFractionDigits:0}) + ') kitafutwa.';
+    } else {
+        preview.textContent = 'KES ' + portion.toLocaleString('en-KE', {maximumFractionDigits:0}) + ' itafutwa — KES ' +
+            (_woFullAmount - portion).toLocaleString('en-KE', {maximumFractionDigits:0}) + ' itaendelea kudaiwa.';
+    }
+}
+document.addEventListener('DOMContentLoaded', function() {
+    var qtyInput = document.getElementById('woQtyInput');
+    if (qtyInput) qtyInput.addEventListener('input', _woUpdateQtyPreview);
+});
 
 /* ── Debt item / whole-tab transfer (2026-08-11 live request) ────────────
    "A way for staff to transfer both single items and whole tabs for one
@@ -1498,6 +1574,18 @@ document.addEventListener('DOMContentLoaded', function() {
         var reason = document.getElementById('woReason').value.trim();
         var isMistake = document.getElementById('woIsMistake').checked;
         if (!reason) { document.getElementById('woError').textContent = 'Andika sababu kwanza.'; return; }
+        // 2026-08-28: only sent when this line offered a quantity choice
+        // AND the staffer picked fewer than the full amount — an untouched
+        // (or "Vyote") pick behaves exactly like before this feature.
+        var qtyToErase = '';
+        if (_woFullQty) {
+            var n = parseInt(document.getElementById('woQtyInput').value, 10) || 0;
+            if (n <= 0 || n > _woFullQty) {
+                document.getElementById('woError').textContent = 'Weka idadi sahihi ya vitengo vya kufuta.';
+                return;
+            }
+            if (n < _woFullQty) qtyToErase = n;
+        }
         _woSubmitted = true;
         var btn = document.getElementById('woSubmitBtn');
         btn.disabled = true; btn.textContent = '⏳ Inatumwa...';
@@ -1505,7 +1593,8 @@ document.addEventListener('DOMContentLoaded', function() {
             method: 'POST',
             headers: {'X-CSRFToken': _woCsrf(), 'Content-Type': 'application/x-www-form-urlencoded'},
             body: 'csrfmiddlewaretoken=' + encodeURIComponent(_woCsrf()) + '&reason=' + encodeURIComponent(reason)
-                + '&is_mistake=' + (isMistake ? '1' : '0'),
+                + '&is_mistake=' + (isMistake ? '1' : '0')
+                + (qtyToErase !== '' ? '&qty_to_erase=' + qtyToErase : ''),
         })
         .then(function(r) { return r.json(); })
         .then(function(d) {

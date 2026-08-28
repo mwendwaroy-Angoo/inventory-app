@@ -285,16 +285,23 @@ def home(request):
             business = user_profile.business
 
             # UBA §M0-5 — additive dashboard tile registry (core/dashboard_tiles.py).
-            # home.html does not read this key yet; computed here so it's available
-            # once a future sprint rewires the template to consume it. Never lets a
-            # tile-builder error break the rest of the dashboard.
-            try:
-                from .business_profiles import get_profile as _get_profile_tiles
-                from .dashboard_tiles import build_tiles as _build_uba_tiles
-                _capability = _get_profile_tiles(business).get('capability')
-                context['uba_dashboard_tiles'] = _build_uba_tiles(business, user_profile, _capability)
-            except Exception:
-                context['uba_dashboard_tiles'] = []
+            # home.html does not read this key yet, so it's kept present as an
+            # empty list (satisfying the registry's own M0-AC1 "complete no-op"
+            # contract) rather than actually computed.
+            #
+            # 2026-08-28 live report (Roy: "the system is slow when
+            # navigating... to home"): this used to eagerly call
+            # build_tiles() on EVERY home() load — for a keg-module
+            # business, its one registered example tile
+            # (dashboard_tiles._keg_variance_tile) runs the real
+            # keg_metrics.staff_shrinkage() report just to throw the result
+            # away unread, since home.html never consumes this key yet (per
+            # the module's own docstring — "left as a dedicated follow-up
+            # once there is a way to visually confirm home.html renders
+            # unchanged"). Re-enable the real build_tiles() call here the
+            # same sprint home.html is actually rewired to read this key —
+            # until then, paying for tiles nothing displays is pure waste.
+            context['uba_dashboard_tiles'] = []
 
             # Station scoping — determine what this staff member can see
             show_bar, show_kitchen = _station_scope(user_profile)
@@ -406,11 +413,6 @@ def home(request):
                 from datetime import date as _date, timedelta as _td
                 _today = _date.today()
                 _soon  = _today + _td(days=7)
-                _exp_qs = Transaction.objects.filter(
-                    business=business,
-                    type='Receipt',
-                    expiry_date__isnull=False,
-                ).values('item_id').distinct()
                 _expired_ids  = Transaction.objects.filter(
                     business=business, type='Receipt',
                     expiry_date__lt=_today,
@@ -731,6 +733,25 @@ def home(request):
             try:
                 from core.models import RevenueTarget, Store as _Store
                 from datetime import date as _date
+                # 2026-08-28 live report (Roy: "the system is slow when
+                # navigating... to home"): _period_rev() used to fetch EVERY
+                # matching Issue transaction for the given period (daily,
+                # weekly, AND monthly — called 3x on every single home()
+                # load, for every authenticated user, no owner/manager gate)
+                # and sum revenue() in Python — for a business with real
+                # sales volume, the monthly call alone could materialize
+                # thousands of rows just to add them up. A real DB-side
+                # aggregate (the same Case/When formula Transaction.
+                # revenue() itself uses, already proven correct by
+                # till_expected_cash()'s own identical pattern) produces the
+                # exact same number without ever fetching a row into Python.
+                from django.db.models import Case as _Case, When as _When, F as _F, Value as _Value, DecimalField as _DecimalField
+                from django.db.models.functions import Abs as _Abs, Coalesce as _Coalesce
+                _rev_expr = _Case(
+                    _When(sale_amount__isnull=False, then=_F('sale_amount')),
+                    default=_Abs(_F('qty')) * _Coalesce(_F('item__selling_price'), _Value(0)),
+                    output_field=_DecimalField(max_digits=12, decimal_places=2),
+                )
                 _today = _date.today()
                 _week_start = _today - timedelta(days=_today.weekday())
                 _month_start = _today.replace(day=1)
@@ -739,7 +760,7 @@ def home(request):
                     txns = Transaction.objects.filter(
                         business=business, type='Issue',
                         date__gte=start, date__lte=end,
-                    ).exclude(payment_method='void').select_related('item')
+                    ).exclude(payment_method='void')
                     # Scope revenue to the staff member's station
                     if show_kitchen and not show_bar:
                         txns = txns.filter(item__store__is_kitchen=True)
@@ -754,7 +775,7 @@ def home(request):
                         # tracking, so this revenue correctly still counts there —
                         # it's real money, just discovered late.
                         txns = txns.exclude(invoice_no='[SVQ]')
-                    return sum(t.revenue() for t in txns)
+                    return float(txns.aggregate(t=Sum(_rev_expr))['t'] or 0)
 
                 def _get_target(ttype):
                     # Kitchen-only staff: prefer per-store kitchen target
