@@ -53,12 +53,19 @@ class BarrelVariance:
     scale_l: Optional[float]          # None when no weight reading exists
     variance_l: Optional[float]       # scale_l - book_l ; None without weight
     wastage_l: Optional[float]        # None for TAPPED barrels with no weight
-    wastage_kes: Optional[float]
+    wastage_kes: Optional[float]      # COST-basis loss (wastage_l valued at barrel.cost_price)
     wastage_pct: Optional[float]
     has_weight: bool
     cups: int = 0
     pints: int = 0
     jugs: int = 0
+    # REVENUE-basis theft estimate — signed KES value of variance_l valued at the
+    # item's real cup/pint/jug selling price (Item.keg_expected_revenue_per_ml()),
+    # not cost. Always >= wastage_kes for a positive variance, since selling price
+    # exceeds cost by the markup — this is "what a thief pocketed", wastage_kes is
+    # "what the business lost in cost of goods". None when no weight reading exists
+    # or the item has no portion presets configured to estimate a rate from.
+    theft_kes: Optional[float] = None
 
 
 @dataclass
@@ -82,6 +89,11 @@ class ShiftBarrelVariance:
     pints: int = 0
     jugs: int = 0
     has_weight: bool = False
+    # Same REVENUE-basis theft estimate as BarrelVariance.theft_kes, but scoped to
+    # this one (shift × barrel) window's own variance_ml — signed, in KES, valued
+    # at the item's real cup/pint/jug selling price. None without a weight bracket
+    # or without any presets configured on the item.
+    theft_kes: Optional[float] = None
 
 
 @dataclass
@@ -91,8 +103,12 @@ class StaffShrinkage:
     staff_name: str
     shifts_worked: int = 0
     book_revenue_kes: float = 0.0     # throughput this staff recorded (denominator)
-    loss_kes: float = 0.0             # sum of POSITIVE per-window keg losses
+    loss_kes: float = 0.0             # sum of POSITIVE per-window keg losses (COST basis)
     net_variance_kes: float = 0.0     # signed sum (loss minus any overcount), for transparency
+    theft_kes: float = 0.0            # sum of POSITIVE per-window keg theft (REVENUE basis —
+                                       # cup/pint/jug selling price, not cost; see keg_metrics
+                                       # module docstring / ShiftBarrelVariance.theft_kes)
+    net_theft_kes: float = 0.0        # signed sum, for transparency (mirrors net_variance_kes)
     windows_with_weight: int = 0      # how many (shift×barrel) windows had a usable weigh-in
     windows_total: int = 0
     bottle_loss_kes: float = 0.0      # F5: spirits/bottle revenue variance from ShiftStockCount
@@ -164,6 +180,12 @@ def barrel_variance(barrel) -> BarrelVariance:
     wastage_kes = (wastage_l / net_vol_l * cost) if (wastage_l is not None and net_vol_l > 0) else None
     wastage_pct = (wastage_l / net_vol_l * 100.0) if (wastage_l is not None and net_vol_l > 0) else None
 
+    theft_rate_per_ml = float(barrel.item.keg_expected_revenue_per_ml())
+    theft_kes = (
+        round(variance_ml * theft_rate_per_ml, 2)
+        if (variance_ml is not None and theft_rate_per_ml) else None
+    )
+
     return BarrelVariance(
         barrel_id=barrel.id, cost=cost, revenue=revenue, target=target,
         net_vol_l=net_vol_l, book_l=book_ml / 1000.0,
@@ -173,6 +195,7 @@ def barrel_variance(barrel) -> BarrelVariance:
         has_weight=has_weight,
         cups=barrel.cups_dispensed or 0, pints=barrel.pints_dispensed or 0,
         jugs=barrel.jugs_dispensed or 0,
+        theft_kes=theft_kes,
     )
 
 
@@ -262,6 +285,17 @@ def shift_barrel_variance(shift, barrel, readings=None, barrel_txns=None) -> Opt
     wastage_l   = (variance_ml / 1000.0) if variance_ml is not None else None
     wastage_kes = (wastage_l / net_vol_l * cost) if (wastage_l is not None and net_vol_l > 0) else None
 
+    # 2026-08-29 (Roy, live theft investigation): the owner needs this window's
+    # variance in REVENUE terms — "expected sales according to the weight that is
+    # missing minus the recorded sales... according to how the business sells
+    # their cups" — not the COST-basis wastage_kes above, which understates what
+    # a thief actually pocketed (selling price, not cost of goods).
+    theft_rate_per_ml = float(barrel.item.keg_expected_revenue_per_ml())
+    theft_kes = (
+        round(variance_ml * theft_rate_per_ml, 2)
+        if (variance_ml is not None and theft_rate_per_ml) else None
+    )
+
     return ShiftBarrelVariance(
         shift_id=shift.id, barrel_id=barrel.id,
         staff_id=getattr(shift.staff, 'id', None),
@@ -270,6 +304,7 @@ def shift_barrel_variance(shift, barrel, readings=None, barrel_txns=None) -> Opt
         book_ml=book_ml, scale_ml=scale_ml, variance_ml=variance_ml,
         wastage_l=wastage_l, wastage_kes=wastage_kes, revenue=revenue,
         cups=cups, pints=pints, jugs=jugs, has_weight=has_weight,
+        theft_kes=theft_kes,
     )
 
 
@@ -336,6 +371,10 @@ def staff_shrinkage(business, date_from: date_type, date_to: date_type) -> list[
                 row.net_variance_kes += sv.wastage_kes
                 if sv.wastage_kes > 0:
                     row.loss_kes += sv.wastage_kes
+            if sv.has_weight and sv.theft_kes is not None:
+                row.net_theft_kes += sv.theft_kes
+                if sv.theft_kes > 0:
+                    row.theft_kes += sv.theft_kes
 
     # F5 — bottle/spirits loss from ShiftStockCount for bottle_envelope items
     bottle_counts = list(

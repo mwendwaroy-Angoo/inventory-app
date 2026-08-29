@@ -792,6 +792,31 @@ class Item(models.Model):
         avg_price = float(sum(preset_prices)) / len(preset_prices) if preset_prices else float(self.selling_price or 0)
         return round(tpu * avg_price, 2)
 
+    def keg_expected_revenue_per_ml(self):
+        """KES expected per ml poured for a keg item — the missing half of the
+        book-vs-scale variance math (2026-08-29 live request, Roy: a counter
+        staffer is suspected of pocketing keg sales; the keg theft figure
+        shown to the owner must be "revenue expected based on the weight sold
+        and according to how the business sells their cups", not the item's
+        cost). Mirrors bottle_expected_revenue_per_unit()'s own established
+        convention exactly — an average of this item's configured cup/pint/
+        jug portion-preset prices (price ÷ quantity_consumed, each already
+        stored in ml), not a target_revenue heuristic (KegBarrel.target_
+        revenue is often just cost × a rough multiplier, calibrated for the
+        barrel's own sales-goal tracking, not a precise theft-detection rate)
+        and not a reconstructed book-sales rate (which would understate a
+        genuinely mixed cup/pint/jug shift). Returns 0.0 when no presets are
+        configured — nothing to estimate a theft figure from."""
+        rates = []
+        for p in self.portion_presets.filter(quantity_consumed__gt=0):
+            try:
+                qty_ml = float(p.quantity_consumed)
+                if qty_ml > 0:
+                    rates.append(float(p.price) / qty_ml)
+            except (TypeError, ValueError):
+                continue
+        return sum(rates) / len(rates) if rates else 0.0
+
     def default_bunch_target(self, cost):
         """Suggested envelope for a freshly received bunch: cost × multiplier."""
         try:

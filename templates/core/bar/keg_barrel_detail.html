@@ -167,6 +167,14 @@
             <span class="info-val" style="color:#ffb74d; font-weight:600;">KES {{ total_wastage_kes|floatformat:0 }}</span>
         </div>
         {% endif %}
+        {% if total_theft_kes is not None and total_theft_kes > 0 %}
+        <div class="info-row">
+            <span class="info-label" title="Priced at this item's real cup/pint/jug selling price, not cost — what should have been collected for the unaccounted volume and wasn't.">
+                Est. theft (revenue, not cost)
+            </span>
+            <span class="info-val" style="color:#c0395a; font-weight:700;">KES {{ total_theft_kes|floatformat:0 }}</span>
+        </div>
+        {% endif %}
         {% if baseline.is_learned and baseline_vs is not None %}
         <div class="info-row">
             <span class="info-label">vs Learned baseline</span>
@@ -368,6 +376,7 @@
                 <th style="text-align:right;">Scale (L)</th>
                 <th style="text-align:right;">Wastage (L)</th>
                 <th style="text-align:right;">Waste Cost</th>
+                <th style="text-align:right;" title="Priced at real cup/pint/jug selling price, not cost — what should have been collected and wasn't.">Est. Theft (Revenue)</th>
             </tr>
         </thead>
         <tbody>
@@ -411,6 +420,15 @@
                         <span style="color:#555;">—</span>
                     {% endif %}
                 </td>
+                <td style="text-align:right;">
+                    {% if s.theft_kes is not None and s.theft_kes > 0 %}
+                        <span style="color:#c0395a; font-weight:700; font-size:0.85rem;">{{ s.theft_kes|floatformat:0 }}</span>
+                    {% elif s.theft_kes is not None %}
+                        <span style="color:#555; font-size:0.85rem;">0</span>
+                    {% else %}
+                        <span style="color:#555;">—</span>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>
@@ -420,6 +438,10 @@
         Scale (L) column requires weight readings taken at shift changes (weigh-in).
         "—" means no weight reading brackets that shift window.
         Wastage (L) = Scale dispensed − Book sold for that shift.
+        Waste Cost values the missing volume at this item's cost price.
+        Est. Theft (Revenue) values the SAME missing volume at the item's real
+        cup/pint/jug selling price instead — what should have been collected and
+        wasn't, i.e. the estimated illicit gain, always ≥ Waste Cost.
     </div>
     {% else %}
     <p style="color:#555; font-size:0.85rem; text-align:center; padding:1.5rem; margin:0;">

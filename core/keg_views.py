@@ -1169,9 +1169,18 @@ def _fire_owner_alert_msg(business, title, msg, link_url=''):
 
 # ── Weigh / spot-check ────────────────────────────────────────────────────────
 
-def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pct, barrel_id=None):
+def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pct, barrel_id=None,
+                     theft_kes=None):
     """Notify all owners/managers of a dangerous keg variance (in-app + SMS, respects
-    bundling window)."""
+    bundling window).
+
+    theft_kes (2026-08-29, Roy live theft investigation): optional REVENUE-basis
+    figure — what the missing weight would have sold for at the business's real
+    cup/pint/jug prices, minus what was actually recorded (see keg_metrics.py's
+    theft_kes fields). variance_kes stays whatever basis the caller already used
+    (target-revenue-rate in weigh_barrel(), cost-basis in the SHIFT_CLOSE caller)
+    so this is purely additive — appended to the alert text when provided, never
+    replacing the existing headline figure."""
     from accounts.models import UserProfile
     from .models import Notification
     from .notifications import normalize_ke_phone, send_sms_notification, send_sms_notification_async
@@ -1180,6 +1189,8 @@ def _fire_keg_alert(business, barrel_name, staff_name, variance_kes, variance_pc
         f"⚠️ {barrel_name}: variance {variance_pct:.0f}%"
         f" ({variance_kes:+.0f} KES). Staff: {staff_name}. Kagua mara moja."
     )
+    if theft_kes is not None and theft_kes > 0:
+        msg += f" Hasara inayokadiriwa kwa bei ya kuuza (wizi unaowezekana): KES {theft_kes:,.0f}."
     now = timezone.now()
     can_sms = (
         not business.last_txn_sms_at or
@@ -1270,6 +1281,24 @@ def weigh_barrel(request, barrel_id):
     expected_rev = dispensed_l * rate
     recorded_rev = float(barrel.revenue_collected)
     variance_kes = expected_rev - recorded_rev
+
+    # 2026-08-29 (Roy, live theft investigation): variance_kes/expected_rev above
+    # are priced off barrel.target_revenue — a sales GOAL for the barrel (often
+    # just cost × a rough multiplier, receive_barrel()'s own fallback), not a
+    # precise selling-price rate. For "the keg theft should be displayed to the
+    # business owner in terms of revenue expected based on the weight sold and
+    # according to how the business sells their cups", price the SAME missing
+    # weight at the item's real, configured cup/pint/jug prices instead
+    # (Item.keg_expected_revenue_per_ml() — the same averaged-preset-price
+    # convention already used for spirits' bottle_expected_revenue_per_unit()).
+    # recorded_rev stays the ACTUAL recorded revenue (exact, not reconstructed
+    # from a rate) — only the "what should this weight have earned" side changes.
+    theft_rate_per_ml = float(barrel.item.keg_expected_revenue_per_ml())
+    expected_rev_cup_based = dispensed_l * 1000.0 * theft_rate_per_ml if theft_rate_per_ml else None
+    theft_kes = (
+        round(expected_rev_cup_based - recorded_rev, 0)
+        if expected_rev_cup_based is not None else None
+    )
     variance_pct = abs(variance_kes) / expected_rev * 100 if expected_rev > 0 else 0.0
 
     tolerance = float(barrel.business.keg_variance_tolerance_pct)
@@ -1301,7 +1330,8 @@ def weigh_barrel(request, barrel_id):
             staff_name = request.user.get_full_name() or request.user.username
         try:
             _fire_keg_alert(barrel.business, barrel.item.description, staff_name,
-                            variance_kes, variance_pct, barrel_id=barrel.id)
+                            variance_kes, variance_pct, barrel_id=barrel.id,
+                            theft_kes=theft_kes)
         except Exception:
             pass
 
@@ -1340,6 +1370,15 @@ def weigh_barrel(request, barrel_id):
         'flag':               flag,
         'weight_kg':          float(weight_kg),
         'remaining_envelope': round(barrel.remaining_envelope(), 0),
+        # 2026-08-29 — the theft-detection figure, priced at the item's real
+        # cup/pint/jug selling price rather than the target-revenue rate above.
+        # Always returned (regardless of the danger-flag alert threshold) so the
+        # weigh-in modal can show it immediately every time, not just on a flagged
+        # reading. None only when the item has no portion presets configured.
+        'expected_rev_cup_based': (
+            round(expected_rev_cup_based, 0) if expected_rev_cup_based is not None else None
+        ),
+        'theft_kes': theft_kes,
     })
 
 
@@ -4961,6 +5000,7 @@ def keg_barrel_detail(request, barrel_id):
             'scale_l':     sv.scale_ml / 1000.0 if sv.scale_ml is not None else None,
             'wastage_l':   sv.wastage_l,
             'wastage_kes': sv.wastage_kes,
+            'theft_kes':   sv.theft_kes,
             'has_weight':  sv.has_weight,
         })
 
@@ -4969,6 +5009,7 @@ def keg_barrel_detail(request, barrel_id):
     total_wastage_l   = bv_total.wastage_l
     total_wastage_kes = bv_total.wastage_kes
     total_wastage_pct = bv_total.wastage_pct
+    total_theft_kes   = bv_total.theft_kes
 
     profit = revenue - cost
     margin = (profit / cost * 100) if cost else 0.0
@@ -4999,6 +5040,7 @@ def keg_barrel_detail(request, barrel_id):
         'total_wastage_l':            total_wastage_l,
         'total_wastage_kes':          total_wastage_kes,
         'total_wastage_pct':          total_wastage_pct,
+        'total_theft_kes':            total_theft_kes,
         'shift_rows':                 shift_rows,
         'readings':                   readings,
         'cups':                       barrel.cups_dispensed or 0,

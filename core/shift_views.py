@@ -2243,6 +2243,7 @@ def close_shift(request, shift_id):
                                 bv.wastage_kes or 0.0,
                                 bv.wastage_pct,
                                 barrel_id=barrel.id,
+                                theft_kes=bv.theft_kes,
                             )
                             # UBA M3 §5.3 — feed this into the Maduka Yangu
                             # exception feed too. _fire_keg_alert() above stays

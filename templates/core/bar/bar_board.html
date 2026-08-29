@@ -2848,6 +2848,12 @@
           '<div style="color:#f0ece4; margin-bottom:4px;"><strong>Vitabu:</strong> KES ' + fmt(d.recorded_rev) + '</div>' +
           '<div class="' + fc + '" style="font-weight:700; font-size:1rem;">' +
           'Tofauti: ' + varSign + 'KES ' + fmt(d.variance_kes) + ' (' + d.variance_pct + '%) ' + icon + '</div>' +
+          (d.theft_kes !== null && d.theft_kes > 0 ?
+            '<div style="background:rgba(192,57,90,.12); border:1px solid var(--raspberry); border-radius:6px; padding:6px 8px; margin-top:8px;">' +
+            '<div style="color:var(--raspberry); font-weight:700; font-size:0.95rem;">🚨 Hasara ya wizi (kwa bei ya kuuza): KES ' + fmt(d.theft_kes) + '</div>' +
+            '<div style="color:#b0b0b0; font-size:0.72rem; margin-top:2px;">Kiasi kilichopotea kingeuza KES ' + fmt(d.expected_rev_cup_based) +
+            ' kama kingeuzwa kwa bei za kawaida za vikombe/pint/jug — si gharama ya ununuzi.</div></div>'
+            : '') +
           '<div style="color:#b0b0b0; font-size:0.78rem; margin-top:6px;">Envelope iliyobaki: KES ' +
           fmt(d.remaining_envelope) + '</div></div>';
         loadBarBoard();

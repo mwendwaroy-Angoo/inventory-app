@@ -72,6 +72,11 @@
     <span class="partial-badge">partially measured</span> should be read with caution.
     Loss % is calculated as <em>total KES loss ÷ total KES throughput</em> (not an average of per-barrel
     percentages, which would distort results across barrels with different costs).
+    <strong style="color:var(--gold-light)">Keg Loss</strong> values the missing volume at cost price
+    (what the business spent on it). <strong style="color:var(--gold-light)">Est. Keg Theft (Revenue)</strong>
+    values the SAME missing volume at the item's real cup/pint/jug selling price instead — what should
+    have been collected and wasn't, i.e. the estimated illicit gain. It will always be higher than Keg
+    Loss for the same shortfall.
   </div>
 
   {% if leaderboard %}
@@ -83,6 +88,7 @@
           <th>Shifts</th>
           <th>Book Revenue</th>
           <th>Keg Loss</th>
+          <th title="Priced at real cup/pint/jug selling price, not cost — what should have been collected and wasn't.">Est. Keg Theft (Revenue)</th>
           <th>Bottle/Spirits Loss</th>
           <th>Voids</th>
           <th>Keg Loss %</th>
@@ -107,6 +113,13 @@
               <span class="badge badge-danger-custom">KES {{ r.loss_kes|floatformat:0 }}</span>
             {% else %}
               <span class="badge badge-ok">KES 0</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if r.theft_kes > 0 %}
+              <span class="badge badge-danger-custom">KES {{ r.theft_kes|floatformat:0 }}</span>
+            {% else %}
+              <span style="color:#b0b0b0">—</span>
             {% endif %}
           </td>
           <td>

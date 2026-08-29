@@ -9645,3 +9645,69 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `[SVQ]` exclusion, station scoping, the owner-facilitated subset, and the
   no-owner-on-business zero case). No migrations (pure query-shape change,
   no schema touched). 2605+9 tests pass (core + accounts).
+- Keg theft valuation — revenue basis, not cost basis (2026-08-29), live
+  request: Roy is running a controlled sting on a suspected counter-staff
+  thief — receive 3 fresh barrels (gross 60 kg / net 50 kg, already this
+  app's own `keg_default_gross_kg`/`keg_default_tare_kg` defaults, nothing
+  to type), tap, let a few real pours happen, void ("Futa") a couple to
+  simulate what a thief does (pours without ringing them up), then weigh —
+  and needs "any variance to be attributed to the counter staff's shift
+  according to expected sales according to the weight that is missing
+  minus the recorded sales... displayed to the business owner in terms of
+  revenue expected based on the weight sold and according to how the
+  business sells their cups." Traced the existing mechanism first rather
+  than assuming a gap: receiving/tapping/voiding a keg sale/weighing/per-
+  shift attribution (`shift_views.attribute_variance_shift`) were all
+  ALREADY correct and already confirmed working (voiding a sale already
+  correctly reverses `KegBarrel.revenue_collected`/`volume_dispensed_ml`
+  per the 2026-08-24 bar-ops audit fix). The real, confirmed gap: every
+  existing variance figure (`keg_metrics.BarrelVariance.wastage_kes`,
+  `ShiftBarrelVariance.wastage_kes`, `StaffShrinkage.loss_kes`, and
+  `weigh_barrel()`'s own live SPOT-check `variance_kes`) is priced at
+  either the item's COST (wastage_kes — what the business spent on the
+  missing stock) or `KegBarrel.target_revenue` (a sales GOAL, usually just
+  `cost × keg_revenue_multiplier`, calibrated for the barrel's own
+  progress tracking) — neither is "what a thief actually pocketed," which
+  is the item's real SELLING price. New `Item.keg_expected_revenue_per_ml()`
+  mirrors the exact convention `bottle_expected_revenue_per_unit()` already
+  established for spirits — a plain average of `price ÷ quantity_consumed`
+  across the item's configured cup/pint/jug portion presets, i.e. literally
+  "how the business sells their cups," not a heuristic. New `theft_kes`
+  field added ADDITIVELY (never replacing the existing cost-basis figures,
+  which other reports still legitimately need) to `keg_metrics.
+  BarrelVariance`/`ShiftBarrelVariance` — same `variance_ml`/`variance_l`
+  each function already computes, now ALSO priced at the cup rate — and a
+  matching `theft_kes`/`net_theft_kes` aggregate on `StaffShrinkage`
+  (positive-only sum, mirroring `loss_kes`/`net_variance_kes`'s existing
+  pattern exactly). `weigh_barrel()`'s live SPOT-check response gains
+  `expected_rev_cup_based`/`theft_kes` (recorded_rev stays the ACTUAL
+  recorded revenue — exact, never reconstructed from a rate; only the
+  "what should this weight have earned" side changes) — always returned,
+  regardless of the danger-flag alert threshold, so the Bar Board weigh
+  modal shows the figure on every weigh, not just a flagged one.
+  `_fire_keg_alert()` gained an optional `theft_kes` kwarg (both existing
+  callers — `weigh_barrel()`'s SPOT check and `shift_views.py`'s
+  SHIFT_CLOSE check — now pass it; the message only grows when provided,
+  so a caller that doesn't pass it is byte-for-byte unchanged). Displayed
+  on three owner-facing surfaces: the live Bar Board weigh-result panel
+  (a raspberry callout box, shown only when `theft_kes > 0`), `keg_barrel_
+  detail`'s Shift-by-Shift Breakdown table (new "Est. Theft (Revenue)"
+  column next to the existing "Waste Cost" one, plus a barrel-level
+  summary stat) and `bar_shrinkage_report`'s per-staff leaderboard (new
+  "Est. Keg Theft (Revenue)" column) — each labeled and explained inline
+  as valuing the SAME missing volume at selling price instead of cost, so
+  it will always read higher than the existing figure for an identical
+  shortfall. 15 new tests (`KegTheftRevenueValuationTest`) — the rate
+  helper's averaging (not weighted) and zero-preset fallback, `theft_kes`
+  exceeding `wastage_kes` for an identical shortfall at both the whole-
+  barrel and per-shift level, `None` without a weight reading or without
+  any presets configured, `StaffShrinkage`'s positive-only aggregation,
+  the live weigh response carrying both new fields (present even below
+  the alert threshold), the alert call/message including it when danger
+  fires, both owner-facing template surfaces rendering the new column,
+  and a full end-to-end reproduction of Roy's own described sting
+  (receive → tap → 3 real pours → void one to simulate theft → weigh →
+  confirm the resulting theft_kes is strictly positive and exceeds the
+  cost-basis figure, both from the live weigh response and independently
+  from `keg_metrics.shift_barrel_variance()`). No migrations (pure
+  computed methods + additive dataclass fields, no schema change).

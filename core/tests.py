@@ -18662,6 +18662,370 @@ class KegSpotWeighAttributionTest(TestCase):
         )
 
 
+class KegTheftRevenueValuationTest(TestCase):
+    """2026-08-29 live request (Roy): about to run a sting on a counter staffer
+    suspected of pocketing keg sales — receive fresh barrels (gross 60kg / net
+    50kg), tap, remove ("Futa") a few real sales to simulate what a thief would
+    do, weigh, and confirm the resulting variance is attributed to her shift.
+    Roy's explicit requirement: "the keg theft should be displayed to the
+    business owner in terms of revenue expected based on the weight sold and
+    according to how the business sells their cups" — i.e. priced at the
+    item's real cup/pint/jug selling price, not the pre-existing COST-basis
+    wastage_kes (barrel_variance()/shift_barrel_variance()'s wastage_l valued
+    at barrel.cost_price) which understates what a thief actually pocketed.
+
+    Item.keg_expected_revenue_per_ml() (mirrors bottle_expected_revenue_per_
+    unit()'s established average-of-preset-prices convention) is the new rate;
+    keg_metrics.BarrelVariance/ShiftBarrelVariance/StaffShrinkage all gain a
+    parallel theft_kes field alongside their existing wastage_kes, and weigh_
+    barrel()'s live SPOT-check response/alert both surface it too."""
+
+    def setUp(self):
+        self.business = Business.objects.create(name='Theft Valuation Biz')
+        self.store = Store.objects.create(business=self.business, name='Bar Counter')
+        self.staff = User.objects.create_user(username='theft_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.business, role='staff')
+        self.owner = User.objects.create_user(username='theft_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.business, role='owner')
+
+        self.item = Item.objects.create(
+            business=self.business, store=self.store,
+            material_no='KEG-THEFT-01', description='Theft Test Lager', unit='ml',
+            is_keg=True, selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        # Pint: 500ml @ KES 200 -> rate 0.40/ml. Cup: 300ml @ KES 100 -> rate 0.3333.../ml.
+        ItemPortionPreset.objects.create(
+            item=self.item, label='Pint', price=Decimal('200'),
+            quantity_consumed=Decimal('500'), serving_type='pint',
+        )
+        ItemPortionPreset.objects.create(
+            item=self.item, label='Cup', price=Decimal('100'),
+            quantity_consumed=Decimal('300'), serving_type='cup',
+        )
+        self.expected_rate_per_ml = (0.4 + (100.0 / 300.0)) / 2.0  # plain average, not weighted
+
+        self.barrel = KegBarrel.objects.create(
+            business=self.business, store=self.store, item=self.item,
+            cost_price=Decimal('6000'), target_revenue=Decimal('10000'),
+            gross_weight_kg=Decimal('60'), tare_weight_kg=Decimal('10'),
+            status='TAPPED', tapped_at=timezone.now() - timedelta(hours=2),
+        )
+
+    def _weigh(self, user, weight_kg):
+        import uuid
+        self.client.force_login(user)
+        return self.client.post(
+            f'/stock/bar/weigh/{self.barrel.id}/',
+            {'weight_kg': str(weight_kg), 'idempotency_token': uuid.uuid4().hex},
+        )
+
+    # ── Item.keg_expected_revenue_per_ml() ──────────────────────────────────
+
+    def test_item_keg_expected_revenue_per_ml_averages_configured_presets(self):
+        self.assertAlmostEqual(
+            self.item.keg_expected_revenue_per_ml(), self.expected_rate_per_ml, places=6,
+        )
+
+    def test_item_with_no_presets_returns_zero(self):
+        bare = Item.objects.create(
+            business=self.business, store=self.store,
+            material_no='KEG-THEFT-BARE', description='No Presets Lager', unit='ml',
+            is_keg=True, selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        self.assertEqual(bare.keg_expected_revenue_per_ml(), 0.0)
+
+    # ── keg_metrics.barrel_variance() ───────────────────────────────────────
+
+    def test_barrel_variance_theft_kes_exceeds_cost_basis_wastage_kes(self):
+        from core import keg_metrics
+        from core.models import KegWeightReading
+        # Book: only 1 real pour recorded (500ml, KES 200). Scale shows 20 kg
+        # gone (60 - 40) since receipt -- a big unexplained gap.
+        self.barrel.volume_dispensed_ml = Decimal('500')
+        self.barrel.revenue_collected = Decimal('200')
+        self.barrel.save(update_fields=['volume_dispensed_ml', 'revenue_collected'])
+        KegWeightReading.objects.create(
+            barrel=self.barrel, weight_kg=Decimal('40.0'),
+            reading_type='SPOT', recorded_by=self.staff,
+        )
+        bv = keg_metrics.barrel_variance(self.barrel)
+        self.assertTrue(bv.has_weight)
+        self.assertAlmostEqual(bv.scale_l, 20.0, places=2)
+        self.assertAlmostEqual(bv.book_l, 0.5, places=2)
+        missing_l = 20.0 - 0.5
+        expected_wastage_kes = missing_l / bv.net_vol_l * bv.cost
+        self.assertAlmostEqual(bv.wastage_kes, expected_wastage_kes, places=2)
+        expected_theft_kes = missing_l * 1000.0 * self.expected_rate_per_ml
+        self.assertAlmostEqual(bv.theft_kes, expected_theft_kes, places=1)
+        # The whole point: same physical shortfall, but priced at selling price
+        # instead of cost must read strictly higher.
+        self.assertGreater(bv.theft_kes, bv.wastage_kes)
+
+    def test_barrel_variance_theft_kes_none_without_weight_reading(self):
+        from core import keg_metrics
+        bv = keg_metrics.barrel_variance(self.barrel)
+        self.assertFalse(bv.has_weight)
+        self.assertIsNone(bv.theft_kes)
+
+    def test_barrel_variance_theft_kes_none_without_any_presets(self):
+        from core import keg_metrics
+        from core.models import KegWeightReading
+        bare = Item.objects.create(
+            business=self.business, store=self.store,
+            material_no='KEG-THEFT-BARE2', description='No Presets Lager 2', unit='ml',
+            is_keg=True, selling_price=Decimal('50'), cost_price=Decimal('12000'),
+        )
+        barrel2 = KegBarrel.objects.create(
+            business=self.business, store=self.store, item=bare,
+            cost_price=Decimal('6000'), target_revenue=Decimal('10000'),
+            gross_weight_kg=Decimal('60'), tare_weight_kg=Decimal('10'),
+            status='TAPPED', tapped_at=timezone.now() - timedelta(hours=2),
+        )
+        KegWeightReading.objects.create(
+            barrel=barrel2, weight_kg=Decimal('40.0'),
+            reading_type='SPOT', recorded_by=self.staff,
+        )
+        bv = keg_metrics.barrel_variance(barrel2)
+        self.assertTrue(bv.has_weight)
+        self.assertIsNotNone(bv.wastage_kes)      # cost-basis still works
+        self.assertIsNone(bv.theft_kes)           # nothing to price a theft rate from
+
+    # ── keg_metrics.shift_barrel_variance() / staff_shrinkage() ─────────────
+
+    def _record_real_sale_and_weigh_reading(self):
+        # shift_barrel_variance()'s bracket needs a reading AT/BEFORE the window
+        # start too (production always has this, from receive_barrel()'s own
+        # RECEIVE-type reading at tap time) — this test builds the barrel
+        # directly, so it must add that anchor itself. auto_now_add means
+        # recorded_at can only be backdated via a follow-up .update().
+        receive_reading = KegWeightReading.objects.create(
+            barrel=self.barrel, weight_kg=self.barrel.gross_weight_kg,
+            reading_type='RECEIVE', recorded_by=self.owner,
+        )
+        KegWeightReading.objects.filter(id=receive_reading.id).update(
+            recorded_at=self.barrel.tapped_at,
+        )
+        shift = Shift.objects.create(
+            business=self.business, store=self.store, staff=self.staff,
+            started_at=self.barrel.tapped_at, status='OPEN', opening_float=Decimal('0'),
+        )
+        Transaction.objects.create(
+            business=self.business, item=self.item, type='Issue', qty=Decimal('-500'),
+            sale_amount=Decimal('200'), payment_method='cash', keg_barrel=self.barrel,
+            created_at=self.barrel.tapped_at + timedelta(minutes=5),
+        )
+        self.barrel.volume_dispensed_ml = Decimal('500')
+        self.barrel.revenue_collected = Decimal('200')
+        self.barrel.save(update_fields=['volume_dispensed_ml', 'revenue_collected'])
+        reading = KegWeightReading.objects.create(
+            barrel=self.barrel, weight_kg=Decimal('40.0'),
+            reading_type='SPOT', recorded_by=self.staff,
+        )
+        # shift_barrel_variance()'s "after" bracket needs a reading recorded AT
+        # OR AFTER window_end = min(shift.ended_at or now(), barrel.closed_at or
+        # now()) — i.e. window_end must be <= this reading's own timestamp.
+        # Calling it with the shift still OPEN computes window_end via a fresh
+        # timezone.now() call strictly AFTER this reading was created, which
+        # could never satisfy that. Close the shift exactly AT the reading's own
+        # timestamp, matching real usage (weigh at shift close).
+        shift.ended_at = reading.recorded_at
+        shift.status = 'CLOSED'
+        shift.save(update_fields=['ended_at', 'status'])
+        return shift
+
+    def test_shift_barrel_variance_theft_kes(self):
+        from core import keg_metrics
+        shift = self._record_real_sale_and_weigh_reading()
+        sv = keg_metrics.shift_barrel_variance(shift, self.barrel)
+        self.assertIsNotNone(sv)
+        self.assertTrue(sv.has_weight)
+        self.assertIsNotNone(sv.theft_kes)
+        self.assertGreater(sv.theft_kes, sv.wastage_kes)
+        expected_theft_kes = round(sv.variance_ml * self.expected_rate_per_ml, 2)
+        self.assertAlmostEqual(sv.theft_kes, expected_theft_kes, places=1)
+
+    def test_staff_shrinkage_aggregates_theft_kes_positive_only(self):
+        from core import keg_metrics
+        self._record_real_sale_and_weigh_reading()
+        today = timezone.localdate()
+        rows = keg_metrics.staff_shrinkage(self.business, today, today)
+        row = next(r for r in rows if r.staff_id == self.staff.id)
+        self.assertGreater(row.theft_kes, 0)
+        self.assertGreater(row.theft_kes, row.loss_kes)
+        self.assertEqual(row.net_theft_kes, row.theft_kes)
+
+    # ── weigh_barrel() live SPOT check ───────────────────────────────────────
+
+    def test_weigh_barrel_response_includes_theft_kes_and_cup_based_expected_revenue(self):
+        Shift.objects.create(
+            business=self.business, store=self.store, staff=self.staff,
+            started_at=self.barrel.tapped_at, status='OPEN', opening_float=Decimal('0'),
+        )
+        self.barrel.volume_dispensed_ml = Decimal('500')
+        self.barrel.revenue_collected = Decimal('200')
+        self.barrel.save(update_fields=['volume_dispensed_ml', 'revenue_collected'])
+        resp = self._weigh(self.staff, '40.0')
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIsNotNone(data['theft_kes'])
+        self.assertIsNotNone(data['expected_rev_cup_based'])
+        expected = 20.0 * 1000.0 * self.expected_rate_per_ml
+        self.assertAlmostEqual(data['expected_rev_cup_based'], round(expected, 0), delta=2)
+        self.assertAlmostEqual(data['theft_kes'], round(expected - 200.0, 0), delta=2)
+        self.assertGreater(data['theft_kes'], 0)
+
+    def test_weigh_barrel_theft_kes_present_even_below_danger_threshold(self):
+        # A negligible, in-tolerance gap must still return a (near-zero/None-
+        # safe) theft_kes key rather than omitting it — the modal always shows
+        # the figure, not just on a flagged reading.
+        self.business.keg_variance_tolerance_pct = Decimal('50.0')  # very loose
+        self.business.save(update_fields=['keg_variance_tolerance_pct'])
+        Shift.objects.create(
+            business=self.business, store=self.store, staff=self.staff,
+            started_at=self.barrel.tapped_at, status='OPEN', opening_float=Decimal('0'),
+        )
+        self.barrel.volume_dispensed_ml = Decimal('49900')  # almost the whole barrel, recorded
+        self.barrel.revenue_collected = Decimal('19960')
+        self.barrel.save(update_fields=['volume_dispensed_ml', 'revenue_collected'])
+        with patch('core.keg_views._fire_keg_alert') as mock_alert:
+            resp = self._weigh(self.staff, '10.05')  # matches book almost exactly
+            self.assertFalse(mock_alert.called)
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        self.assertIn('theft_kes', data)
+
+    def test_weigh_barrel_alert_call_includes_theft_kes_when_danger_flagged(self):
+        self.business.keg_alerts_enabled = True
+        self.business.keg_variance_tolerance_pct = Decimal('0.1')
+        self.business.keg_alert_min_litres = Decimal('1.0')
+        self.business.save(update_fields=[
+            'keg_alerts_enabled', 'keg_variance_tolerance_pct', 'keg_alert_min_litres',
+        ])
+        Shift.objects.create(
+            business=self.business, store=self.store, staff=self.staff,
+            started_at=self.barrel.tapped_at, status='OPEN', opening_float=Decimal('0'),
+        )
+        self.barrel.volume_dispensed_ml = Decimal('500')
+        self.barrel.revenue_collected = Decimal('200')
+        self.barrel.save(update_fields=['volume_dispensed_ml', 'revenue_collected'])
+        with patch('core.keg_views._fire_keg_alert') as mock_alert:
+            resp = self._weigh(self.staff, '40.0')
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(mock_alert.called)
+            kwargs = mock_alert.call_args.kwargs
+            self.assertIn('theft_kes', kwargs)
+            self.assertIsNotNone(kwargs['theft_kes'])
+            self.assertGreater(kwargs['theft_kes'], 0)
+
+    # ── _fire_keg_alert() message text ──────────────────────────────────────
+
+    def test_fire_keg_alert_message_names_theft_kes_when_provided(self):
+        from core.keg_views import _fire_keg_alert
+        _fire_keg_alert(
+            self.business, 'Test Barrel', self.staff.get_full_name() or self.staff.username,
+            1000.0, 50.0, barrel_id=self.barrel.id, theft_kes=4500.0,
+        )
+        notif = Notification.objects.filter(user=self.owner, title='Keg Variance Alert').first()
+        self.assertIsNotNone(notif)
+        self.assertIn('4,500', notif.message)
+        self.assertIn('wizi', notif.message)
+
+    def test_fire_keg_alert_without_theft_kes_unchanged(self):
+        from core.keg_views import _fire_keg_alert
+        _fire_keg_alert(
+            self.business, 'Test Barrel', self.staff.get_full_name() or self.staff.username,
+            1000.0, 50.0, barrel_id=self.barrel.id,
+        )
+        notif = Notification.objects.filter(user=self.owner, title='Keg Variance Alert').first()
+        self.assertIsNotNone(notif)
+        self.assertNotIn('wizi', notif.message)
+
+    # ── Owner-facing display surfaces ────────────────────────────────────────
+
+    def test_keg_barrel_detail_shows_theft_column_and_exceeds_waste_cost(self):
+        self._record_real_sale_and_weigh_reading()
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/bar/reconciliation/{self.barrel.id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Est. Theft (Revenue)')
+        self.assertGreater(resp.context['total_theft_kes'], resp.context['total_wastage_kes'])
+
+    def test_bar_shrinkage_report_shows_theft_column(self):
+        self._record_real_sale_and_weigh_reading()
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shrinkage/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Est. Keg Theft (Revenue)')
+
+    # ── End-to-end: Roy's exact described sting scenario ────────────────────
+
+    def test_end_to_end_sting_scenario_matches_roys_description(self):
+        """Receive barrel gross=60/net=50 (setUp), tap (setUp), record 3 real
+        pours, void ('Futa') 1 to simulate the staffer pocketing that sale,
+        weigh -- confirm the missing-weight-minus-recorded-sales variance is
+        attributed to her shift and priced in revenue terms (cup pricing),
+        strictly exceeding the cost-basis figure for the identical shortfall."""
+        preset = self.item.portion_presets.get(label='Pint')  # 500ml @ 200
+        # RECEIVE-time anchor for shift_barrel_variance()'s later bracket check
+        # (see _record_real_sale_and_weigh_reading()'s identical note above) —
+        # real receive_barrel() always creates this; this test builds the
+        # barrel directly, so it must add it itself.
+        receive_reading = KegWeightReading.objects.create(
+            barrel=self.barrel, weight_kg=self.barrel.gross_weight_kg,
+            reading_type='RECEIVE', recorded_by=self.owner,
+        )
+        KegWeightReading.objects.filter(id=receive_reading.id).update(
+            recorded_at=self.barrel.tapped_at,
+        )
+        shift = Shift.objects.create(
+            business=self.business, store=self.store, staff=self.staff,
+            started_at=self.barrel.tapped_at, status='OPEN', opening_float=Decimal('0'),
+        )
+        for _ in range(3):
+            KegBarrel.record_sale_locked(
+                self.barrel.id, self.business, preset, 1, 'cash', self.staff,
+            )
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.volume_dispensed_ml, Decimal('1500.00'))
+        self.assertEqual(self.barrel.revenue_collected, Decimal('600.00'))
+
+        stolen_txn = Transaction.objects.filter(keg_barrel=self.barrel).order_by('id').last()
+        self.client.force_login(self.owner)
+        void_resp = self.client.post(f'/bar/transactions/{stolen_txn.id}/void/', {'reason': 'test'})
+        self.assertTrue(void_resp.json()['ok'])
+
+        self.barrel.refresh_from_db()
+        self.assertEqual(self.barrel.volume_dispensed_ml, Decimal('1000.00'))
+        self.assertEqual(self.barrel.revenue_collected, Decimal('400.00'))
+
+        # Weigh: scale shows the FULL 1.5 L (all 3 real pours) missing from gross.
+        resp = self._weigh(self.staff, str(float(self.barrel.gross_weight_kg) - 1.5))
+        data = resp.json()
+        self.assertTrue(data['ok'])
+        expected_cup_rev = 1.5 * 1000.0 * self.expected_rate_per_ml
+        self.assertAlmostEqual(data['expected_rev_cup_based'], round(expected_cup_rev, 0), delta=2)
+        self.assertAlmostEqual(data['theft_kes'], round(expected_cup_rev - 400.0, 0), delta=2)
+        self.assertGreater(data['theft_kes'], 0)
+
+        # Durable, per-shift attribution (keg_metrics — the source bar_shrinkage_
+        # report and keg_barrel_detail both read from) agrees independently.
+        # Close the shift exactly AT the just-created SPOT reading's own
+        # timestamp so shift_barrel_variance()'s window bracket (window_end <=
+        # reading.recorded_at) can actually see it — see the identical note on
+        # _record_real_sale_and_weigh_reading() above.
+        latest_reading = self.barrel.weight_readings.order_by('-recorded_at').first()
+        shift.ended_at = latest_reading.recorded_at
+        shift.status = 'CLOSED'
+        shift.save(update_fields=['ended_at', 'status'])
+
+        from core import keg_metrics
+        sv = keg_metrics.shift_barrel_variance(shift, self.barrel)
+        self.assertIsNotNone(sv)
+        self.assertEqual(sv.staff_id, self.staff.id)
+        self.assertGreater(sv.theft_kes, 0)
+        self.assertGreater(sv.theft_kes, sv.wastage_kes)
+
+
 class ClickableNotificationTest(TestCase):
     """Notification.link_url — tapping a notification should take the reader
     straight into the record it's about, not just the notifications list."""
