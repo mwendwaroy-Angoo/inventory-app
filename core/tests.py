@@ -48237,17 +48237,31 @@ class AuditDailyOperationsCommandTest(TestCase):
     (cash/mpesa/credit tie-out, per-station, per-staff), shift reconciliation
     + overlap visibility, stock movement + negative-balance integrity,
     stock-take variances, receiving events, expenses, and a corrections
-    visibility summary, then orchestrates diagnose_recent_sales_visibility /
-    audit_debt_ledger_integrity / audit_money_path_integrity for the deeper
-    structural checks those already cover. This test is a smoke test proving
-    the command runs cleanly end to end against realistic data (a business
-    with two stations, an owner/staff/manager, overlapping shifts, a
-    no-recorded_by transaction, a voided sale, a Rekebisha-tagged Wastage,
-    pending petty cash, and a resolved stock-take variance) without raising
-    — it does not assert exact numeric output (that's already covered by the
+    visibility summary, then optionally orchestrates
+    diagnose_recent_sales_visibility / audit_debt_ledger_integrity /
+    audit_money_path_integrity for the deeper structural checks those
+    already cover.
+
+    2026-08-30 same-day follow-up (Roy: "the output is too much... you will
+    have to shorten that command... these screenshots are too much they
+    will waste me" — a mobile terminal makes a long scroll expensive to
+    screenshot): output is now COMPACT by default (totals + flags only, no
+    per-transaction/per-staff/per-entry listing) and the three deeper
+    structural checks are opt-in (--deep) rather than always running,
+    since they're the longest part of the old default report. --verbose
+    restores full itemized detail and --section=X scopes to exactly one
+    section, so re-checking whatever showed a flag doesn't require
+    re-running (and re-screenshotting) the whole thing.
+
+    This test is a smoke test proving the command runs cleanly end to end
+    against realistic data (a business with two stations, an owner/staff/
+    manager, overlapping shifts, a no-recorded_by transaction, a voided
+    sale, a Rekebisha-tagged Wastage, pending petty cash, and a resolved
+    stock-take variance) without raising, and that the compact/verbose/
+    section/deep flags actually change what's printed as claimed — it does
+    not assert exact numeric output (that's already covered by the
     dedicated tests for _reconcile/_shift_active_segments/current_balance
-    etc. this command reads from), only that composing them into one report
-    is itself correct."""
+    etc. this command reads from)."""
 
     def test_command_runs_without_crashing_on_realistic_data(self):
         from io import StringIO
@@ -48359,15 +48373,122 @@ class AuditDailyOperationsCommandTest(TestCase):
             date=yesterday.isoformat(), stdout=out,
         )
         output = out.getvalue()
-        self.assertIn('DAILY OPERATIONS AUDIT', output)
-        self.assertIn('SALES', output)
-        self.assertIn('SHIFTS', output)
-        self.assertIn('STOCK MOVEMENT', output)
-        self.assertIn('STOCK-TAKE VARIANCES', output)
-        self.assertIn('RECEIVING', output)
-        self.assertIn('EXPENSES', output)
-        self.assertIn('CORRECTIONS', output)
-        self.assertIn('audit complete', output)
+        self.assertIn('[Smoke Test Biz]', output)
+        self.assertIn('[1] SALES', output)
+        self.assertIn('[2] SHIFTS', output)
+        self.assertIn('[3] STOCK MOVEMENT', output)
+        self.assertIn('[4] STOCK-TAKE VARIANCES', output)
+        self.assertIn('[5] RECEIVING', output)
+        self.assertIn('[6] EXPENSES', output)
+        self.assertIn('[7] CORRECTIONS', output)
+        self.assertIn('done.', output)
+        # Compact by default — no per-staff/per-entry breakdown lines, only
+        # a note pointing at --verbose (the literal fix for "too much output").
+        self.assertIn('--verbose', output)
+        self.assertNotIn('per staff:', output)
+        # Deep checks are opt-in now — must NOT have run without --deep.
+        self.assertNotIn('deep checks', output)
+
+    def _build_fixture(self):
+        """Shared fixture for the --verbose/--section/--deep flag tests —
+        factored out so they don't each duplicate the full setup above."""
+        biz = Business.objects.create(name='Flag Test Biz', has_kitchen=True)
+        bar_store = Store.objects.create(business=biz, name='Bar', is_kitchen=False)
+        staff = User.objects.create_user(username='flag_staff', password='x')
+        UserProfile.objects.create(user=staff, business=biz, role='staff')
+        item = Item.objects.create(
+            business=biz, store=bar_store, description='Test Beer',
+            material_no='FLAG-01', unit='Bottle', selling_price=Decimal('200'),
+        )
+        y_start = (timezone.localtime() - timedelta(days=1)).replace(
+            hour=9, minute=0, second=0, microsecond=0,
+        )
+        yesterday = y_start.date()
+        Shift.objects.create(
+            business=biz, store=bar_store, staff=staff, station='bar',
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=y_start, ended_at=y_start + timedelta(hours=8),
+            closing_cash_counted=Decimal('200'),
+        )
+        Transaction.objects.create(
+            business=biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash', recorded_by=staff,
+            created_at=y_start + timedelta(hours=1),
+        )
+        return biz, yesterday
+
+    def test_verbose_flag_adds_itemized_detail_compact_omits_it(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        biz, yesterday = self._build_fixture()
+
+        compact_out = StringIO()
+        call_command(
+            'audit_daily_operations', business='Flag Test Biz',
+            date=yesterday.isoformat(), stdout=compact_out,
+        )
+        compact = compact_out.getvalue()
+        self.assertNotIn('per staff:', compact)
+        self.assertIn('--verbose', compact)
+
+        verbose_out = StringIO()
+        call_command(
+            'audit_daily_operations', business='Flag Test Biz',
+            date=yesterday.isoformat(), verbose=True, stdout=verbose_out,
+        )
+        verbose = verbose_out.getvalue()
+        self.assertIn('per staff:', verbose)
+        self.assertIn('flag_staff', verbose)
+        # The verbose report must be strictly longer than the compact one —
+        # the whole point of the fix.
+        self.assertGreater(len(verbose), len(compact))
+
+    def test_section_flag_scopes_to_exactly_one_section(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        biz, yesterday = self._build_fixture()
+
+        out = StringIO()
+        call_command(
+            'audit_daily_operations', business='Flag Test Biz',
+            date=yesterday.isoformat(), section='shifts', stdout=out,
+        )
+        output = out.getvalue()
+        self.assertIn('[2] SHIFTS', output)
+        self.assertNotIn('[1] SALES', output)
+        self.assertNotIn('[3] STOCK MOVEMENT', output)
+        self.assertNotIn('deep checks', output)
+
+    def test_deep_flag_off_by_default_on_when_requested(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        biz, yesterday = self._build_fixture()
+
+        without_deep = StringIO()
+        call_command(
+            'audit_daily_operations', business='Flag Test Biz',
+            date=yesterday.isoformat(), stdout=without_deep,
+        )
+        self.assertNotIn('deep checks', without_deep.getvalue())
+
+        with_deep = StringIO()
+        call_command(
+            'audit_daily_operations', business='Flag Test Biz',
+            date=yesterday.isoformat(), deep=True, stdout=with_deep,
+        )
+        self.assertIn('deep checks', with_deep.getvalue())
+
+        section_deep = StringIO()
+        call_command(
+            'audit_daily_operations', business='Flag Test Biz',
+            date=yesterday.isoformat(), section='deep', stdout=section_deep,
+        )
+        deep_output = section_deep.getvalue()
+        self.assertIn('deep checks', deep_output)
+        self.assertNotIn('[1] SALES', deep_output)
 
     def test_default_date_is_yesterday_not_today(self):
         from io import StringIO

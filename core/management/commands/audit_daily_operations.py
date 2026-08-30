@@ -11,33 +11,52 @@ from core.models import (
     PettyCash, PortioningEvent, Shift, StockVarianceQuery, Transaction,
 )
 
+SECTION_CHOICES = [
+    'sales', 'shifts', 'stock', 'variances', 'receiving',
+    'expenses', 'corrections', 'deep', 'all',
+]
+
 
 class Command(BaseCommand):
     help = (
         "READ-ONLY. One-shot consolidated audit of every transactional/service "
-        "process for one business on one day — cash/mpesa/credit sales tie-out "
-        "(business-wide, per-station, per-staff), per-shift reconciliation with "
-        "an overlap check, stock movement type breakdown + a negative-balance "
-        "integrity check, stock-take variances raised or resolved that day, "
-        "receiving events (Kitchen Stock Receipts, keg receives, Gawa Kuku "
-        "portioning), expenses (Counter Cash + Matumizi), and a visibility list "
-        "of corrections (voids, splits, reverts, Rekebisha, theft verdicts) — "
-        "then orchestrates the existing diagnose_recent_sales_visibility / "
-        "audit_debt_ledger_integrity / audit_money_path_integrity commands for "
-        "the deeper structural checks those already cover, so this is one "
-        "single report to run rather than six separate ones. Changes NOTHING.\n\n"
-        "2026-08-30 live request (Roy, Monsoon Inn): 'are you able to audit all "
-        "transactional and service processes for monsoon for me from yesterday' "
-        "— this session has no direct access to the live production database, "
-        "so this command is the concrete deliverable: run it yourself via "
-        "Render's Shell tab and read the output.\n\n"
+        "process for one business on one day — cash/mpesa/credit sales tie-out, "
+        "per-shift reconciliation, stock movement + negative-balance integrity, "
+        "stock-take variances, receiving events, expenses, and a corrections "
+        "visibility summary — plus an optional --deep pass orchestrating the "
+        "existing diagnose_recent_sales_visibility / audit_debt_ledger_integrity "
+        "/ audit_money_path_integrity commands. Changes NOTHING.\n\n"
+        "2026-08-30 live follow-up (Roy, Monsoon Inn): a mobile terminal makes "
+        "a long scroll expensive to screenshot — default output is now COMPACT "
+        "(totals + flags only, no per-transaction/per-staff/per-entry listing); "
+        "pass --verbose for the full itemized detail, and --section=X to scope "
+        "to exactly one section (e.g. re-run just the one that showed a flag, "
+        "with --verbose, instead of the whole report again).\n\n"
         "Usage: python manage.py audit_daily_operations --business=\"Monsoon Inn\" "
-        "[--date=YYYY-MM-DD, default: yesterday]"
+        "[--date=YYYY-MM-DD, default: yesterday] [--section=sales|shifts|stock|"
+        "variances|receiving|expenses|corrections|deep|all, default: all] "
+        "[--verbose] [--deep (only meaningful with --section=all; --section=deep "
+        "always runs it)]"
     )
 
     def add_arguments(self, parser):
         parser.add_argument('--business', type=str, required=True, help='Business name substring.')
         parser.add_argument('--date', type=str, help='YYYY-MM-DD, local calendar day. Default: yesterday.')
+        parser.add_argument(
+            '--section', type=str, default='all', choices=SECTION_CHOICES,
+            help="Run only one section instead of the full report. Default: all.",
+        )
+        parser.add_argument(
+            '--verbose', action='store_true',
+            help="Show full itemized detail (per-transaction/per-staff/per-entry) "
+                 "instead of the default compact totals-and-flags-only output.",
+        )
+        parser.add_argument(
+            '--deep', action='store_true',
+            help="When --section=all, also run the three orchestrated deeper "
+                 "structural checks (off by default to keep the report short). "
+                 "Always runs when --section=deep.",
+        )
 
     def handle(self, *args, **options):
         businesses = Business.objects.filter(name__icontains=options['business'])
@@ -56,42 +75,55 @@ class Command(BaseCommand):
 
         day_start = timezone.make_aware(datetime.datetime.combine(sel_date, datetime.time.min))
         day_end = timezone.make_aware(datetime.datetime.combine(sel_date, datetime.time.max))
+        section = options['section']
+        verbose = options['verbose']
+        run_all = section == 'all'
 
         for business in businesses:
             self.stdout.write(self.style.MIGRATE_HEADING(
-                f"\n{'=' * 74}\n[{business.name}] — DAILY OPERATIONS AUDIT for "
-                f"{sel_date.isoformat()}\n{'=' * 74}"
+                f"[{business.name}] — {sel_date.isoformat()}"
+                + (f" — [{section}]" if not run_all else "")
             ))
 
-            self._section_sales(business, day_start, day_end)
-            self._section_shifts(business, day_start, day_end)
-            self._section_stock(business, day_start, day_end)
-            self._section_variances(business, day_start, day_end)
-            self._section_receiving(business, day_start, day_end)
-            self._section_expenses(business, day_start, day_end)
-            self._section_corrections(business, day_start, day_end)
+            if run_all or section == 'sales':
+                self._section_sales(business, day_start, day_end, verbose)
+            if run_all or section == 'shifts':
+                self._section_shifts(business, day_start, day_end, verbose)
+            if run_all or section == 'stock':
+                self._section_stock(business, day_start, day_end, verbose)
+            if run_all or section == 'variances':
+                self._section_variances(business, day_start, day_end, verbose)
+            if run_all or section == 'receiving':
+                self._section_receiving(business, day_start, day_end, verbose)
+            if run_all or section == 'expenses':
+                self._section_expenses(business, day_start, day_end, verbose)
+            if run_all or section == 'corrections':
+                self._section_corrections(business, day_start, day_end, verbose)
 
-            self.stdout.write(self.style.MIGRATE_HEADING(
-                f"\n--- Orchestrated deeper structural checks for [{business.name}] "
-                f"(whole ledger, not date-scoped — a real issue may predate today) ---"
-            ))
-            call_command(
-                'diagnose_recent_sales_visibility',
-                business=business.name, date=sel_date.isoformat(), stdout=self.stdout,
-            )
-            call_command(
-                'audit_debt_ledger_integrity',
-                business=business.name, all_customers=True, stdout=self.stdout,
-            )
-            call_command('audit_money_path_integrity', business=business.name, stdout=self.stdout)
+            if section == 'deep' or (run_all and options['deep']):
+                self.stdout.write(self.style.MIGRATE_HEADING(
+                    f"--- deep checks [{business.name}] (whole ledger, not date-scoped) ---"
+                ))
+                call_command(
+                    'diagnose_recent_sales_visibility',
+                    business=business.name, date=sel_date.isoformat(), stdout=self.stdout,
+                )
+                call_command(
+                    'audit_debt_ledger_integrity',
+                    business=business.name, all_customers=True, stdout=self.stdout,
+                )
+                call_command('audit_money_path_integrity', business=business.name, stdout=self.stdout)
+            elif run_all:
+                self.stdout.write(
+                    "  (deep structural checks skipped — add --deep or run "
+                    "--section=deep to include them)"
+                )
 
-            self.stdout.write(self.style.SUCCESS(
-                f"\n=== [{business.name}] audit complete for {sel_date.isoformat()} ===\n"
-            ))
+            self.stdout.write(self.style.SUCCESS(f"[{business.name}] done."))
 
     # ── [1] Sales ────────────────────────────────────────────────────────────
-    def _section_sales(self, business, day_start, day_end):
-        self.stdout.write(self.style.WARNING("\n[1] SALES — cash / mpesa / credit tie-out"))
+    def _section_sales(self, business, day_start, day_end, verbose):
+        self.stdout.write(self.style.WARNING("[1] SALES"))
         txns = list(
             Transaction.objects.filter(
                 business=business, type='Issue',
@@ -101,7 +133,7 @@ class Command(BaseCommand):
             .select_related('item__store', 'recorded_by')
         )
         if not txns:
-            self.stdout.write("  No sales recorded this day.")
+            self.stdout.write("  none")
             return
 
         def bucket(is_kitchen_wanted):
@@ -125,12 +157,13 @@ class Command(BaseCommand):
         total_mpesa = bar_mpesa + kit_mpesa
         total_credit = bar_credit + kit_credit
 
-        self.stdout.write(f"  Bar:     cash={bar_cash:.2f}  mpesa={bar_mpesa:.2f}  credit={bar_credit:.2f}")
-        self.stdout.write(f"  Kitchen: cash={kit_cash:.2f}  mpesa={kit_mpesa:.2f}  credit={kit_credit:.2f}")
         self.stdout.write(
-            f"  TOTAL:   cash={total_cash:.2f}  mpesa={total_mpesa:.2f}  credit={total_credit:.2f}  "
-            f"confirmed(cash+mpesa)={total_cash + total_mpesa:.2f}  "
-            f"grand_total={total_cash + total_mpesa + total_credit:.2f}"
+            f"  Bar cash/mpesa/credit: {bar_cash:.0f}/{bar_mpesa:.0f}/{bar_credit:.0f}  |  "
+            f"Kitchen: {kit_cash:.0f}/{kit_mpesa:.0f}/{kit_credit:.0f}"
+        )
+        self.stdout.write(
+            f"  TOTAL cash={total_cash:.0f} mpesa={total_mpesa:.0f} credit={total_credit:.0f} "
+            f"confirmed={total_cash + total_mpesa:.0f} grand_total={total_cash + total_mpesa + total_credit:.0f}"
         )
 
         by_staff = {}
@@ -144,12 +177,15 @@ class Command(BaseCommand):
             if t.payment_method in ('cash', 'mpesa', 'credit'):
                 d[t.payment_method] += rev
             d['count'] += 1
-        self.stdout.write("  Per staff (recorded_by):")
-        for name, d in sorted(by_staff.items(), key=lambda kv: -kv[1]['count']):
-            self.stdout.write(
-                f"    {name}: {d['count']} txn(s) — cash={d['cash']:.2f} "
-                f"mpesa={d['mpesa']:.2f} credit={d['credit']:.2f}"
-            )
+        if verbose:
+            self.stdout.write("  per staff:")
+            for name, d in sorted(by_staff.items(), key=lambda kv: -kv[1]['count']):
+                self.stdout.write(
+                    f"    {name}: {d['count']}txn cash={d['cash']:.0f} "
+                    f"mpesa={d['mpesa']:.0f} credit={d['credit']:.0f}"
+                )
+        else:
+            self.stdout.write(f"  {len(by_staff)} staff involved (--verbose for the breakdown)")
 
         # Any real sale with no way to price it — sale_amount unset AND the
         # item's own selling_price is 0/blank means revenue() silently reads 0.
@@ -161,18 +197,18 @@ class Command(BaseCommand):
         ]
         if broken:
             self.stdout.write(self.style.ERROR(
-                f"  FLAG: {len(broken)} transaction(s) with no sale_amount AND no "
-                f"item.selling_price to price from — may be reading as KES 0 revenue "
-                f"for a real sale:"
+                f"  FLAG: {len(broken)} unpriced transaction(s) — may read as KES 0 revenue."
+                + ('' if verbose else ' (--verbose for txn ids)')
             ))
-            for t in broken[:15]:
-                self.stdout.write(f"    txn#{t.id} item_id={t.item_id} qty={t.qty} pm={t.payment_method}")
+            if verbose:
+                for t in broken[:15]:
+                    self.stdout.write(f"    txn#{t.id} item_id={t.item_id} qty={t.qty} pm={t.payment_method}")
         else:
-            self.stdout.write("  OK — every sale this day has a real price to compute revenue from.")
+            self.stdout.write("  OK — every sale priced correctly.")
 
     # ── [2] Shifts ───────────────────────────────────────────────────────────
-    def _section_shifts(self, business, day_start, day_end):
-        self.stdout.write(self.style.WARNING("\n[2] SHIFTS — per-shift reconciliation + overlap visibility"))
+    def _section_shifts(self, business, day_start, day_end, verbose):
+        self.stdout.write(self.style.WARNING("[2] SHIFTS"))
         from core.shift_views import _reconcile, _shift_station
 
         shifts = (
@@ -182,64 +218,65 @@ class Command(BaseCommand):
             .order_by('started_at')
         )
         if not shifts.exists():
-            self.stdout.write("  No shift active during this day.")
+            self.stdout.write("  none")
             return
 
         rows = []
+        flags = 0
         for s in shifts:
             role = getattr(getattr(s.staff, 'userprofile', None), 'role', '?')
             station = _shift_station(s) or '?'
             rec = _reconcile(s)
             var_txt = ''
+            needs_review = False
             if s.closing_cash_counted is not None:
                 variance = float(s.closing_cash_counted) - rec['expected_cash']
                 needs_review = abs(variance) > 500 and s.variance_review_status not in ('acknowledged', 'flagged')
-                flag = ' ⚠️ unreviewed variance >KES 500' if needs_review else ''
-                var_txt = (
-                    f" | closed={s.closing_cash_counted} expected={rec['expected_cash']:.2f} "
-                    f"variance={variance:.2f}{flag}"
-                )
+                flag = ' ⚠️' if needs_review else ''
+                var_txt = f" var={variance:.0f}{flag}"
+            if needs_review:
+                flags += 1
             self.stdout.write(
-                f"  shift#{s.id} {s.staff.get_full_name() or s.staff.username} ({role}) "
-                f"{station} {timezone.localtime(s.started_at).strftime('%H:%M')}→"
+                f"  #{s.id} {s.staff.get_full_name() or s.staff.username} ({role}) {station} "
+                f"{timezone.localtime(s.started_at).strftime('%H:%M')}-"
                 f"{timezone.localtime(s.ended_at).strftime('%H:%M') if s.ended_at else 'OPEN'} "
-                f"cash={rec['cash_sales']:.2f} mpesa={rec['mpesa_sales']:.2f} "
-                f"credit={rec['credit_sales']:.2f}{var_txt}"
+                f"c={rec['cash_sales']:.0f} m={rec['mpesa_sales']:.0f} cr={rec['credit_sales']:.0f}{var_txt}"
             )
             rows.append((s, station, role))
 
-        # Overlap visibility — informational only. _shift_active_segments()
-        # already de-overlaps two real-custodian shifts on the same station
-        # (the newer one caps the older one's window) so the cash/mpesa
-        # figures above are already correct even when this fires; shown so
-        # the sequence of who-handed-off-to-whom is visible, not as an alarm.
-        for i, (s1, st1, role1) in enumerate(rows):
-            if role1 in ('waitress', 'manager', 'owner'):
-                continue
-            for s2, st2, role2 in rows[i + 1:]:
-                if role2 in ('waitress', 'manager', 'owner') or st1 != st2:
+        if flags:
+            self.stdout.write(self.style.ERROR(f"  FLAG: {flags} shift(s) with an unreviewed variance >KES 500."))
+
+        # Overlap visibility — informational only (already correctly handled
+        # by _shift_active_segments()'s own de-overlap logic); verbose only.
+        if verbose:
+            for i, (s1, st1, role1) in enumerate(rows):
+                if role1 in ('waitress', 'manager', 'owner'):
                     continue
-                e1 = s1.ended_at or timezone.now()
-                e2 = s2.ended_at or timezone.now()
-                if s1.started_at < e2 and s2.started_at < e1:
-                    self.stdout.write(
-                        f"  (info) shift#{s1.id} and shift#{s2.id} overlap on {st1} — "
-                        f"already correctly split by the app's own segment logic, "
-                        f"shown for visibility only."
-                    )
+                for s2, st2, role2 in rows[i + 1:]:
+                    if role2 in ('waitress', 'manager', 'owner') or st1 != st2:
+                        continue
+                    e1 = s1.ended_at or timezone.now()
+                    e2 = s2.ended_at or timezone.now()
+                    if s1.started_at < e2 and s2.started_at < e1:
+                        self.stdout.write(
+                            f"  (info) #{s1.id}/#{s2.id} overlap on {st1} — already "
+                            f"correctly split by segment logic."
+                        )
 
     # ── [3] Stock movement ──────────────────────────────────────────────────
-    def _section_stock(self, business, day_start, day_end):
-        self.stdout.write(self.style.WARNING("\n[3] STOCK MOVEMENT — deduction/increment integrity"))
+    def _section_stock(self, business, day_start, day_end, verbose):
+        self.stdout.write(self.style.WARNING("[3] STOCK MOVEMENT"))
         txns = Transaction.objects.filter(
             business=business, created_at__gte=day_start, created_at__lte=day_end,
         ).exclude(payment_method='void')
         by_type = txns.values('type').annotate(n=Count('id'), qty_sum=Sum('qty')).order_by('type')
         if not by_type:
-            self.stdout.write("  No stock movement this day.")
+            self.stdout.write("  none")
             return
-        for row in by_type:
-            self.stdout.write(f"  {row['type']}: {row['n']} txn(s), net qty change {row['qty_sum']}")
+        self.stdout.write(
+            "  " + " | ".join(f"{row['type']}:{row['n']}(qty {row['qty_sum']})" for row in by_type)
+        )
 
         item_ids = set(txns.values_list('item_id', flat=True)) - {None}
         negative = []
@@ -249,18 +286,17 @@ class Command(BaseCommand):
                 negative.append((item, bal))
         if negative:
             self.stdout.write(self.style.ERROR(
-                f"  FLAG: {len(negative)} item(s) touched today show a NEGATIVE "
-                f"current balance (should be structurally impossible per "
-                f"Item.capped_deduction()):"
+                f"  FLAG: {len(negative)} item(s) show a NEGATIVE balance "
+                f"(structurally impossible per capped_deduction()):"
             ))
             for item, bal in negative:
-                self.stdout.write(f"    {item.description} (id={item.id}): balance={bal}")
+                self.stdout.write(f"    {item.description} (id={item.id}): {bal}")
         else:
-            self.stdout.write(f"  OK — none of the {len(item_ids)} item(s) touched today show a negative balance.")
+            self.stdout.write(f"  OK — {len(item_ids)} item(s) touched, none negative.")
 
     # ── [4] Stock-take variances ─────────────────────────────────────────────
-    def _section_variances(self, business, day_start, day_end):
-        self.stdout.write(self.style.WARNING("\n[4] STOCK-TAKE VARIANCES raised or resolved today"))
+    def _section_variances(self, business, day_start, day_end, verbose):
+        self.stdout.write(self.style.WARNING("[4] STOCK-TAKE VARIANCES"))
         qs = (
             StockVarianceQuery.objects.filter(stock_take__business=business)
             .filter(
@@ -271,68 +307,68 @@ class Command(BaseCommand):
             .distinct()
         )
         if not qs.exists():
-            self.stdout.write("  None.")
+            self.stdout.write("  none")
             return
-        for v in qs:
+        shown = list(qs) if verbose else list(qs)[:5]
+        for v in shown:
             staff_name = v.queried_staff.user.username if v.queried_staff and v.queried_staff.user else '?'
             self.stdout.write(
-                f"  variance#{v.id} item={v.item_name_cache} {v.direction} "
-                f"book={v.book_balance} actual={v.actual_count} status={v.status} "
-                f"kind={v.kind} staff={staff_name}"
+                f"  #{v.id} {v.item_name_cache} {v.direction} book={v.book_balance} "
+                f"actual={v.actual_count} status={v.status} kind={v.kind} staff={staff_name}"
             )
+        remaining = qs.count() - len(shown)
+        if remaining > 0:
+            self.stdout.write(f"  (+{remaining} more — --verbose to see all)")
 
     # ── [5] Receiving ────────────────────────────────────────────────────────
-    def _section_receiving(self, business, day_start, day_end):
-        self.stdout.write(self.style.WARNING("\n[5] RECEIVING — stock arriving into the business today"))
-        found = False
-
+    def _section_receiving(self, business, day_start, day_end, verbose):
+        self.stdout.write(self.style.WARNING("[5] RECEIVING"))
         receipts = KitchenStockReceipt.objects.filter(
             business=business, created_at__gte=day_start, created_at__lte=day_end,
         )
-        for r in receipts:
-            found = True
-            self.stdout.write(
-                f"  KitchenStockReceipt#{r.id} status={r.status} "
-                f"created={timezone.localtime(r.created_at).strftime('%H:%M')}"
-            )
-
         events = PortioningEvent.objects.filter(
             business=business, created_at__gte=day_start, created_at__lte=day_end,
         )
-        for e in events:
-            found = True
-            self.stdout.write(
-                f"  PortioningEvent#{e.id} created={timezone.localtime(e.created_at).strftime('%H:%M')}"
-            )
-
         receives = KegWeightReading.objects.filter(
             barrel__business=business, reading_type='RECEIVE',
             recorded_at__gte=day_start, recorded_at__lte=day_end,
         ).select_related('barrel__item')
-        for kr in receives:
-            found = True
-            self.stdout.write(
-                f"  Keg receive: barrel#{kr.barrel_id} ({kr.barrel.item.description if kr.barrel and kr.barrel.item else '?'}) "
-                f"{kr.weight_kg}kg at {timezone.localtime(kr.recorded_at).strftime('%H:%M')}"
-            )
-
         plain_receipts = Transaction.objects.filter(
             business=business, type='Receipt',
             created_at__gte=day_start, created_at__lte=day_end,
         ).exclude(invoice_no__in=['[ADJ]', '[ADJ-NOLOSS]', '[SVQ]', '[SVQ-REVERT]']).select_related('item')
-        for t in plain_receipts:
-            found = True
+
+        total = receipts.count() + events.count() + receives.count() + plain_receipts.count()
+        if not total:
+            self.stdout.write("  none")
+            return
+        self.stdout.write(
+            f"  {total} event(s): {receipts.count()} KitchenStockReceipt, "
+            f"{events.count()} Gawa Kuku, {receives.count()} keg receive, "
+            f"{plain_receipts.count()} plain Receipt txn"
+        )
+        if not verbose:
+            self.stdout.write("  (--verbose for the itemized list)")
+            return
+        for r in receipts:
+            self.stdout.write(f"    KitchenStockReceipt#{r.id} status={r.status} {timezone.localtime(r.created_at).strftime('%H:%M')}")
+        for e in events:
+            self.stdout.write(f"    PortioningEvent#{e.id} {timezone.localtime(e.created_at).strftime('%H:%M')}")
+        for kr in receives:
             self.stdout.write(
-                f"  Receipt txn#{t.id} {t.item.description if t.item else '?'} +{-t.qty if t.qty < 0 else t.qty} "
-                f"at {timezone.localtime(t.created_at).strftime('%H:%M')}"
+                f"    Keg receive barrel#{kr.barrel_id} "
+                f"({kr.barrel.item.description if kr.barrel and kr.barrel.item else '?'}) "
+                f"{kr.weight_kg}kg {timezone.localtime(kr.recorded_at).strftime('%H:%M')}"
+            )
+        for t in plain_receipts:
+            self.stdout.write(
+                f"    Receipt txn#{t.id} {t.item.description if t.item else '?'} "
+                f"+{-t.qty if t.qty < 0 else t.qty} {timezone.localtime(t.created_at).strftime('%H:%M')}"
             )
 
-        if not found:
-            self.stdout.write("  No receiving events recorded this day.")
-
     # ── [6] Expenses ─────────────────────────────────────────────────────────
-    def _section_expenses(self, business, day_start, day_end):
-        self.stdout.write(self.style.WARNING("\n[6] EXPENSES — Counter Cash (Petty Cash) + Matumizi (ad-hoc)"))
+    def _section_expenses(self, business, day_start, day_end, verbose):
+        self.stdout.write(self.style.WARNING("[6] EXPENSES"))
         sel_date = day_start.date()
         petty = PettyCash.objects.filter(business=business, date=sel_date)
         if petty.exists():
@@ -340,35 +376,34 @@ class Command(BaseCommand):
             pending = petty.filter(status='pending').aggregate(t=Sum('amount'))['t'] or 0
             rejected = petty.filter(status='rejected').aggregate(t=Sum('amount'))['t'] or 0
             self.stdout.write(
-                f"  Counter Cash: approved=KES {approved} (already reduces till_expected_cash) | "
-                f"pending=KES {pending} (NOT yet reduced) | rejected=KES {rejected} (never reduces)"
+                f"  Counter Cash: approved={approved} (reduces till) pending={pending} "
+                f"(not yet) rejected={rejected} (never)"
             )
-            for p in petty.select_related('recorded_by'):
-                self.stdout.write(
-                    f"    #{p.id} {p.get_reason_display()} KES {p.amount} status={p.status} "
-                    f"by={p.recorded_by.username if p.recorded_by else '?'} station={p.station or '(unset)'}"
-                )
+            if verbose:
+                for p in petty.select_related('recorded_by'):
+                    self.stdout.write(
+                        f"    #{p.id} {p.get_reason_display()} {p.amount} {p.status} "
+                        f"by={p.recorded_by.username if p.recorded_by else '?'} station={p.station or '(unset)'}"
+                    )
         else:
-            self.stdout.write("  Counter Cash: none recorded this day.")
+            self.stdout.write("  Counter Cash: none")
 
         expenses = BusinessExpense.objects.filter(business=business, date=sel_date)
         if expenses.exists():
             total = expenses.aggregate(t=Sum('amount'))['t'] or 0
-            self.stdout.write(f"  Matumizi (ad-hoc, bookkeeping-only — never reduces till_expected_cash): KES {total}")
-            for e in expenses.select_related('recorded_by'):
-                self.stdout.write(
-                    f"    #{e.id} {e.get_category_display()} KES {e.amount} station={e.station or '(unset)'} "
-                    f"by={e.recorded_by.username if e.recorded_by else '?'}"
-                )
+            self.stdout.write(f"  Matumizi (bookkeeping-only, never reduces till): {total}")
+            if verbose:
+                for e in expenses.select_related('recorded_by'):
+                    self.stdout.write(
+                        f"    #{e.id} {e.get_category_display()} {e.amount} station={e.station or '(unset)'} "
+                        f"by={e.recorded_by.username if e.recorded_by else '?'}"
+                    )
         else:
-            self.stdout.write("  Matumizi: none recorded this day.")
+            self.stdout.write("  Matumizi: none")
 
     # ── [7] Corrections ──────────────────────────────────────────────────────
-    def _section_corrections(self, business, day_start, day_end):
-        self.stdout.write(self.style.WARNING(
-            "\n[7] CORRECTIONS — voids, splits, reverts, Rekebisha, theft "
-            "verdicts (visibility only)"
-        ))
+    def _section_corrections(self, business, day_start, day_end, verbose):
+        self.stdout.write(self.style.WARNING("[7] CORRECTIONS (visibility only)"))
         base = Transaction.objects.filter(
             business=business, created_at__gte=day_start, created_at__lte=day_end,
         )
@@ -378,7 +413,6 @@ class Command(BaseCommand):
         adjustments = base.filter(invoice_no__in=['[ADJ]', '[ADJ-NOLOSS]']).count()
         theft = base.filter(invoice_no__icontains='[THEFT]').count()
         self.stdout.write(
-            f"  Voided: {voided} | Split fragments: {split_children} | "
-            f"Miscount reverts: {reverted} | Rekebisha adjustments: {adjustments} | "
-            f"Theft-tagged corrections: {theft}"
+            f"  voided={voided} split={split_children} reverted={reverted} "
+            f"adjusted={adjustments} theft_tagged={theft}"
         )

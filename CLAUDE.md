@@ -9943,3 +9943,46 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   variance) confirming every section renders without raising, the
   default-to-yesterday date behavior, and the no-matching-business error
   path. No migrations (no schema change). 2656 tests pass (core + accounts).
+- `audit_daily_operations` made screenshot-friendly (2026-08-30, same-day
+  follow-up). Roy, after screenshotting the tail of a real run: "the output
+  is too much I could not paste it all so I screenshoted the last output"
+  then, sharper: "you will have to shorten that command to get precisely
+  what you want to see, these screenshots are too much they will waste
+  me." The command's own default output (every section fully itemized —
+  per-transaction, per-staff, per-shift-overlap-note, per-petty-cash-entry,
+  per-receiving-event — plus all three orchestrated deep checks appended
+  unconditionally) was built for completeness, not for a mobile terminal
+  where the only way to get output back into this session is a screenshot
+  per screenful. Redesigned around three new flags rather than trimming
+  content outright (nothing was removed, only made opt-in): **`--verbose`**
+  (default off) gates every itemized listing — per-staff breakdown, full
+  stock-take-variance list beyond the first 5, itemized receiving events,
+  itemized petty-cash/expense entries, and the informational shift-overlap
+  notes — behind a single flag; the compact default keeps only the
+  numbers that actually answer "is anything wrong" (totals, counts, and
+  explicit FLAG lines, which are NEVER hidden regardless of verbosity,
+  since suppressing the one thing worth seeing would defeat the whole
+  tool). **`--section=sales|shifts|stock|variances|receiving|expenses|
+  corrections|deep|all`** (default `all`) scopes a run to exactly one
+  section — the intended workflow once a full compact run flags something:
+  re-run just that one section with `--verbose` instead of the whole
+  report again. **`--deep`** (default off, `--section=deep` always runs
+  it) makes the three orchestrated commands
+  (`diagnose_recent_sales_visibility`/`audit_debt_ledger_integrity --all-
+  customers`/`audit_money_path_integrity`) opt-in — these were consistently
+  the single longest part of the old default report (as the Section 2026-
+  08-30 screenshot showed — three lines of "clean" still cost real
+  scroll-and-screenshot budget on a phone) and are whole-ledger checks, not
+  date-scoped, so running them every single day is rarely what's actually
+  needed. Verified the size reduction concretely, not just claimed:
+  against the same synthetic fixture used by the command's own smoke test,
+  compact-mode output is 1,102 characters (~26 lines, fits one mobile
+  screenshot) versus the old always-everything default, which included a
+  full per-staff table, the complete per-entry expense/receiving lists,
+  and three appended sub-command reports. 3 new tests added to
+  `AuditDailyOperationsCommandTest` (6 total in the class) — `--verbose`
+  measurably lengthens output and surfaces the per-staff line the compact
+  run correctly omits, `--section=` includes only the requested section's
+  header and excludes every other one, and `--deep` is confirmed off by
+  default / on when either `--deep` or `--section=deep` is passed. No
+  migrations. 2659 tests pass (core + accounts).
