@@ -127,21 +127,25 @@
       <div class="metric-box">
         <div class="metric-num">{{ day_total|floatformat:0 }}</div>
         <div class="metric-lbl">Total Sales (KES)</div>
+        {% if day_leadership_facilitated_total %}<div style="font-size:.62rem;color:#777;" title="Jumla ya mmiliki + meneja waliouza siku hii">(uongozi jumla: {{ day_leadership_facilitated_total|floatformat:0 }})</div>{% endif %}
       </div>
       <div class="metric-box">
         <div class="metric-num">{{ day_cash|floatformat:0 }}</div>
         <div class="metric-lbl">&#128181; Cash</div>
         {% if day_owner_facilitated_cash %}<div style="font-size:.62rem;color:#777;">(mmiliki: {{ day_owner_facilitated_cash|floatformat:0 }})</div>{% endif %}
+        {% if day_manager_facilitated_cash %}<div style="font-size:.62rem;color:#777;">(meneja: {{ day_manager_facilitated_cash|floatformat:0 }})</div>{% endif %}
       </div>
       <div class="metric-box">
         <div class="metric-num">{{ day_mpesa|floatformat:0 }}</div>
         <div class="metric-lbl">&#128242; M-Pesa</div>
         {% if day_owner_facilitated_mpesa %}<div style="font-size:.62rem;color:#777;">(mmiliki: {{ day_owner_facilitated_mpesa|floatformat:0 }})</div>{% endif %}
+        {% if day_manager_facilitated_mpesa %}<div style="font-size:.62rem;color:#777;">(meneja: {{ day_manager_facilitated_mpesa|floatformat:0 }})</div>{% endif %}
       </div>
       <div class="metric-box">
         <div class="metric-num">{{ day_credit|floatformat:0 }}</div>
         <div class="metric-lbl">&#128203; Credit</div>
         {% if day_owner_facilitated_credit %}<div style="font-size:.62rem;color:#777;">(mmiliki: {{ day_owner_facilitated_credit|floatformat:0 }})</div>{% endif %}
+        {% if day_manager_facilitated_credit %}<div style="font-size:.62rem;color:#777;">(meneja: {{ day_manager_facilitated_credit|floatformat:0 }})</div>{% endif %}
       </div>
       <div class="metric-box">
         <div class="metric-num" style="{% if open_tab_count > 0 %}color:#ffb74d{% endif %}">
@@ -260,10 +264,10 @@
           <td>{{ row.shift.staff.get_full_name|default:row.shift.staff.username }}</td>
           <td style="color:#b0b0b0;">{{ row.elapsed }}</td>
           <td>{{ row.opening_float|floatformat:0 }}</td>
-          <td>{{ row.cash_sales|floatformat:0 }}{% if row.owner_facilitated_cash %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Ikiwemo KES {{ row.owner_facilitated_cash|floatformat:0 }} kutoka kwa mmiliki — si nyongeza">👤</span>{% endif %}</td>
-          <td>{{ row.mpesa_sales|floatformat:0 }}{% if row.owner_facilitated_mpesa %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Ikiwemo KES {{ row.owner_facilitated_mpesa|floatformat:0 }} kutoka kwa mmiliki — si nyongeza">👤</span>{% endif %}</td>
-          <td style="color:#b0b0b0;">{{ row.credit_sales|floatformat:0 }}{% if row.owner_facilitated_credit %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Ikiwemo KES {{ row.owner_facilitated_credit|floatformat:0 }} kutoka kwa mmiliki — si nyongeza">👤</span>{% endif %}</td>
-          <td style="color:var(--gold);font-weight:600;">{{ row.total_sales|floatformat:0 }}</td>
+          <td>{{ row.cash_sales|floatformat:0 }}{% if row.owner_facilitated_cash %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Ikiwemo KES {{ row.owner_facilitated_cash|floatformat:0 }} kutoka kwa mmiliki — si nyongeza">👤</span>{% endif %}{% if row.manager_facilitated_cash %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Ikiwemo KES {{ row.manager_facilitated_cash|floatformat:0 }} kutoka kwa meneja — si nyongeza">🧑‍💼</span>{% endif %}</td>
+          <td>{{ row.mpesa_sales|floatformat:0 }}{% if row.owner_facilitated_mpesa %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Ikiwemo KES {{ row.owner_facilitated_mpesa|floatformat:0 }} kutoka kwa mmiliki — si nyongeza">👤</span>{% endif %}{% if row.manager_facilitated_mpesa %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Ikiwemo KES {{ row.manager_facilitated_mpesa|floatformat:0 }} kutoka kwa meneja — si nyongeza">🧑‍💼</span>{% endif %}</td>
+          <td style="color:#b0b0b0;">{{ row.credit_sales|floatformat:0 }}{% if row.owner_facilitated_credit %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Ikiwemo KES {{ row.owner_facilitated_credit|floatformat:0 }} kutoka kwa mmiliki — si nyongeza">👤</span>{% endif %}{% if row.manager_facilitated_credit %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Ikiwemo KES {{ row.manager_facilitated_credit|floatformat:0 }} kutoka kwa meneja — si nyongeza">🧑‍💼</span>{% endif %}</td>
+          <td style="color:var(--gold);font-weight:600;">{{ row.total_sales|floatformat:0 }}{% if row.leadership_facilitated_total %}<span style="font-size:.68rem;color:#888;cursor:default;" title="Jumla ya mmiliki + meneja waliouza wakati wa zamu hii: KES {{ row.leadership_facilitated_total|floatformat:0 }}">🤝</span>{% endif %}</td>
           <td style="color:#ffb74d;">{% if row.petty_cash > 0 %}{{ row.petty_cash|floatformat:0 }}{% else %}—{% endif %}</td>
           <td style="color:#e08aa0;">
             {% if row.ad_hoc_expenses > 0 or row.backdated_petty_cash > 0 %}

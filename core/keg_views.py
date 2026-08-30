@@ -5402,6 +5402,7 @@ def bar_z_report(request):
     shift_rows = []
     day_cash = day_mpesa = day_credit = day_total = 0.0
     day_owner_cash = day_owner_mpesa = day_owner_credit = 0.0
+    day_manager_cash = day_manager_mpesa = day_manager_credit = 0.0
     day_opening_float = 0.0
     day_expected_cash = 0.0
     day_petty_cash = 0.0
@@ -5456,6 +5457,15 @@ def bar_z_report(request):
             'owner_facilitated_debt_recovered_cash':  rec['owner_facilitated_debt_recovered_cash'],
             'owner_facilitated_debt_recovered_mpesa': rec['owner_facilitated_debt_recovered_mpesa'],
             'owner_facilitated_expected_cash':        rec['owner_facilitated_expected_cash'],
+            # 2026-08-30 — manager's own separate acknowledgement, same guide
+            # contract, mirroring owner_facilitated_* exactly.
+            'manager_facilitated_cash':   rec['manager_facilitated_cash'],
+            'manager_facilitated_mpesa':  rec['manager_facilitated_mpesa'],
+            'manager_facilitated_credit': rec['manager_facilitated_credit'],
+            'manager_facilitated_debt_recovered_cash':  rec['manager_facilitated_debt_recovered_cash'],
+            'manager_facilitated_debt_recovered_mpesa': rec['manager_facilitated_debt_recovered_mpesa'],
+            'manager_facilitated_expected_cash':        rec['manager_facilitated_expected_cash'],
+            'leadership_facilitated_total': rec['leadership_facilitated_total'],
             'opening_float':  float(shift.opening_float),
             'offline_adj':    rec['offline_adj'],
             'petty_cash':     petty_total,
@@ -5518,6 +5528,16 @@ def bar_z_report(request):
         day_owner_cash   = sum(t.revenue() for t in _day_txns if t.payment_method == 'cash' and t.recorded_by_id in _owner_ids_day)
         day_owner_mpesa  = sum(t.revenue() for t in _day_txns if t.payment_method == 'mpesa' and t.recorded_by_id in _owner_ids_day)
         day_owner_credit = sum(t.revenue() for t in _day_txns if t.payment_method == 'credit' and t.recorded_by_id in _owner_ids_day)
+
+        # 2026-08-30 — same day-level GUIDE for the manager, mirroring
+        # day_owner_cash/mpesa/credit exactly (see _reconcile()'s own
+        # manager_facilitated_* comment for the full reasoning).
+        _manager_ids_day = list(
+            _UP.objects.filter(business=business, role='manager').values_list('user_id', flat=True)
+        )
+        day_manager_cash   = sum(t.revenue() for t in _day_txns if t.payment_method == 'cash' and t.recorded_by_id in _manager_ids_day)
+        day_manager_mpesa  = sum(t.revenue() for t in _day_txns if t.payment_method == 'mpesa' and t.recorded_by_id in _manager_ids_day)
+        day_manager_credit = sum(t.revenue() for t in _day_txns if t.payment_method == 'credit' and t.recorded_by_id in _manager_ids_day)
 
         day_petty_cash = float(PettyCash.objects.filter(
             business=business, status='approved',
@@ -5655,6 +5675,14 @@ def bar_z_report(request):
         'day_owner_facilitated_cash':   round(day_owner_cash, 2),
         'day_owner_facilitated_mpesa':  round(day_owner_mpesa, 2),
         'day_owner_facilitated_credit': round(day_owner_credit, 2),
+        'day_manager_facilitated_cash':   round(day_manager_cash, 2),
+        'day_manager_facilitated_mpesa':  round(day_manager_mpesa, 2),
+        'day_manager_facilitated_credit': round(day_manager_credit, 2),
+        'day_leadership_facilitated_total': round(
+            day_owner_cash + day_owner_mpesa + day_owner_credit
+            + day_manager_cash + day_manager_mpesa + day_manager_credit,
+            2,
+        ),
         'day_opening_float':   round(day_opening_float, 2),
         'day_expected_cash':   round(day_expected_cash, 2),
         'day_petty_cash':      round(day_petty_cash, 2),

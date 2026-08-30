@@ -9790,3 +9790,103 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   shipped page actually contains the new row's JS, not just a described
   intention). Pure template/JS change, no backend/model change, no
   migrations.
+- Pyramid-hierarchy attribution — manager gets the owner's own acknowledgement
+  pattern (2026-08-30, same-day follow-up). Live design conversation: Roy
+  framed the full staff/waitress/manager/owner hierarchy as a "pyramid
+  scheme" and asked me to confirm it works as intended. Investigated two
+  claims separately rather than assuming either. **(1) Waitress conversion
+  credit** ("she is the only person making physical hectic rounds... her
+  service is a conversion of sales regardless of whoever is in the counter
+  collecting the actual revenue") — traced `haki_views._staff_contribution()`
+  and confirmed this was ALREADY correctly true, with zero code change
+  needed: it attributes revenue/debt-recovered/debt-placed purely via
+  `Transaction.recorded_by`/`CustomerDebtPayment.recorded_by`, completely
+  decoupled from the shift-modal's till-accountability logic (which is a
+  separate, deliberately different concern — "whose till is this cash
+  physically sitting in" vs "who did the work"). Reported this back
+  directly instead of building anything redundant. **(2) Manager
+  attribution** — a real, confirmed gap: the owner already has a full
+  "facilitated" acknowledgement pattern (2026-08-22 sprint) across 5
+  backend computation sites — `_reconcile()`, `station_revenue_window_
+  info()`, `till_expected_cash()`, and `bar_z_report()`'s own separate
+  per-row + day-level computation — feeding Bar Board/Kitchen Board's live
+  shift panels, the close-shift result panel, the home dashboard's Active
+  Shifts meter and till/revenue disclosures, and the Z-report; the manager
+  had none of it. Roy's own precise framing: "so long as there is a staff
+  running the counter all revenue collected in the shift modal for that
+  staff should be aggregated to that staff... but with an acknowledgement
+  that manager/business owner sold this and that" — and the counter-caveat
+  for when the counter staff has closed: "since the manager has to open
+  shift to sell the inflation of revenue on the shift modal should only be
+  caused by the owner's sales at the same time the shift is on." Confirmed
+  via `AskUserQuestion`: (a) the manager gets his own SEPARATE
+  acknowledgement line, never merged into the owner's, plus one combined
+  total; (b) scope is every surface the owner pattern already touches, not
+  just the one dashboard meter being looked at.
+
+  Built the exact parallel of every owner-facilitated computation, for
+  manager, across all 5 backend sites in `core/shift_views.py` +
+  `core/keg_views.py`'s `bar_z_report()`: `manager_facilitated_cash/mpesa/
+  credit/total/debt_recovered_cash/debt_recovered_mpesa/expected_cash`, plus
+  a new combined `leadership_facilitated_total` (owner + manager summed
+  across every stream) satisfying Roy's "one totality somewhere there for
+  both of them." `_reconcile()`'s manager block is gated
+  `staff_role not in ('owner', 'manager')` — deliberately BROADER than the
+  owner block's own `staff_role != 'owner'` gate — so a manager's own shift
+  correctly never self-attributes (he IS the counter custodian for it, same
+  reasoning already applied to the owner's own shift), while the OWNER's
+  acknowledgement note keeps firing normally during the manager's own
+  shift — exactly satisfying the caveat: on a manager-run shift, only HIS
+  own self-note is suppressed, the owner's is untouched. `till_expected_
+  cash()`'s and `station_revenue_window_info()`'s manager mirrors have no
+  self-exclusion at all (no "current shift" concept exists at that
+  continuous/day-level scope, same as their existing owner siblings) — a
+  manager's contribution to the day's overall total is genuinely useful
+  information regardless of whose shift is open, distinct from the
+  shift-modal's self-attribution concern.
+
+  All four surfaces updated to display it, mirroring each figure's existing
+  owner-facilitated note exactly: `templates/core/home.html` (till/revenue
+  disclosure panels' new manager note + combined leadership total; the
+  Active Shifts meter's Cash/M-Pesa tooltips extended to include both
+  roles, plus a new "🧑‍💼 meneja: KES Y" note line alongside the existing
+  "👤 mmiliki: KES X" one and a new "🤝 uongozi jumla: KES Z" combined-total
+  line, reading `s.leadership_facilitated_total` straight from the server
+  rather than recomputing client-side); `templates/core/bar/bar_board.html`
+  and `templates/core/kitchen/kitchen_board.html` (identical edits in both,
+  per this app's own counter-parity rule — the live shift panel's Cash/
+  M-Pesa/Mikopo Mapya/Deni Zilizolipwa/Jumla/Inayotarajiwa stat boxes, the
+  pre-close summary's `ownerNotes`/new `managerNotes` array builders, and
+  the close-shift RESULT panel); `templates/core/bar/bar_z_report.html`
+  (day-summary metric boxes gain a "(meneja: X)" line alongside "(mmiliki:
+  X)", the Total Sales tile gains a leadership-total note, and each
+  per-row table cell gains a 🧑‍💼 icon alongside the existing 👤, with a
+  new 🤝 icon on the Total Sales column reading `row.leadership_facilitated_
+  total`). Verified every inserted JS fragment both syntactically (`node
+  --check`) and functionally (executed against representative fixture data,
+  confirming the leadership-total note actually renders) before touching
+  the templates further — the one full-file `node --check` false-positive
+  encountered (a pre-existing, unrelated `{% if %}...{% else %}...{% endif
+  %}` JS-string alternative at a different line entirely, `kitchen_board.
+  html`'s tab-detail rendering) was confirmed via `git diff` to be
+  completely outside every edited region before being dismissed, not
+  assumed.
+
+  20 new tests (`ManagerFacilitatedSalesAttributionTest`) — direct mirrors
+  of every `OwnerFacilitatedSalesAttributionTest` case (blending not
+  doubling, mpesa/credit guided the same way, a pre-shift-start sale
+  excluded, multiple manager profiles both counted, station isolation,
+  debt-recovery attribution, `manager_facilitated_expected_cash`, and the
+  full JSON/context/template pipeline across `active_shift_api`,
+  `close_shift`, `all_shifts_data`, `shift_history`, `bar_z_report`, and
+  `till_expected_cash`) plus three tests specific to the new hierarchy
+  logic: the manager's own shift never self-attributing, the owner's own
+  note staying intact during the manager's own shift (the literal
+  "caveat" scenario), and `leadership_facilitated_total` correctly summing
+  both roles across every stream while each keeps its own separate figure.
+  All pre-existing `OwnerFacilitatedSalesAttributionTest`/
+  `WaitressShiftDoesNotCapRevenueTest`/`ManagerShiftDoesNotCapRevenueTest`/
+  `SegmentedShiftReconcileTest` suites re-run and confirmed passing
+  unmodified. No migrations (pure computation over existing `Transaction.
+  recorded_by`/`CustomerDebtPayment.recorded_by`/`UserProfile.role` fields
+  — no new model fields). 2653 tests pass (core + accounts).

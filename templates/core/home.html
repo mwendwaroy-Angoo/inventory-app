@@ -264,10 +264,11 @@
             <div style="font-size:.68rem; color:#999; margin-top:.35rem; line-height:1.6;">
                 Hesabu ya mwisho ya kimwili: <strong style="color:#ccc;">{{ till_bar_expected.anchor_label }}</strong><br>
                 Msingi (hesabu ya mwisho): KES {{ till_bar_expected.breakdown.base|floatformat:0 }}<br>
-                + Mauzo taslimu tangu hapo: KES {{ till_bar_expected.breakdown.cash_sales|floatformat:0 }}{% if till_bar_expected.breakdown.owner_facilitated_cash_sales %} <span style="color:#777;">(ikiwemo KES {{ till_bar_expected.breakdown.owner_facilitated_cash_sales|floatformat:0 }} kutoka kwa mmiliki)</span>{% endif %}<br>
-                + Deni lililolipwa taslimu: KES {{ till_bar_expected.breakdown.debt_recovered|floatformat:0 }}{% if till_bar_expected.breakdown.owner_facilitated_debt_recovered %} <span style="color:#777;">(ikiwemo KES {{ till_bar_expected.breakdown.owner_facilitated_debt_recovered|floatformat:0 }} iliyopokelewa na mmiliki)</span>{% endif %}<br>
+                + Mauzo taslimu tangu hapo: KES {{ till_bar_expected.breakdown.cash_sales|floatformat:0 }}{% if till_bar_expected.breakdown.owner_facilitated_cash_sales %} <span style="color:#777;">(ikiwemo KES {{ till_bar_expected.breakdown.owner_facilitated_cash_sales|floatformat:0 }} kutoka kwa mmiliki)</span>{% endif %}{% if till_bar_expected.breakdown.manager_facilitated_cash_sales %} <span style="color:#777;">(ikiwemo KES {{ till_bar_expected.breakdown.manager_facilitated_cash_sales|floatformat:0 }} kutoka kwa meneja)</span>{% endif %}<br>
+                + Deni lililolipwa taslimu: KES {{ till_bar_expected.breakdown.debt_recovered|floatformat:0 }}{% if till_bar_expected.breakdown.owner_facilitated_debt_recovered %} <span style="color:#777;">(ikiwemo KES {{ till_bar_expected.breakdown.owner_facilitated_debt_recovered|floatformat:0 }} iliyopokelewa na mmiliki)</span>{% endif %}{% if till_bar_expected.breakdown.manager_facilitated_debt_recovered %} <span style="color:#777;">(ikiwemo KES {{ till_bar_expected.breakdown.manager_facilitated_debt_recovered|floatformat:0 }} iliyopokelewa na meneja)</span>{% endif %}<br>
                 − Petty cash iliyokubaliwa: KES {{ till_bar_expected.breakdown.petty_cash|floatformat:0 }}<br>
                 − Kiasi kilichowekwa banked: KES {{ till_bar_expected.breakdown.banked|floatformat:0 }}<br>
+                {% if till_bar_expected.breakdown.leadership_facilitated_total %}<div style="margin-top:.2rem; color:#777;">Jumla ya uongozi (mmiliki + meneja): KES {{ till_bar_expected.breakdown.leadership_facilitated_total|floatformat:0 }}</div>{% endif %}
                 <strong style="color:#c9a84c;">= Jumla: KES {{ till_bar_expected.expected_cash|floatformat:0 }}</strong>
             </div>
         </details>
@@ -278,10 +279,11 @@
             <div style="font-size:.68rem; color:#999; margin-top:.35rem; line-height:1.6;">
                 Hesabu ya mwisho ya kimwili: <strong style="color:#ccc;">{{ till_kitchen_expected.anchor_label }}</strong><br>
                 Msingi (hesabu ya mwisho): KES {{ till_kitchen_expected.breakdown.base|floatformat:0 }}<br>
-                + Mauzo taslimu tangu hapo: KES {{ till_kitchen_expected.breakdown.cash_sales|floatformat:0 }}{% if till_kitchen_expected.breakdown.owner_facilitated_cash_sales %} <span style="color:#777;">(ikiwemo KES {{ till_kitchen_expected.breakdown.owner_facilitated_cash_sales|floatformat:0 }} kutoka kwa mmiliki)</span>{% endif %}<br>
-                + Deni lililolipwa taslimu: KES {{ till_kitchen_expected.breakdown.debt_recovered|floatformat:0 }}{% if till_kitchen_expected.breakdown.owner_facilitated_debt_recovered %} <span style="color:#777;">(ikiwemo KES {{ till_kitchen_expected.breakdown.owner_facilitated_debt_recovered|floatformat:0 }} iliyopokelewa na mmiliki)</span>{% endif %}<br>
+                + Mauzo taslimu tangu hapo: KES {{ till_kitchen_expected.breakdown.cash_sales|floatformat:0 }}{% if till_kitchen_expected.breakdown.owner_facilitated_cash_sales %} <span style="color:#777;">(ikiwemo KES {{ till_kitchen_expected.breakdown.owner_facilitated_cash_sales|floatformat:0 }} kutoka kwa mmiliki)</span>{% endif %}{% if till_kitchen_expected.breakdown.manager_facilitated_cash_sales %} <span style="color:#777;">(ikiwemo KES {{ till_kitchen_expected.breakdown.manager_facilitated_cash_sales|floatformat:0 }} kutoka kwa meneja)</span>{% endif %}<br>
+                + Deni lililolipwa taslimu: KES {{ till_kitchen_expected.breakdown.debt_recovered|floatformat:0 }}{% if till_kitchen_expected.breakdown.owner_facilitated_debt_recovered %} <span style="color:#777;">(ikiwemo KES {{ till_kitchen_expected.breakdown.owner_facilitated_debt_recovered|floatformat:0 }} iliyopokelewa na mmiliki)</span>{% endif %}{% if till_kitchen_expected.breakdown.manager_facilitated_debt_recovered %} <span style="color:#777;">(ikiwemo KES {{ till_kitchen_expected.breakdown.manager_facilitated_debt_recovered|floatformat:0 }} iliyopokelewa na meneja)</span>{% endif %}<br>
                 − Petty cash iliyokubaliwa: KES {{ till_kitchen_expected.breakdown.petty_cash|floatformat:0 }}<br>
                 − Kiasi kilichowekwa banked: KES {{ till_kitchen_expected.breakdown.banked|floatformat:0 }}<br>
+                {% if till_kitchen_expected.breakdown.leadership_facilitated_total %}<div style="margin-top:.2rem; color:#777;">Jumla ya uongozi (mmiliki + meneja): KES {{ till_kitchen_expected.breakdown.leadership_facilitated_total|floatformat:0 }}</div>{% endif %}
                 <strong style="color:#ff9800;">= Jumla: KES {{ till_kitchen_expected.expected_cash|floatformat:0 }}</strong>
             </div>
         </details>
@@ -611,6 +613,12 @@
                 {% if bar_revenue_info.owner_facilitated_revenue %}
                 <div style="margin-top:.15rem; color:#888;">Ikiwemo KES {{ bar_revenue_info.owner_facilitated_revenue|floatformat:0 }} yaliyouzwa na mmiliki — tayari yamejumuishwa hapo juu, si nyongeza.</div>
                 {% endif %}
+                {% if bar_revenue_info.manager_facilitated_revenue %}
+                <div style="margin-top:.15rem; color:#888;">Ikiwemo KES {{ bar_revenue_info.manager_facilitated_revenue|floatformat:0 }} yaliyouzwa na meneja — tayari yamejumuishwa hapo juu, si nyongeza.</div>
+                {% endif %}
+                {% if bar_revenue_info.leadership_facilitated_revenue %}
+                <div style="margin-top:.15rem; color:#666;">Jumla ya uongozi (mmiliki + meneja): KES {{ bar_revenue_info.leadership_facilitated_revenue|floatformat:0 }}</div>
+                {% endif %}
                 {% endif %}
             </div>
         </details>
@@ -632,6 +640,12 @@
                 <div style="margin-top:.3rem; color:#666;">Jumla: KES {{ kitchen_revenue_info.total_revenue|floatformat:0 }}</div>
                 {% if kitchen_revenue_info.owner_facilitated_revenue %}
                 <div style="margin-top:.15rem; color:#888;">Ikiwemo KES {{ kitchen_revenue_info.owner_facilitated_revenue|floatformat:0 }} yaliyouzwa na mmiliki — tayari yamejumuishwa hapo juu, si nyongeza.</div>
+                {% endif %}
+                {% if kitchen_revenue_info.manager_facilitated_revenue %}
+                <div style="margin-top:.15rem; color:#888;">Ikiwemo KES {{ kitchen_revenue_info.manager_facilitated_revenue|floatformat:0 }} yaliyouzwa na meneja — tayari yamejumuishwa hapo juu, si nyongeza.</div>
+                {% endif %}
+                {% if kitchen_revenue_info.leadership_facilitated_revenue %}
+                <div style="margin-top:.15rem; color:#666;">Jumla ya uongozi (mmiliki + meneja): KES {{ kitchen_revenue_info.leadership_facilitated_revenue|floatformat:0 }}</div>
                 {% endif %}
                 {% endif %}
             </div>
@@ -1298,7 +1312,7 @@ function homeForceCloseShift(shiftId, staffName) {
                         '<span style="font-size:.72rem; color:#888;" title="M-Pesa KES ' + Math.round(s.mpesa_sales) + ' (mauzo) + KES ' + Math.round(s.debt_recovered_mpesa || 0) + ' (deni lililolipwa)">Jumla M-Pesa: <strong style="color:#c9a84c;">KES ' + Math.round(mpesaTotal) + '</strong></span>' +
                     '</div>' +
                     '<div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; margin-top:.25rem;">' +
-                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + ((s.owner_facilitated_cash || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_cash) + ' kutoka kwa mmiliki — si nyongeza' : '') + '">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong>' +
+                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + (((s.owner_facilitated_cash || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_cash) + ' kutoka kwa mmiliki — si nyongeza. ' : '') + ((s.manager_facilitated_cash || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.manager_facilitated_cash) + ' kutoka kwa meneja — si nyongeza.' : '')) + '">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong>' +
                             // 2026-08-30 (Roy): "another deni alongside there but in
                             // green... x amount of cash or mpesa was recovered" — an old
                             // debt being paid back (CustomerDebtPayment) is a SEPARATE
@@ -1316,7 +1330,7 @@ function homeForceCloseShift(shiftId, staffName) {
                                 ? ' <span style="color:#5dde7a; font-weight:600;" title="Deni la zamani lililolipwa taslimu — nyongeza juu ya Cash hapo juu, si sehemu yake">+ Deni ' + Math.round(s.debt_recovered_cash) + '</span>'
                                 : '') +
                         '</span>' +
-                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + ((s.owner_facilitated_mpesa || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_mpesa) + ' kutoka kwa mmiliki — si nyongeza' : '') + '">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong>' +
+                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + (((s.owner_facilitated_mpesa || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_mpesa) + ' kutoka kwa mmiliki — si nyongeza. ' : '') + ((s.manager_facilitated_mpesa || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.manager_facilitated_mpesa) + ' kutoka kwa meneja — si nyongeza.' : '')) + '">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong>' +
                             ((s.debt_recovered_mpesa || 0) > 0
                                 ? ' <span style="color:#5dde7a; font-weight:600;" title="Deni la zamani lililolipwa kwa M-Pesa — nyongeza juu ya M-Pesa hapo juu, si sehemu yake">+ Deni ' + Math.round(s.debt_recovered_mpesa) + '</span>'
                                 : '') +
@@ -1330,6 +1344,21 @@ function homeForceCloseShift(shiftId, staffName) {
                         // small note so the compact dashboard row doesn't need 4 tooltips.
                         (((s.owner_facilitated_cash || 0) + (s.owner_facilitated_mpesa || 0) + (s.owner_facilitated_credit || 0) + (s.owner_facilitated_debt_recovered_cash || 0) + (s.owner_facilitated_debt_recovered_mpesa || 0)) > 0
                             ? '<span style="font-size:.68rem; color:#888;">👤 mmiliki: KES ' + Math.round((s.owner_facilitated_cash || 0) + (s.owner_facilitated_mpesa || 0) + (s.owner_facilitated_credit || 0) + (s.owner_facilitated_debt_recovered_cash || 0) + (s.owner_facilitated_debt_recovered_mpesa || 0)) + '</span>'
+                            : '') +
+                        // 2026-08-30 live Q&A (Roy): "manager revenue in the event he
+                        // sell, is part of the counter staff's revenue counter but
+                        // with an acknowledgement that manager/business owner sold
+                        // this and that... separate lines of course but one totality
+                        // somewhere there for both of them" — manager's own note
+                        // (mirrors the owner's one directly above), plus a combined
+                        // "uongozi" total using server-computed leadership_
+                        // facilitated_total (already sums owner+manager across every
+                        // stream — never recomputed client-side, so it can't drift).
+                        (((s.manager_facilitated_cash || 0) + (s.manager_facilitated_mpesa || 0) + (s.manager_facilitated_credit || 0) + (s.manager_facilitated_debt_recovered_cash || 0) + (s.manager_facilitated_debt_recovered_mpesa || 0)) > 0
+                            ? '<span style="font-size:.68rem; color:#888;">🧑‍💼 meneja: KES ' + Math.round((s.manager_facilitated_cash || 0) + (s.manager_facilitated_mpesa || 0) + (s.manager_facilitated_credit || 0) + (s.manager_facilitated_debt_recovered_cash || 0) + (s.manager_facilitated_debt_recovered_mpesa || 0)) + '</span>'
+                            : '') +
+                        ((s.leadership_facilitated_total || 0) > 0
+                            ? '<span style="font-size:.68rem; color:#666;" title="Jumla ya mmiliki + meneja waliouza wakati wa zamu hii">🤝 uongozi jumla: KES ' + Math.round(s.leadership_facilitated_total) + '</span>'
                             : '') +
                         '<a href="' + link + '" style="font-size:.72rem; color:#888; text-decoration:none;">' + linkTxt + '</a>' +
                         closeBtn +

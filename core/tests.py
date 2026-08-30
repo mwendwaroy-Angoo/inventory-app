@@ -41526,6 +41526,351 @@ class OwnerFacilitatedSalesAttributionTest(TestCase):
         )
 
 
+class ManagerFacilitatedSalesAttributionTest(TestCase):
+    """2026-08-30 live Q&A (Roy, "pyramid scheme" hierarchy): the manager's
+    own sales, while a plain staff/waitress/kitchen shift is open, blend
+    into that shift's own cash_sales/mpesa_sales/credit_sales/expected_cash
+    exactly like the owner's already do — "so long as there is a staff
+    running the counter all revenue collected in the shift modal for that
+    staff should be aggregated to that staff... with an acknowledgement
+    that manager/business owner sold this and that." Confirmed via
+    AskUserQuestion: the manager gets his OWN separate acknowledgement line
+    (never merged into the owner's), plus one combined
+    leadership_facilitated_total figure for both. When the manager himself
+    is running the counter (his own shift, since a manager must open a
+    shift to sell at all — see ManagerMustHaveOwnShiftToSellTest), his own
+    sales must NOT self-attribute — "since the manager has to open shift to
+    sell the inflation of revenue on the shift modal should only be caused
+    by the owner's sales at the same time the shift is on" — i.e. the
+    owner's guide note keeps working normally on the manager's own shift,
+    only the manager's own self-note is suppressed. Mirrors
+    OwnerFacilitatedSalesAttributionTest's exact coverage shape."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Manager Facilitated Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='mfa_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='mfa_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff_user = User.objects.create_user(username='mfa_staff', password='x')
+        UserProfile.objects.create(user=self.staff_user, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='MFA-01', unit='Bottle', selling_price=Decimal('200'),
+        )
+
+    def _open_shift(self, staff=None):
+        staff = staff or self.staff_user
+        shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=staff,
+            opening_float=Decimal('0'), status='OPEN', station='bar',
+            started_at=timezone.now() - timedelta(minutes=30),
+        )
+        return shift
+
+    def _sale(self, amount, payment_method='cash', by=None, when=None):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal(str(amount)),
+            payment_method=payment_method, recorded_by=by,
+            created_at=when or timezone.now(),
+        )
+
+    def test_manager_sale_blends_into_totals_and_is_reported_as_a_guide(self):
+        from core.shift_views import _reconcile
+        shift = self._open_shift()
+        self._sale(300, 'cash', by=self.staff_user)
+        self._sale(200, 'cash', by=self.manager)
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['cash_sales'], 500.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_cash'], 200.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_total'], 200.0, places=1)
+        self.assertLessEqual(rec['manager_facilitated_cash'], rec['cash_sales'])
+
+    def test_mpesa_and_credit_also_guided_not_additive(self):
+        from core.shift_views import _reconcile
+        shift = self._open_shift()
+        self._sale(150, 'mpesa', by=self.manager)
+        self._sale(400, 'mpesa', by=self.staff_user)
+        self._sale(90, 'credit', by=self.manager)
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['mpesa_sales'], 550.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_mpesa'], 150.0, places=1)
+        self.assertAlmostEqual(rec['credit_sales'], 90.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_credit'], 90.0, places=1)
+        self.assertAlmostEqual(
+            rec['manager_facilitated_total'],
+            rec['manager_facilitated_cash'] + rec['manager_facilitated_mpesa'] + rec['manager_facilitated_credit'],
+            places=1,
+        )
+
+    def test_manager_sale_before_shift_started_excluded(self):
+        from core.shift_views import _reconcile
+        shift = self._open_shift()
+        self._sale(500, 'cash', by=self.manager, when=shift.started_at - timedelta(hours=1))
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['cash_sales'], 0.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_cash'], 0.0, places=1)
+
+    def test_managers_own_shift_never_self_attributes(self):
+        """The manager IS the counter custodian for his own shift — he never
+        gets an acknowledgement note pointing at himself, same reasoning as
+        the owner's own shift."""
+        from core.shift_views import _reconcile
+        manager_shift = self._open_shift(staff=self.manager)
+        self._sale(300, 'cash', by=self.manager)
+        rec = _reconcile(manager_shift)
+        self.assertAlmostEqual(rec['cash_sales'], 300.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_cash'], 0.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_total'], 0.0, places=1)
+
+    def test_owner_still_acknowledged_during_managers_own_shift(self):
+        """Roy's exact caveat: on the manager's own shift (he is now 'head
+        of the pyramid' for it), the owner's sales during that same window
+        must still be called out — only the manager's OWN self-note is
+        suppressed, not the owner's guide note."""
+        from core.shift_views import _reconcile
+        manager_shift = self._open_shift(staff=self.manager)
+        self._sale(300, 'cash', by=self.manager)
+        self._sale(100, 'cash', by=self.owner)
+        rec = _reconcile(manager_shift)
+        self.assertAlmostEqual(rec['cash_sales'], 400.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_cash'], 0.0, places=1)
+        self.assertAlmostEqual(rec['owner_facilitated_cash'], 100.0, places=1)
+
+    def test_multiple_manager_profiles_both_counted(self):
+        from core.shift_views import _reconcile
+        second_manager = User.objects.create_user(username='mfa_manager2', password='x')
+        UserProfile.objects.create(user=second_manager, business=self.biz, role='manager')
+        shift = self._open_shift()
+        self._sale(100, 'cash', by=self.manager)
+        self._sale(150, 'cash', by=second_manager)
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['manager_facilitated_cash'], 250.0, places=1)
+        self.assertAlmostEqual(rec['cash_sales'], 250.0, places=1)
+
+    def test_manager_sale_on_other_station_does_not_bleed_in(self):
+        from core.shift_views import _reconcile
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        kitchen_item = Item.objects.create(
+            business=self.biz, store=kitchen_store, description='Chipo',
+            material_no='MFA-02', unit='Plate', selling_price=Decimal('150'),
+        )
+        shift = self._open_shift()  # bar station
+        Transaction.objects.create(
+            business=self.biz, item=kitchen_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('150'),
+            payment_method='cash', recorded_by=self.manager,
+        )
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['cash_sales'], 0.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_cash'], 0.0, places=1)
+
+    def test_debt_recovered_by_manager_guided_not_additive(self):
+        from core.shift_views import _reconcile
+        from core.models import CustomerDebtPayment
+        shift = self._open_shift()
+        customer = Customer.objects.create(business=self.biz, name='Eugene')
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('120'),
+            payment_method='cash', source='bar', recorded_by=self.manager,
+        )
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('80'),
+            payment_method='cash', source='bar', recorded_by=self.staff_user,
+        )
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['debt_recovered_cash'], 200.0, places=1)
+        self.assertAlmostEqual(rec['manager_facilitated_debt_recovered_cash'], 120.0, places=1)
+        self.assertLessEqual(rec['manager_facilitated_debt_recovered_cash'], rec['debt_recovered_cash'])
+
+    def test_manager_facilitated_expected_cash_combines_sales_and_debt_recovery(self):
+        from core.shift_views import _reconcile
+        from core.models import CustomerDebtPayment
+        shift = self._open_shift()
+        self._sale(200, 'cash', by=self.manager)
+        customer = Customer.objects.create(business=self.biz, name='Roy Debtor')
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('50'),
+            payment_method='cash', source='bar', recorded_by=self.manager,
+        )
+        rec = _reconcile(shift)
+        self.assertAlmostEqual(rec['manager_facilitated_expected_cash'], 250.0, places=1)
+        self.assertLessEqual(rec['manager_facilitated_expected_cash'], rec['expected_cash'])
+
+    def test_leadership_facilitated_total_combines_owner_and_manager_as_one_figure(self):
+        """Roy's explicit answer: 'separate lines of course but one
+        totality somewhere there for both of them' — this is that combined
+        figure, summed across every revenue stream for both roles."""
+        from core.shift_views import _reconcile
+        from core.models import CustomerDebtPayment
+        shift = self._open_shift()
+        self._sale(100, 'cash', by=self.owner)
+        self._sale(50, 'mpesa', by=self.owner)
+        self._sale(80, 'cash', by=self.manager)
+        self._sale(40, 'credit', by=self.manager)
+        customer = Customer.objects.create(business=self.biz, name='Combo Debtor')
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('30'),
+            payment_method='mpesa', source='bar', recorded_by=self.owner,
+        )
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz, amount_paid=Decimal('20'),
+            payment_method='cash', source='bar', recorded_by=self.manager,
+        )
+        rec = _reconcile(shift)
+        expected_owner = 100 + 50 + 0 + 0 + 30
+        expected_manager = 80 + 0 + 40 + 20 + 0
+        self.assertAlmostEqual(rec['leadership_facilitated_total'], expected_owner + expected_manager, places=1)
+        # Never merged into one line — each role keeps its own separate figure too.
+        self.assertNotEqual(rec['owner_facilitated_cash'], rec['manager_facilitated_cash'])
+
+    def test_active_shift_api_json_carries_new_fields_matching_reconcile(self):
+        from core.shift_views import _reconcile
+        shift = self._open_shift()
+        self._sale(300, 'cash', by=self.manager)
+        rec = _reconcile(shift)
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/bar/shift/active/')
+        d = resp.json()['shift']
+        self.assertEqual(d['manager_facilitated_cash'], rec['manager_facilitated_cash'])
+        self.assertEqual(d['manager_facilitated_total'], rec['manager_facilitated_total'])
+        self.assertEqual(d['manager_facilitated_debt_recovered_cash'], rec['manager_facilitated_debt_recovered_cash'])
+        self.assertEqual(d['manager_facilitated_expected_cash'], rec['manager_facilitated_expected_cash'])
+        self.assertEqual(d['leadership_facilitated_total'], rec['leadership_facilitated_total'])
+        self.assertEqual(d['cash_sales'], 300.0)
+
+    def test_close_shift_response_carries_new_fields(self):
+        shift = self._open_shift()
+        self._sale(400, 'mpesa', by=self.manager)
+        self.client.force_login(self.staff_user)
+        resp = self.client.post(f'/bar/shift/{shift.id}/close/', {'closing_cash_counted': '0'})
+        d = resp.json()
+        self.assertTrue(d.get('ok'))
+        self.assertEqual(d['mpesa_sales'], 400.0)
+        self.assertEqual(d['manager_facilitated_mpesa'], 400.0)
+        self.assertIn('leadership_facilitated_total', d)
+
+    def test_all_shifts_dashboard_data_carries_manager_facilitated_fields(self):
+        shift = self._open_shift()
+        self._sale(100, 'cash', by=self.manager)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/active/')
+        row = next(r for r in resp.json()['all_shifts'] if r['id'] == shift.id)
+        self.assertEqual(row['manager_facilitated_cash'], 100.0)
+        self.assertIn('leadership_facilitated_total', row)
+
+    def test_station_revenue_window_info_manager_facilitated_revenue(self):
+        from core.shift_views import station_revenue_window_info
+        sale_time = timezone.now()
+        self._sale(300, 'cash', by=self.manager, when=sale_time)
+        self._sale(200, 'cash', by=self.staff_user, when=sale_time)
+        now = sale_time + timedelta(seconds=1)
+        info = station_revenue_window_info(self.biz, is_kitchen=False, now=now)
+        self.assertAlmostEqual(info['total_revenue'], 500.0, places=1)
+        self.assertAlmostEqual(info['manager_facilitated_revenue'], 300.0, places=1)
+        self.assertLessEqual(info['manager_facilitated_revenue'], info['total_revenue'])
+        self.assertAlmostEqual(
+            info['leadership_facilitated_revenue'],
+            info['owner_facilitated_revenue'] + info['manager_facilitated_revenue'],
+            places=1,
+        )
+
+    def test_shift_history_context_carries_manager_facilitated_via_rec(self):
+        shift = self._open_shift()
+        self._sale(250, 'cash', by=self.manager)
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/bar/shift/history/')
+        row = next(r for r in resp.context['rows'] if r['shift'].id == shift.id)
+        self.assertEqual(row['rec']['manager_facilitated_cash'], 250.0)
+        self.assertEqual(row['rec']['cash_sales'], 250.0)
+
+    def test_bar_z_report_row_and_day_level_manager_facilitated(self):
+        today_9am = timezone.localtime().replace(hour=9, minute=0, second=0, microsecond=0)
+        shift1 = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            opening_float=Decimal('0'), status='CLOSED', station='bar',
+            started_at=today_9am, ended_at=today_9am + timedelta(hours=2),
+            closing_cash_counted=Decimal('300'),
+        )
+        self._sale(300, 'cash', by=self.manager, when=today_9am + timedelta(minutes=10))
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/z-report/')
+        row = next(r for r in resp.context['shift_rows'] if r['shift'].id == shift1.id)
+        self.assertEqual(row['manager_facilitated_cash'], 300.0)
+        self.assertEqual(resp.context['day_manager_facilitated_cash'], 300.0)
+        self.assertEqual(resp.context['day_cash'], 300.0)
+        self.assertLessEqual(resp.context['day_manager_facilitated_cash'], resp.context['day_cash'])
+        self.assertIn('day_leadership_facilitated_total', resp.context)
+
+    def test_till_expected_cash_breakdown_manager_facilitated(self):
+        from core.shift_views import till_expected_cash
+        anchor_shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            opening_float=Decimal('0'), status='CLOSED', station='bar',
+            started_at=timezone.now() - timedelta(hours=3),
+            ended_at=timezone.now() - timedelta(hours=2),
+            closing_cash_counted=Decimal('0'),
+        )
+        self._sale(300, 'cash', by=self.manager, when=anchor_shift.ended_at + timedelta(minutes=5))
+        self._sale(150, 'cash', by=self.staff_user, when=anchor_shift.ended_at + timedelta(minutes=10))
+        result = till_expected_cash(self.biz, 'bar')
+        self.assertTrue(result['anchor_established'])
+        self.assertAlmostEqual(result['breakdown']['cash_sales'], 450.0, places=1)
+        self.assertAlmostEqual(result['breakdown']['manager_facilitated_cash_sales'], 300.0, places=1)
+        self.assertLessEqual(
+            result['breakdown']['manager_facilitated_cash_sales'],
+            result['breakdown']['cash_sales'],
+        )
+        self.assertIn('leadership_facilitated_total', result['breakdown'])
+
+    def test_bar_board_template_renders_manager_and_leadership_notes(self):
+        """Full end-to-end render check — proves the manager-facilitated
+        note and the combined leadership total actually reach the page,
+        not just the JSON payload."""
+        shift = self._open_shift()
+        self._sale(200, 'cash', by=self.manager)
+        self._sale(100, 'cash', by=self.owner)
+        self.client.force_login(self.staff_user)
+        resp = self.client.get('/bar/')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        self.assertIn('manager_facilitated_cash', content)
+        self.assertIn('leadership_facilitated_total', content)
+        self.assertIn('kutoka kwa meneja', content)
+
+    def test_kitchen_board_template_renders_manager_and_leadership_notes(self):
+        self.biz.has_kitchen = True
+        self.biz.save(update_fields=['has_kitchen'])
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        kitchen_staff = User.objects.create_user(username='mfa_kstaff', password='x')
+        UserProfile.objects.create(user=kitchen_staff, business=self.biz, role='kitchen')
+        self.client.force_login(kitchen_staff)
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        self.assertIn('manager_facilitated_cash', content)
+        self.assertIn('leadership_facilitated_total', content)
+        self.assertIn('kutoka kwa meneja', content)
+
+    def test_bar_z_report_template_renders_manager_columns(self):
+        today_9am = timezone.localtime().replace(hour=9, minute=0, second=0, microsecond=0)
+        Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff_user,
+            opening_float=Decimal('0'), status='CLOSED', station='bar',
+            started_at=today_9am, ended_at=today_9am + timedelta(hours=2),
+            closing_cash_counted=Decimal('300'),
+        )
+        self._sale(300, 'cash', by=self.manager, when=today_9am + timedelta(minutes=10))
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/z-report/')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        self.assertIn('meneja', content)
+        self.assertIn('🧑‍💼', content)
+
+
 from core.models import StockVarianceQuery, StockTake, ShiftStockCount, RecurringExpense
 
 
