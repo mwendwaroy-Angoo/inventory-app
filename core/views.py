@@ -3750,17 +3750,36 @@ def quick_sell(request):
                 )
                 continue
 
-            # For portion-preset sales the cart supplies an explicit price that may
-            # differ from selling_price × stock_qty (e.g. Tatu mbao: 3 onions for KES 20
-            # instead of 3 × KES 10 = KES 30). Store it as sale_amount so revenue() is
-            # correct. Only set for a preset tap — normal item taps have no preset
-            # and never override selling_price × qty this way.
-            # (sale_preset itself was already resolved above, before stock_qty.)
-            sale_amt = None
-            if (sale_preset is not None or entry.get("stock_qty") is not None) and display_price:
-                sale_amt = Decimal(str(round(display_price * float(display_qty), 2)))
-
+            # sale_amount pins exactly what this line was actually charged at
+            # checkout time, so revenue() never needs to fall back to
+            # item.selling_price later. Originally only set for a preset/
+            # produce line (whose price can differ from selling_price × qty,
+            # e.g. Tatu mbao: 3 onions for KES 20 instead of 3 × KES 10).
+            #
+            # 2026-08-30 live report (Roy, Monsoon Inn — a "KC Pineapple 250
+            # ML ×2" credit sale showed KES 800 on the receipt but only KES
+            # 400 in the debt tracker for the SAME transaction): a plain
+            # (non-preset, non-produce) item tap left sale_amount=None,
+            # relying on revenue()'s item.selling_price×qty fallback — which
+            # recomputes LIVE every time it's read, so raising the item's
+            # price later silently changes what an already-completed
+            # historical sale is worth, forever, everywhere revenue() is
+            # called (the debt tracker's own Total Credit and per-row Amount
+            # Owed — _get_customer_debt_data() reads txn.revenue() directly —
+            # plus analytics and _reconcile()/till_expected_cash() for a
+            # still-Issue-type cash/mpesa line). BarTabEntry.amount and the
+            # receipt's own recorded['subtotal'] were ALWAYS correctly frozen
+            # at line_amount, the price genuinely charged — only
+            # Transaction.sale_amount itself was left to drift. Now pinned
+            # unconditionally for every line, matching what every other
+            # snapshot this app takes at sale time already does (see
+            # revert_direct_sale_to_tab_locked's own 2026-08-25 fix for the
+            # identical root cause in one narrow correction path, and
+            # core.mpesa_views._settle_qs_from_payment's matching fix the
+            # same day as this one, for the Quick Sell STK settlement
+            # callback that creates the same shape of Transaction).
             line_amount = Decimal(str(round(display_price * float(display_qty), 2)))
+            sale_amt = line_amount
 
             # ── UBA R2 §7.3 — sale-below-cost check ────────────────────────
             # Plain (non-preset) items only — this is the retail sweethearting/

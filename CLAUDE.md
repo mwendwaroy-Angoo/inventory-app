@@ -10018,3 +10018,84 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   asserting the finding's own explanation still surfaces in full while the
   itemized dump's distinct header format, its grand-total line, and the
   debtor's name are all absent. 2660 tests pass (core + accounts).
+- **Root cause + fix: receipt showed one figure, debt tracker showed a
+  smaller one, for the SAME transaction (2026-08-30)**, live report with
+  screenshots — Roy: "why did staff add two items on debt and it reflected
+  on the receipt but not in the debt tracker" (KC Pineapple 250 ML ×2,
+  receipt KES 800, debt tracker KES 400, Monsoon Inn, customer Trixie).
+  Root-caused via direct code trace, then confirmed by reproducing the
+  exact scenario end to end in a local repro before touching any code —
+  never guessed at from the screenshots alone. `Transaction.revenue()`
+  (`core/models.py`) prefers `sale_amount` when set, else falls back LIVE to
+  `abs(qty) × item.selling_price` — a deliberate, correct design for a
+  preset/produce line whose price can legitimately differ from the item's
+  flat price. The bug: a PLAIN (non-preset, non-produce) item tap on Quick
+  Sell's checkout (`core/views.py::quick_sell()`) left `sale_amount=None`
+  entirely — `sale_amt` was only ever set `if (sale_preset is not None or
+  entry.get("stock_qty") is not None) and display_price:`. `BarTabEntry.
+  amount` (and the receipt's own `recorded['subtotal']`) were ALWAYS
+  correctly frozen at `line_amount` — the price genuinely charged at
+  checkout time — but `Transaction.revenue()` kept recomputing LIVE from
+  `item.selling_price`, so raising the item's price at ANY point after the
+  sale silently changed what that now-historical sale was worth, forever,
+  on every surface that calls `.revenue()`: the debt tracker's own
+  `_get_customer_debt_data()` (`core/debt_views.py`) reads `txn.revenue()`
+  directly for BOTH its `total_credit` aggregate AND its per-row "Amount
+  Owed" figure (`remaining = txn.revenue() - entry.amount_paid`) — exactly
+  why the debt tracker page and the customer's own receipt (whichever
+  render path reflects the frozen `entry.amount` vs the live-drifting
+  `revenue()`) can show two different numbers for one sale. Confirmed the
+  identical shape ALSO existed in Quick Sell's own STK-cart settlement
+  callback (`core/mpesa_views.py::_settle_qs_from_payment`) — `sale_amount
+  = amount if (preset or amount != qty * item.selling_price) else None`,
+  the same "skip pinning when it currently matches the live formula
+  anyway" trap, one narrower variant of the same bug. Confirmed Bar
+  Board's checkout has no plain-item path of its own (keg-cart only,
+  everything else routes through Quick Sell) and Kitchen Board's plain
+  portion-item branch ALREADY unconditionally pins `sale_amount=amount` —
+  so the gap was isolated to these two Quick Sell call sites, not
+  systemic across every counter. Also confirmed, by re-reading `split_
+  paid_unpaid_locked()`/`split_kept_unpaid_locked()` directly, that ANY
+  split mechanism in this app already writes a real (non-null)
+  `sale_amount` onto the original transaction the moment it touches
+  `entry.amount` — meaning a transaction still showing `sale_amount=NULL`
+  today was NEVER split, so `entry.amount` (when a tab entry exists) is
+  guaranteed to still be the untouched original — the safe, sound
+  foundation for a backfill. **Fix**: both call sites now pin `sale_amount`
+  unconditionally, for every line, matching what `BarTabEntry.amount` and
+  the receipt already captured all along — a plain item is no longer
+  special-cased differently from a preset/produce one. **Backfill**: new
+  `backfill_missing_sale_amount` management command (`--business=`,
+  `--dry-run`) recovers the true historical amount for every existing
+  `sale_amount IS NULL` Issue transaction from whichever of two frozen
+  snapshots survives — a linked `BarTabEntry.amount` (tab/credit sales,
+  safe per the split-mechanism guarantee above), or a matching `Receipt.
+  lines` entry found by `txn_id` (a direct, tab-less sale) — and reports
+  two distinct things per business, since they need different follow-up:
+  transactions **ALREADY DRIFTED** (the recovered value disagrees with
+  what `revenue()` currently returns — a real, live-right-now over/under-
+  statement someone may already be looking at, with the exact KES delta)
+  vs merely now-pinned-for-the-future (recoverable, backfilled, but
+  nothing currently disagrees — pinning only prevents a FUTURE price edit
+  from causing this). A transaction recoverable by neither source is left
+  untouched and listed separately, same "no automatic repair, reconcile
+  manually" honesty this app already applies everywhere a historical value
+  genuinely can't be reconstructed. Answers Roy's own direct follow-up
+  ("what about such an effect in all customers") precisely: `--dry-run`
+  with no `--business` filter scans every business on the platform at
+  once and reports the true scope, not just Monsoon Inn/Trixie. 13 new
+  tests (`SaleAmountPinnedAgainstPriceDriftTest` — the literal reported bug
+  reproduced end to end through the real `/quick-sell/` checkout, a tab
+  converted to debt via `_convert_tab_to_debt_core`, and the debt tracker's
+  own `_get_customer_debt_data()` proven to agree with the receipt/entry
+  after a later price change; the STK-settlement sibling fix locked in the
+  same way; `BackfillMissingSaleAmountTest` — recovery from a tab entry
+  with drift correctly flagged, recovery from a receipt line, the
+  recovered-but-not-yet-drifted case correctly NOT flagged as drift, the
+  not-recoverable case left untouched, dry-run, business scoping, and
+  idempotent re-run). No migrations (no schema change — pure checkout-code
+  fix plus a read-only-safe backfill of an already-existing nullable
+  field). Action for Roy: run `python manage.py backfill_missing_sale_
+  amount --dry-run` (omit `--business=` to scan every business) on
+  Render's Shell to see the true scope platform-wide, then re-run without
+  `--dry-run` to apply.

@@ -784,7 +784,18 @@ def _settle_qs_from_payment(payment):
                 continue
 
             preset = ItemPortionPreset.objects.filter(id=preset_id, item=item).first() if preset_id else None
-            sale_amount = amount if (preset or amount != qty * item.selling_price) else None
+            # 2026-08-30 — was `amount if (preset or amount != qty *
+            # item.selling_price) else None`: whenever the STK amount
+            # happened to equal qty × the item's CURRENT selling_price at
+            # settlement time, sale_amount was left None, deferring to
+            # revenue()'s live selling_price×qty fallback — vulnerable to
+            # the exact same price-drift bug fixed the same day in the
+            # direct Quick Sell checkout (core.views.quick_sell), just here
+            # for its STK-callback sibling. `amount` is the real, confirmed
+            # M-Pesa charge for this line — always the correct value to pin,
+            # regardless of whether it happens to numerically match the
+            # live formula right now.
+            sale_amount = amount
             # 2026-07-31 — authoritative server-side stock deduction for a
             # preset tap, same fix as the direct Quick Sell checkout path
             # (Roy's live report — this STK settlement callback creates the

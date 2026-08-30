@@ -26255,6 +26255,248 @@ class QuickSellPresetCheckoutTest(TestCase):
         self.assertEqual(txn.cost(), 400.0)  # 0.5 x 800, not 0.5 x 900
 
 
+class SaleAmountPinnedAgainstPriceDriftTest(TestCase):
+    """2026-08-30 live report (Roy, Monsoon Inn): a "KC Pineapple 250 ML ×2"
+    credit sale showed KES 800 on the customer's own receipt but only KES
+    400 in the debt tracker for the exact same Transaction. Root cause,
+    confirmed by direct code trace: a PLAIN (non-preset, non-produce) item
+    tap on Quick Sell's checkout — and the identical shape of Transaction
+    created by its STK settlement callback, _settle_qs_from_payment — left
+    Transaction.sale_amount=None, relying on revenue()'s item.selling_
+    price×qty fallback. That fallback recomputes LIVE every time revenue()
+    is called, so raising the item's price AFTER the sale silently changes
+    what an already-completed historical sale is worth, forever — the debt
+    tracker's own _get_customer_debt_data() reads txn.revenue() directly for
+    both its Total Credit aggregate and its per-row "Amount Owed" figure
+    (core/debt_views.py line ~321: `txn.revenue() - entry.amount_paid`),
+    while BarTabEntry.amount was always correctly frozen at the price
+    genuinely charged at checkout time — so the two silently diverged.
+    Fixed by pinning sale_amount unconditionally, for every line, in both
+    quick_sell()'s direct checkout and _settle_qs_from_payment's STK
+    settlement — matching what BarTabEntry.amount/the receipt's own
+    recorded subtotal already captured all along."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Price Drift Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='pd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='KC Pineapple 250 ML',
+            material_no='PD-KCP', unit='Bottle', selling_price=Decimal('200'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Receipt', qty=Decimal('20'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_plain_item_cash_sale_pins_sale_amount(self):
+        import json
+        cart = json.dumps([{'id': self.item.id, 'qty': 2, 'price': 200}])
+        self.client.post('/quick-sell/', {'cart': cart, 'payment_method': 'cash'})
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
+        self.assertIsNotNone(txn.sale_amount, 'a plain item line must now pin sale_amount too')
+        self.assertEqual(float(txn.sale_amount), 400.0)
+        self.assertEqual(txn.revenue(), 400.0)
+        # Later price change must NOT retroactively change this historical sale.
+        self.item.selling_price = Decimal('400')
+        self.item.save(update_fields=['selling_price'])
+        self.assertEqual(txn.revenue(), 400.0)
+
+    def test_plain_item_credit_sale_receipt_and_debt_tracker_agree_after_price_change(self):
+        """The literal reported bug: receipt showed KES 800, debt tracker
+        showed KES 400, for the same transaction — reproduced end to end and
+        proven fixed going forward."""
+        import json
+        from core.debt_views import _get_customer_debt_data
+        from core.models import BarTabEntry, Customer
+
+        cart = json.dumps([{'id': self.item.id, 'qty': 2, 'price': 200}])
+        resp = self.client.post('/quick-sell/', {
+            'cart': cart, 'payment_method': 'tab',
+            'recipient': 'Trixie', 'credit_phone': '',
+        })
+        self.assertNotEqual(resp.status_code, 500)
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
+        entry = BarTabEntry.objects.get(transaction=txn)
+        self.assertEqual(float(entry.amount), 400.0)
+        self.assertEqual(txn.revenue(), 400.0, 'must match entry.amount at creation')
+
+        # Owner later raises the item's price — the historical sale must
+        # stay frozen at what was actually charged, on every surface.
+        self.item.selling_price = Decimal('400')
+        self.item.save(update_fields=['selling_price'])
+        entry.refresh_from_db()
+        txn.refresh_from_db()
+        self.assertEqual(txn.revenue(), 400.0, 'revenue() must not drift after a later price edit')
+        self.assertEqual(float(entry.amount), 400.0)
+        self.assertEqual(float(entry.remaining_amount()), 400.0)
+
+        # Trixie's real tab was later converted to debt (via "Geuza Deni" /
+        # shift-close auto-convert) — that's when the debt tracker actually
+        # starts reading it; an OPEN tab isn't debt yet.
+        from core.keg_views import _convert_tab_to_debt_core
+        _convert_tab_to_debt_core(entry.tab, self.biz, 'Trixie')
+
+        customer = Customer.objects.get(business=self.biz, name='Trixie')
+        data = _get_customer_debt_data(customer, self.biz, scope='all')
+        self.assertEqual(data['total_credit'], 400.0, 'debt tracker total must agree with the receipt')
+        row = data['unpaid_transactions'][0]
+        self.assertEqual(row['amount'], 400.0, 'per-row Amount Owed must agree with entry.amount too')
+
+    def test_qs_stk_settlement_plain_item_pins_sale_amount(self):
+        from core.mpesa_views import _settle_qs_from_payment
+        from core.models import Payment
+
+        payment = Payment.objects.create(
+            business=self.biz, amount=Decimal('400'), phone='0700000000',
+            status='completed',
+            qs_cart=[{'item_id': self.item.id, 'qty': 2, 'amount': 400}],
+        )
+        _settle_qs_from_payment(payment)
+        txn = Transaction.objects.get(business=self.biz, item=self.item, type='Issue')
+        self.assertIsNotNone(txn.sale_amount, 'STK settlement must pin sale_amount too, not just direct checkout')
+        self.assertEqual(float(txn.sale_amount), 400.0)
+        self.item.selling_price = Decimal('600')
+        self.item.save(update_fields=['selling_price'])
+        self.assertEqual(txn.revenue(), 400.0, 'revenue() must not drift after a later price edit')
+
+
+class BackfillMissingSaleAmountTest(TestCase):
+    """core/management/commands/backfill_missing_sale_amount.py — repairs
+    historical Issue transactions left with sale_amount=None by the bug
+    fixed the same day in SaleAmountPinnedAgainstPriceDriftTest, recovering
+    the true originally-charged amount from a linked BarTabEntry (tab/credit
+    sales) or a matching Receipt.lines entry (direct sales), and reporting
+    which recovered rows are ALREADY showing a live disagreement (revenue()
+    has already drifted) vs merely now-pinned-for-the-future."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Backfill SA Biz')
+        self.other_biz = Business.objects.create(name='Other Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Backfill Item',
+            material_no='BFSA-01', unit='Pcs', selling_price=Decimal('200'),
+        )
+
+    def _tab_linked_null_sale_amount_txn(self, amount=Decimal('400')):
+        from core.models import BarTab, BarTabEntry
+        tab = BarTab.objects.create(business=self.biz, customer_name='Trixie', status='OPEN')
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), sale_amount=None, payment_method='credit', recipient='Trixie',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description='Backfill Item x2',
+            amount=amount, is_paid=False,
+        )
+        return txn, entry
+
+    def test_recovers_from_tab_entry_and_flags_current_drift(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        txn, entry = self._tab_linked_null_sale_amount_txn(amount=Decimal('400'))
+        # Price rise since the sale — revenue() currently reads 800, live.
+        self.item.selling_price = Decimal('400')
+        self.item.save(update_fields=['selling_price'])
+        self.assertEqual(txn.revenue(), 800.0)
+
+        out = StringIO()
+        call_command('backfill_missing_sale_amount', stdout=out)
+        txn.refresh_from_db()
+        self.assertEqual(float(txn.sale_amount), 400.0)
+        self.assertEqual(txn.revenue(), 400.0, 'must now match the frozen entry.amount, not the live price')
+        self.assertIn('ALREADY DRIFTED', out.getvalue())
+        self.assertIn('txn#%d' % txn.id, out.getvalue())
+
+    def test_recovers_from_receipt_line_for_direct_sale(self):
+        from core.models import Receipt
+        from django.core.management import call_command
+
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), sale_amount=None, payment_method='cash',
+        )
+        Receipt.objects.create(
+            business=self.biz, token='rcpt-tok-1', receipt_number=1,
+            lines=[{'name': self.item.description, 'subtotal': 400.0, 'txn_id': txn.id}],
+            total=Decimal('400'), payment_method='cash',
+        )
+        call_command('backfill_missing_sale_amount')
+        txn.refresh_from_db()
+        self.assertEqual(float(txn.sale_amount), 400.0)
+
+    def test_recovered_but_not_yet_drifted_is_not_flagged_as_drift(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        txn, entry = self._tab_linked_null_sale_amount_txn(amount=Decimal('400'))
+        # No price change — the live fallback already reads exactly 400.
+        self.assertEqual(txn.revenue(), 400.0)
+
+        out = StringIO()
+        call_command('backfill_missing_sale_amount', stdout=out)
+        txn.refresh_from_db()
+        self.assertEqual(float(txn.sale_amount), 400.0, 'still backfilled, to prevent a FUTURE drift')
+        self.assertNotIn('ALREADY DRIFTED', out.getvalue())
+        self.assertIn('0 already drifted', out.getvalue())
+
+    def test_not_recoverable_left_untouched(self):
+        from django.core.management import call_command
+
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=None, payment_method='cash',
+        )
+        call_command('backfill_missing_sale_amount')
+        txn.refresh_from_db()
+        self.assertIsNone(txn.sale_amount, 'no tab entry, no receipt line — nothing safe to recover')
+
+    def test_dry_run_changes_nothing(self):
+        from django.core.management import call_command
+
+        txn, entry = self._tab_linked_null_sale_amount_txn()
+        call_command('backfill_missing_sale_amount', '--dry-run')
+        txn.refresh_from_db()
+        self.assertIsNone(txn.sale_amount)
+
+    def test_business_scoping(self):
+        from django.core.management import call_command
+
+        other_store = Store.objects.create(business=self.other_biz, name='Other Store')
+        other_item = Item.objects.create(
+            business=self.other_biz, store=other_store, description='Other Item',
+            material_no='OTH-01', unit='Pcs', selling_price=Decimal('50'),
+        )
+        from core.models import BarTab, BarTabEntry
+        other_tab = BarTab.objects.create(business=self.other_biz, customer_name='Someone Else', status='OPEN')
+        other_txn = Transaction.objects.create(
+            business=self.other_biz, item=other_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=None, payment_method='credit', recipient='Someone Else',
+        )
+        BarTabEntry.objects.create(
+            tab=other_tab, transaction=other_txn, description='Other Item', amount=Decimal('50'),
+        )
+        call_command('backfill_missing_sale_amount', '--business=Backfill SA Biz')
+        other_txn.refresh_from_db()
+        self.assertIsNone(other_txn.sale_amount, 'a differently-named business must be left untouched')
+
+    def test_idempotent_rerun(self):
+        from django.core.management import call_command
+
+        txn, entry = self._tab_linked_null_sale_amount_txn()
+        call_command('backfill_missing_sale_amount')
+        txn.refresh_from_db()
+        self.assertEqual(float(txn.sale_amount), 400.0)
+        # Second run has nothing left with sale_amount NULL for this txn —
+        # must not touch it again or raise.
+        call_command('backfill_missing_sale_amount')
+        txn.refresh_from_db()
+        self.assertEqual(float(txn.sale_amount), 400.0)
+
+
 class PresetAttributionLatentGapFixesTest(TestCase):
     """Four call sites already RESOLVED a preset (via preset_id) for some
     other purpose but silently dropped it instead of attaching it to the
