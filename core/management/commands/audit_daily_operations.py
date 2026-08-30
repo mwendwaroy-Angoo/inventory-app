@@ -31,7 +31,12 @@ class Command(BaseCommand):
         "(totals + flags only, no per-transaction/per-staff/per-entry listing); "
         "pass --verbose for the full itemized detail, and --section=X to scope "
         "to exactly one section (e.g. re-run just the one that showed a flag, "
-        "with --verbose, instead of the whole report again).\n\n"
+        "with --verbose, instead of the whole report again). --deep itself "
+        "calls audit_debt_ledger_integrity WITHOUT --all-customers — that flag "
+        "dumps a full itemized unpaid list for every customer with a balance "
+        "(55 customers on a real run) and is its own separately-runnable, "
+        "deliberately verbose tool; --deep only surfaces the short anomaly "
+        "findings, which is what answers 'is anything wrong'.\n\n"
         "Usage: python manage.py audit_daily_operations --business=\"Monsoon Inn\" "
         "[--date=YYYY-MM-DD, default: yesterday] [--section=sales|shifts|stock|"
         "variances|receiving|expenses|corrections|deep|all, default: all] "
@@ -108,9 +113,21 @@ class Command(BaseCommand):
                     'diagnose_recent_sales_visibility',
                     business=business.name, date=sel_date.isoformat(), stdout=self.stdout,
                 )
+                # 2026-08-30, second same-day follow-up: deliberately NOT
+                # --all-customers here — that flag dumps a full itemized
+                # unpaid-transaction list for EVERY customer with a balance
+                # (55 customers on a real Monsoon Inn run), reintroducing the
+                # exact "too much to screenshot" problem this whole redesign
+                # was for. Without it, this only prints the short anomaly
+                # findings (unsynced payment_method / stuck SETTLED tab /
+                # duplicate names) — a handful of lines unless something is
+                # actually wrong, which is the "is anything wrong" signal
+                # --deep is for. Run audit_debt_ledger_integrity directly
+                # with --all-customers (or --customer=NAME) if the full
+                # itemized ledger dump is genuinely needed.
                 call_command(
                     'audit_debt_ledger_integrity',
-                    business=business.name, all_customers=True, stdout=self.stdout,
+                    business=business.name, stdout=self.stdout,
                 )
                 call_command('audit_money_path_integrity', business=business.name, stdout=self.stdout)
             elif run_all:

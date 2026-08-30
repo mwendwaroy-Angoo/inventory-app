@@ -9986,3 +9986,35 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   header and excludes every other one, and `--deep` is confirmed off by
   default / on when either `--deep` or `--section=deep` is passed. No
   migrations. 2659 tests pass (core + accounts).
+- `audit_daily_operations --deep` still too long — a live screenshot found
+  it (2026-08-30, same-day follow-up). Roy ran `--deep` (or a full run
+  including it) and had to scroll/screenshot a middle chunk anyway — his
+  screenshot showed two "Dallas" line items under a customer's own unpaid-
+  transaction breakdown, then "=== TOTAL: 55 customer(s) with an
+  outstanding balance, KES 25,765 combined ===". Traced directly: `--deep`
+  was calling `audit_debt_ledger_integrity` with `all_customers=True`
+  unconditionally — that flag (per the command's own `add_arguments` help
+  text) dumps a full itemized unpaid-transaction list (item/date/amount/
+  days-outstanding/originating-tab) for EVERY customer in the business
+  with a nonzero balance, 55 of them on Monsoon Inn — reintroducing the
+  exact "too much to screenshot" problem the whole `--verbose`/`--section`/
+  `--deep` redesign (earlier the same day) was built to solve, just one
+  layer deeper. The real signal `--deep` needs to answer "is anything
+  wrong" is the SHORT anomaly-findings section that command already prints
+  FIRST (unsynced payment_method / a SETTLED tab stuck with no customer_id
+  / duplicate customer names) — a handful of lines unless something is
+  genuinely flagged; the itemized whole-ledger dump is a separate,
+  deliberately verbose tool for when that's actually needed. Fixed by
+  dropping `all_customers=True` from the orchestration call — `--deep` now
+  only ever prints the findings section (plus "No integrity issues found."
+  when clean); the full itemized ledger is still one command away by
+  running `audit_debt_ledger_integrity --business=NAME --all-customers` (or
+  `--customer=NAME` for one person) directly, unchanged. 1 new test
+  (`test_deep_still_short_when_debt_ledger_has_many_customers`) reproduces
+  the exact reported shape at small scale — two Customer rows sharing a
+  name (a real, genuine finding, independent of any balance) plus a THIRD
+  customer with a real unpaid credit transaction (so the itemized dump, if
+  it were still running, would have something concrete to print for it) —
+  asserting the finding's own explanation still surfaces in full while the
+  itemized dump's distinct header format, its grand-total line, and the
+  debtor's name are all absent. 2660 tests pass (core + accounts).

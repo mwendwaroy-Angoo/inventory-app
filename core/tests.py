@@ -48490,6 +48490,57 @@ class AuditDailyOperationsCommandTest(TestCase):
         self.assertIn('deep checks', deep_output)
         self.assertNotIn('[1] SALES', deep_output)
 
+    def test_deep_still_short_when_debt_ledger_has_many_customers(self):
+        """2026-08-30, second same-day follow-up — the literal live report:
+        Roy screenshotted a --deep run and it was STILL too long, because
+        this command was passing --all-customers to audit_debt_ledger_
+        integrity, which dumps a full itemized unpaid-transaction list for
+        EVERY customer with a balance (55 on his real Monsoon Inn business).
+        Reproduces the same shape at small scale: a genuine flagged finding
+        (duplicate customer names) must still surface, but the itemized
+        per-customer '--- ... Customer #N ... ---' ledger breakdown must
+        NOT appear — that's the whole-ledger dump audit_debt_ledger_
+        integrity's own --all-customers flag is for, and it's a separately
+        runnable tool, not something --deep should force every time."""
+        from io import StringIO
+        from django.core.management import call_command
+
+        biz, yesterday = self._build_fixture()
+        # Two Customer rows sharing a name — audit_debt_ledger_integrity's
+        # finding #3 (duplicate names), completely independent of any
+        # unpaid balance, so this doesn't need real debt to trigger.
+        Customer.objects.create(business=biz, name='Eugene', phone='0700000001')
+        Customer.objects.create(business=biz, name='Eugene', phone='0700000002')
+        # A customer WITH a real balance too, so the old --all-customers
+        # itemized dump (if it were still happening) would have something
+        # to print for it — proving its ABSENCE isn't just "nothing owed".
+        item = Item.objects.get(business=biz, description='Test Beer')
+        debtor = Customer.objects.create(business=biz, name='A Real Debtor')
+        Transaction.objects.create(
+            business=biz, item=item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('300'), payment_method='credit',
+            recipient=debtor.name,
+            created_at=timezone.localtime() - timedelta(days=1),
+        )
+
+        out = StringIO()
+        call_command(
+            'audit_daily_operations', business='Flag Test Biz',
+            date=yesterday.isoformat(), section='deep', stdout=out,
+        )
+        output = out.getvalue()
+        # The real finding still surfaces, including its own per-record
+        # detail (this is the finding's own explanation, not the itemized
+        # whole-ledger dump — distinguished below).
+        self.assertIn('share the name', output)
+        self.assertIn('Customer #1', output)
+        self.assertIn('Customer #2', output)
+        # But the itemized whole-ledger dump (--all-customers) does not run —
+        # its own distinct header format, and grand-total line, are absent.
+        self.assertNotIn('/ Customer #', output)
+        self.assertNotIn('=== TOTAL:', output)
+        self.assertNotIn('A Real Debtor', output)
+
     def test_default_date_is_yesterday_not_today(self):
         from io import StringIO
         from django.core.management import call_command
