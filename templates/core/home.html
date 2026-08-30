@@ -1273,14 +1273,31 @@ function homeForceCloseShift(shiftId, staffName) {
                     ? '<button type="button" onclick=\'homeForceCloseShift(' + s.id + ', ' + JSON.stringify(s.staff_name) + ')\' ' +
                       'style="font-size:.68rem; padding:.15rem .5rem; border-radius:6px; border:1px solid #c0395a; background:transparent; color:#e57373; cursor:pointer;">🔒 Funga kwa niaba</button>'
                     : '';
-                return '<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.4rem; padding:.3rem 0; ' + border + '">' +
+                // 2026-08-30 same-day follow-up (Roy: "let us go a mile extra
+                // and put totalities inclusive of both (cash sales + cash debt
+                // recovered) and (mpesa sales + mpesa debt recovered)...
+                // which do you prefer" — his own placement options were next to
+                // the timer, or a dedicated row below the name/timer and above
+                // the Cash/M-Pesa breakdown. Chose the latter: the header row
+                // already carries the station icon, staff name, and start-time/
+                // timer — cramming two more money figures in there would wrap
+                // awkwardly on a phone-width screen; a dedicated row keeps each
+                // line single-purpose (who/when → channel totals → composition
+                // breakdown) and reads cleanly top-down.
+                var cashTotal  = (s.cash_sales  || 0) + (s.debt_recovered_cash  || 0);
+                var mpesaTotal = (s.mpesa_sales || 0) + (s.debt_recovered_mpesa || 0);
+                return '<div style="padding:.3rem 0; ' + border + '">' +
                     '<div style="display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">' +
                         '<span style="width:8px; height:8px; border-radius:50%; background:#5dde7a; display:inline-block; flex-shrink:0;"></span>' +
                         '<span style="color:#5dde7a; font-size:.75rem; font-weight:700;">' + icon + ' ' + label + '</span>' +
                         '<span style="color:#b0b0b0; font-size:.78rem;">' + s.staff_name + '</span>' +
                         '<span style="color:#888; font-size:.75rem;">· ' + s.started_at + ' (' + timeLabel + ')</span>' +
                     '</div>' +
-                    '<div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:center;">' +
+                    '<div style="display:flex; gap:.9rem; flex-wrap:wrap; align-items:center; margin-top:.2rem;">' +
+                        '<span style="font-size:.72rem; color:#888;" title="Cash KES ' + Math.round(s.cash_sales) + ' (mauzo) + KES ' + Math.round(s.debt_recovered_cash || 0) + ' (deni lililolipwa)">Jumla Cash: <strong style="color:#c9a84c;">KES ' + Math.round(cashTotal) + '</strong></span>' +
+                        '<span style="font-size:.72rem; color:#888;" title="M-Pesa KES ' + Math.round(s.mpesa_sales) + ' (mauzo) + KES ' + Math.round(s.debt_recovered_mpesa || 0) + ' (deni lililolipwa)">Jumla M-Pesa: <strong style="color:#c9a84c;">KES ' + Math.round(mpesaTotal) + '</strong></span>' +
+                    '</div>' +
+                    '<div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; margin-top:.25rem;">' +
                         '<span style="font-size:.75rem; color:#b0b0b0;" title="' + ((s.owner_facilitated_cash || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_cash) + ' kutoka kwa mmiliki — si nyongeza' : '') + '">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong>' +
                             // 2026-08-30 (Roy): "another deni alongside there but in
                             // green... x amount of cash or mpesa was recovered" — an old

@@ -47857,6 +47857,18 @@ class HomeShiftMeterDebtRecoveredBreakdownTest(TestCase):
         self.assertContains(resp, 'nyongeza juu ya Cash hapo juu')
         self.assertContains(resp, 'nyongeza juu ya M-Pesa hapo juu')
 
+    def test_home_page_js_renders_channel_totals_row(self):
+        # 2026-08-30 same-day follow-up: "totalities inclusive of both (cash
+        # sales + cash debt recovered) and (mpesa sales + mpesa debt
+        # recovered)... a dedicated row below the name/timer and above the
+        # breakdown" — Roy's own preferred placement.
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertContains(resp, 'cashTotal')
+        self.assertContains(resp, 'mpesaTotal')
+        self.assertContains(resp, 'Jumla Cash')
+        self.assertContains(resp, 'Jumla M-Pesa')
+
     def test_debt_recovered_never_double_counted_against_credit_sales(self):
         # Roy's own red "Deni KES X" is NEW credit placed (Transaction.
         # payment_method='credit') — a completely different model/figure from

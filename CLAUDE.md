@@ -9759,3 +9759,34 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   regression lock that debt recovered never bleeds into `credit_sales`
   (a completely different model — new credit placed, not old debt paid
   back). Pure template/JS change — no backend/model change, no migrations.
+- Home dashboard Active Shifts meter — per-channel totals row (2026-08-30,
+  same-day follow-up). Roy: "let us go a mile extra and put totalities
+  inclusive of both (cash sales + cash debt recovered) and (mpesa sales +
+  mpesa debt recovered) next to (19h 10m) timer or even better right below
+  the staff in shift name and the timer just above the segregation of
+  both, which do you prefer" — explicitly asked for a placement call.
+  Recommended and built the latter: the header row already carries the
+  station icon, staff name, and start-time/timer, and on a phone-width
+  screen two more money figures crammed in there would wrap awkwardly;
+  a dedicated row keeps each line single-purpose (who/when → channel
+  totals → composition breakdown → the existing Deni/confirmed-sales
+  footer) and reads cleanly top-down. Restructured the shift row's outer
+  container from a single `flex; justify-content:space-between` pair
+  (header + breakdown, wrapping unpredictably depending on screen width)
+  to three explicit stacked block-level divs — header, new totals row,
+  breakdown row — so the totals row always renders on its own line
+  regardless of viewport width, not just when content happens to wrap.
+  `cashTotal = cash_sales + debt_recovered_cash`, `mpesaTotal = mpesa_
+  sales + debt_recovered_mpesa` (both fields already delivered by
+  `all_shifts_data`, same as the immediately-prior sprint) — rendered as
+  "Jumla Cash: KES X" / "Jumla M-Pesa: KES Y" with a tooltip breaking each
+  down into its own sales + recovered components. Verified the edited
+  script block's JS syntax directly (extracted and `node --check`'d,
+  confirming the one pre-existing "error" is unrelated raw Django
+  template tags in a DIFFERENT, un-touched script block on the same
+  page — not something this edit introduced). 4 tests total in
+  `HomeShiftMeterDebtRecoveredBreakdownTest` (1 new —
+  `test_home_page_js_renders_channel_totals_row`, locking in that the
+  shipped page actually contains the new row's JS, not just a described
+  intention). Pure template/JS change, no backend/model change, no
+  migrations.
