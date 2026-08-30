@@ -9711,3 +9711,51 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   cost-basis figure, both from the live weigh response and independently
   from `keg_metrics.shift_barrel_variance()`). No migrations (pure
   computed methods + additive dataclass fields, no schema change).
+- Home dashboard Active Shifts meter — debt-recovered breakdown, green
+  alongside red (2026-08-30). Live follow-up after explaining the existing
+  red "Deni KES X" (new credit placed) figure on a shift row: Roy asked for
+  "another deni alongside there but in green that shows... either x amount
+  of cash or mpesa was recovered so that we know what amount of the cash
+  sales is part of debt recovered and what amount of mpesa sales is debt
+  recovered." Traced first rather than assuming a gap: `shift_views.
+  _reconcile()` has computed `debt_recovered_cash`/`debt_recovered_mpesa`
+  since 2026-07-26, and `active_shift_api()`'s `all_shifts_data` (the exact
+  JSON payload driving this meter) has carried both fields in every row
+  since 2026-08-22 — the gap was purely that the meter's own client-side
+  JS never rendered either one; only the red `credit_sales` span existed.
+  Added a green span next to Cash and a green span next to M-Pesa, each
+  keyed to that channel's own `debt_recovered_*` figure, matching Roy's
+  own ask for a per-channel split rather than one combined figure. **Real
+  semantic bug caught by the tests themselves, not shipped**: the first
+  draft copied the existing owner-facilitated tooltip's wording pattern
+  ("already counted inside Cash above, non-additive") — WRONG for this
+  figure specifically. `owner_facilitated_cash` genuinely is a subset of
+  `cash_sales` (same `Transaction` query, just also separately attributed
+  by recorded_by), but `debt_recovered_cash` is a COMPLETELY SEPARATE
+  query against `CustomerDebtPayment`, not `Transaction` — confirmed
+  directly against `_reconcile()`'s own `expected_cash = opening_float +
+  cash_sales + debt_recovered_cash - petty_total` formula, which only
+  makes sense if the two are ADDITIVE, never overlapping. A debt payment
+  is money collected toward an old receivable, not a new sale — it was
+  never going to be part of `cash_sales` to begin with. First draft of
+  the test asserted `cash_sales` should read 300+120=420 for a fixture
+  with a 300 sale + a 120 cash debt payment; it failed with the real,
+  correct value of 300, which is what caught the wrong tooltip wording
+  before it shipped. Fixed to a "+ Deni X" prefix and corrected tooltip
+  text ("nyongeza juu ya Cash hapo juu, si sehemu yake" — additive on top
+  of Cash above, not a portion of it). Separate, unrelated test-fixture
+  bug also caught and fixed along the way: dating the fixture's
+  `Transaction.created_at`/`CustomerDebtPayment.paid_at` as `shift.
+  started_at + timedelta(minutes=N)` landed AFTER real `timezone.now()`
+  (since the OPEN shift's own reconciliation window ends at real "now",
+  captured only milliseconds after `started_at` at fixture-build time) —
+  pushed the fixture's own transactions outside `_reconcile()`'s window
+  entirely, reading 0 for everything; fixed by using real `timezone.now()`
+  directly instead of an artificial offset from `started_at`. 3 new tests
+  (`HomeShiftMeterDebtRecoveredBreakdownTest`) — the real JSON payload
+  carries both fields with correct, non-overlapping values end to end via
+  a live `CustomerDebtPayment`, the shipped JS actually contains the new
+  rendering logic (not just described in a commit message), and a direct
+  regression lock that debt recovered never bleeds into `credit_sales`
+  (a completely different model — new credit placed, not old debt paid
+  back). Pure template/JS change — no backend/model change, no migrations.

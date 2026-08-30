@@ -1281,8 +1281,29 @@ function homeForceCloseShift(shiftId, staffName) {
                         '<span style="color:#888; font-size:.75rem;">· ' + s.started_at + ' (' + timeLabel + ')</span>' +
                     '</div>' +
                     '<div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:center;">' +
-                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + ((s.owner_facilitated_cash || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_cash) + ' kutoka kwa mmiliki — si nyongeza' : '') + '">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong></span>' +
-                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + ((s.owner_facilitated_mpesa || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_mpesa) + ' kutoka kwa mmiliki — si nyongeza' : '') + '">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong></span>' +
+                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + ((s.owner_facilitated_cash || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_cash) + ' kutoka kwa mmiliki — si nyongeza' : '') + '">Cash <strong style="color:#f0ece4;">KES ' + Math.round(s.cash_sales) + '</strong>' +
+                            // 2026-08-30 (Roy): "another deni alongside there but in
+                            // green... x amount of cash or mpesa was recovered" — an old
+                            // debt being paid back (CustomerDebtPayment) is a SEPARATE
+                            // stream from a fresh sale (Transaction) — _reconcile()'s own
+                            // expected_cash = opening_float + cash_sales + debt_recovered_
+                            // cash - petty, i.e. debt_recovered_cash is genuinely ADDITIVE
+                            // on top of the Cash KES figure above, not a portion already
+                            // counted inside it (confirmed directly — an earlier draft of
+                            // this fix wrongly assumed "already inside", caught by its own
+                            // test asserting the wrong total). Shown with a "+" prefix for
+                            // exactly that reason. debt_recovered_cash/mpesa were already
+                            // computed by _reconcile() (2026-07-26) and already reached
+                            // this JSON payload — they just had nowhere to render.
+                            ((s.debt_recovered_cash || 0) > 0
+                                ? ' <span style="color:#5dde7a; font-weight:600;" title="Deni la zamani lililolipwa taslimu — nyongeza juu ya Cash hapo juu, si sehemu yake">+ Deni ' + Math.round(s.debt_recovered_cash) + '</span>'
+                                : '') +
+                        '</span>' +
+                        '<span style="font-size:.75rem; color:#b0b0b0;" title="' + ((s.owner_facilitated_mpesa || 0) > 0 ? 'Ikiwemo KES ' + Math.round(s.owner_facilitated_mpesa) + ' kutoka kwa mmiliki — si nyongeza' : '') + '">M-Pesa <strong style="color:#f0ece4;">KES ' + Math.round(s.mpesa_sales) + '</strong>' +
+                            ((s.debt_recovered_mpesa || 0) > 0
+                                ? ' <span style="color:#5dde7a; font-weight:600;" title="Deni la zamani lililolipwa kwa M-Pesa — nyongeza juu ya M-Pesa hapo juu, si sehemu yake">+ Deni ' + Math.round(s.debt_recovered_mpesa) + '</span>'
+                                : '') +
+                        '</span>' +
                         (s.credit_sales > 0 ? '<span style="font-size:.75rem; color:#f87171;" title="Bidhaa zilizotolewa kwa deni jipya — SI mauzo ya cash/mpesa">Deni <strong>KES ' + Math.round(s.credit_sales) + '</strong></span>' : '') +
                         '<span style="font-size:.75rem; color:#c9a84c; font-weight:700;" title="Confirmed cash + M-Pesa only">KES ' + Math.round(s.confirmed_sales) + '</span>' +
                         // 2026-08-22 same-day follow-up ("every transactional aspect of

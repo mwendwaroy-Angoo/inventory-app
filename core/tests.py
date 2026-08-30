@@ -47765,3 +47765,106 @@ class WindowRevenueAggregateCorrectnessTest(TestCase):
         self.assertEqual(
             _window_revenue_owner_facilitated(biz2, is_kitchen=False, start=start, end=end), 0,
         )
+
+
+class HomeShiftMeterDebtRecoveredBreakdownTest(TestCase):
+    """2026-08-30 live request (Roy, after being shown a shift row's red
+    "Deni KES X" — new credit placed): "could we have another deni alongside
+    there but in green that shows... either x amount of cash or mpesa was
+    recovered so that we know what amount of the cash sales is part of debt
+    recovered and what amount of mpesa sales is debt recovered."
+
+    shift_views._reconcile() already computed debt_recovered_cash/
+    debt_recovered_mpesa (2026-07-26) and active_shift_api() already put both
+    into every all_shifts_data row (2026-08-22) — the JSON payload driving
+    home.html's "Active Shifts" meter has carried this since before this
+    fix. The gap was purely that the meter's own client-side rendering never
+    read either field: only the RED "Deni" (credit_sales) span existed, with
+    no green debt-RECOVERED counterpart at all. This is a template/JS-only
+    fix — no backend change — so these tests lock in (1) the real numbers
+    genuinely reach the page via a live CustomerDebtPayment, and (2) the new
+    green-span rendering logic is actually present in the shipped JS, not
+    just described in a commit message."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Home Meter Debt Biz')
+        self.owner = User.objects.create_user(username='hmd_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='hmd_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, material_no='HMD-01',
+            description='Test Lager', unit='bottle',
+            selling_price=Decimal('100'), cost_price=Decimal('30'),
+        )
+        self.shift = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff,
+            status='OPEN', opening_float=Decimal('0'),
+        )
+        # A fresh cash sale AND an old debt being paid back in cash, both
+        # landing in this shift's own window — the whole point is telling
+        # these two apart within the SAME Cash KES figure. The shift stays
+        # OPEN, so _reconcile()'s window is [started_at, real now()] — real
+        # timezone.now() (not started_at + an offset, which can land AFTER
+        # "now" and fall outside the window entirely, since started_at and
+        # "now" are only milliseconds apart at fixture-build time) keeps
+        # every timestamp safely inside it.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('300'),
+            payment_method='cash', recorded_by=self.staff,
+            created_at=timezone.now(),
+        )
+        from core.models import Customer, CustomerDebtPayment
+        customer = Customer.objects.create(business=self.biz, name='Debtor Kamau')
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz,
+            amount_paid=Decimal('120'), payment_method='cash', source='bar',
+            paid_at=timezone.now(),
+        )
+        CustomerDebtPayment.objects.create(
+            customer=customer, business=self.biz,
+            amount_paid=Decimal('80'), payment_method='mpesa', source='bar',
+            paid_at=timezone.now(),
+        )
+
+    def test_active_shift_api_all_shifts_carries_debt_recovered_breakdown(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/active/')
+        data = resp.json()
+        row = next(s for s in data['all_shifts'] if s['id'] == self.shift.id)
+        # cash_sales (Transaction-based, fresh sales only) and
+        # debt_recovered_cash (CustomerDebtPayment-based, an old receivable
+        # being collected) are DELIBERATELY SEPARATE, non-overlapping
+        # figures — debt_recovered_cash is additive on top of cash_sales
+        # toward what should physically be in the till, never a subset of
+        # it (confirmed directly against _reconcile()'s own expected_cash
+        # formula). mpesa_sales stays 0 here (no fresh M-Pesa sale in this
+        # fixture) even though M-Pesa debt WAS recovered — the two streams
+        # never bleed into each other in either direction.
+        self.assertAlmostEqual(row['cash_sales'], 300.0, places=1)
+        self.assertAlmostEqual(row['debt_recovered_cash'], 120.0, places=1)
+        self.assertAlmostEqual(row['mpesa_sales'], 0.0, places=1)
+        self.assertAlmostEqual(row['debt_recovered_mpesa'], 80.0, places=1)
+
+    def test_home_page_js_renders_green_debt_recovered_span(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/')
+        self.assertContains(resp, 's.debt_recovered_cash')
+        self.assertContains(resp, 's.debt_recovered_mpesa')
+        self.assertContains(resp, '#5dde7a')  # the green used for it
+        self.assertContains(resp, 'nyongeza juu ya Cash hapo juu')
+        self.assertContains(resp, 'nyongeza juu ya M-Pesa hapo juu')
+
+    def test_debt_recovered_never_double_counted_against_credit_sales(self):
+        # Roy's own red "Deni KES X" is NEW credit placed (Transaction.
+        # payment_method='credit') — a completely different model/figure from
+        # debt RECOVERED (CustomerDebtPayment). This fixture has zero new
+        # credit sales; credit_sales must read 0 even though debt was
+        # recovered, proving the two never bleed into each other.
+        self.client.force_login(self.owner)
+        resp = self.client.get('/bar/shift/active/')
+        data = resp.json()
+        row = next(s for s in data['all_shifts'] if s['id'] == self.shift.id)
+        self.assertEqual(row['credit_sales'], 0)
