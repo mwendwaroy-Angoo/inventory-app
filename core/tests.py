@@ -48225,3 +48225,165 @@ class HomeShiftMeterDebtRecoveredBreakdownTest(TestCase):
         data = resp.json()
         row = next(s for s in data['all_shifts'] if s['id'] == self.shift.id)
         self.assertEqual(row['credit_sales'], 0)
+
+
+class AuditDailyOperationsCommandTest(TestCase):
+    """2026-08-30 live request (Roy, Monsoon Inn): "are you able to audit all
+    transactional and service processes for monsoon for me from yesterday" —
+    no direct access to live production data from this session, so this
+    read-only, business+date-scoped command
+    (core/management/commands/audit_daily_operations.py) is the concrete
+    deliverable, run by Roy himself via Render's Shell tab. Covers sales
+    (cash/mpesa/credit tie-out, per-station, per-staff), shift reconciliation
+    + overlap visibility, stock movement + negative-balance integrity,
+    stock-take variances, receiving events, expenses, and a corrections
+    visibility summary, then orchestrates diagnose_recent_sales_visibility /
+    audit_debt_ledger_integrity / audit_money_path_integrity for the deeper
+    structural checks those already cover. This test is a smoke test proving
+    the command runs cleanly end to end against realistic data (a business
+    with two stations, an owner/staff/manager, overlapping shifts, a
+    no-recorded_by transaction, a voided sale, a Rekebisha-tagged Wastage,
+    pending petty cash, and a resolved stock-take variance) without raising
+    — it does not assert exact numeric output (that's already covered by the
+    dedicated tests for _reconcile/_shift_active_segments/current_balance
+    etc. this command reads from), only that composing them into one report
+    is itself correct."""
+
+    def test_command_runs_without_crashing_on_realistic_data(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        biz = Business.objects.create(name='Smoke Test Biz', has_kitchen=True)
+        bar_store = Store.objects.create(business=biz, name='Bar', is_kitchen=False)
+        kitchen_store = Store.objects.create(business=biz, name='Kitchen', is_kitchen=True)
+
+        owner = User.objects.create_user(username='smoke_owner', password='x')
+        UserProfile.objects.create(user=owner, business=biz, role='owner')
+        staff = User.objects.create_user(username='smoke_staff', password='x')
+        UserProfile.objects.create(user=staff, business=biz, role='staff')
+        manager = User.objects.create_user(username='smoke_manager', password='x')
+        UserProfile.objects.create(user=manager, business=biz, role='manager')
+
+        bar_item = Item.objects.create(
+            business=biz, store=bar_store, description='Test Beer',
+            material_no='SMK-01', unit='Bottle', selling_price=Decimal('200'),
+            cost_price=Decimal('100'),
+        )
+        kitchen_item = Item.objects.create(
+            business=biz, store=kitchen_store, description='Test Fries',
+            material_no='SMK-02', unit='Plate', selling_price=Decimal('150'),
+            cost_price=Decimal('60'),
+        )
+
+        y_start = (timezone.localtime() - timedelta(days=1)).replace(
+            hour=9, minute=0, second=0, microsecond=0,
+        )
+        yesterday = y_start.date()
+
+        shift = Shift.objects.create(
+            business=biz, store=bar_store, staff=staff, station='bar',
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=y_start, ended_at=y_start + timedelta(hours=8),
+            closing_cash_counted=Decimal('600'),
+        )
+        # A manager shift overlapping the staff shift — exercises the
+        # overlap-visibility check without it firing (manager is exempted).
+        Shift.objects.create(
+            business=biz, store=bar_store, staff=manager, station='bar',
+            opening_float=Decimal('0'), status='CLOSED',
+            started_at=y_start + timedelta(hours=2),
+            ended_at=y_start + timedelta(hours=4),
+            closing_cash_counted=Decimal('0'),
+        )
+
+        Transaction.objects.create(
+            business=biz, item=bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash', recorded_by=staff,
+            created_at=y_start + timedelta(hours=1),
+        )
+        Transaction.objects.create(
+            business=biz, item=bar_item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('400'), payment_method='mpesa', recorded_by=staff,
+            created_at=y_start + timedelta(hours=2, minutes=30),
+        )
+        Transaction.objects.create(
+            business=biz, item=kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('150'), payment_method='credit', recorded_by=owner,
+            recipient='Test Customer', created_at=y_start + timedelta(hours=3),
+        )
+        # No recorded_by at all — must not crash the per-staff breakdown loop.
+        Transaction.objects.create(
+            business=biz, item=bar_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash', recorded_by=None,
+            created_at=y_start + timedelta(hours=3, minutes=30),
+        )
+        # Voided sale — must be excluded from every section.
+        Transaction.objects.create(
+            business=biz, item=bar_item, type='Issue', qty=Decimal('0'),
+            sale_amount=Decimal('0'), payment_method='void', recorded_by=staff,
+            created_at=y_start + timedelta(hours=3, minutes=45),
+        )
+        Transaction.objects.create(
+            business=biz, item=bar_item, type='Receipt', qty=Decimal('10'),
+            payment_method='', created_at=y_start + timedelta(hours=4),
+        )
+        Transaction.objects.create(
+            business=biz, item=bar_item, type='Wastage', qty=Decimal('-1'),
+            payment_method='', invoice_no='[ADJ]',
+            created_at=y_start + timedelta(hours=5),
+        )
+
+        PettyCash.objects.create(
+            business=biz, amount=Decimal('50'), reason='supplies', status='approved',
+            date=yesterday, station='bar', recorded_by=staff,
+        )
+        PettyCash.objects.create(
+            business=biz, amount=Decimal('20'), reason='transport', status='pending',
+            date=yesterday, station='bar', recorded_by=staff,
+        )
+        BusinessExpense.objects.create(
+            business=biz, description='Test Rent', amount=Decimal('100'),
+            category='rent', date=yesterday, station='bar', recorded_by=owner,
+        )
+
+        st = StockTake.objects.create(business=biz, store=bar_store, conducted_by=staff, shift=shift)
+        StockVarianceQuery.objects.create(
+            stock_take=st, item=bar_item, item_name_cache=bar_item.description,
+            book_balance=Decimal('10'), actual_count=Decimal('8'), direction='decrease',
+            status='resolved', owner_accepted=True,
+        )
+
+        out = StringIO()
+        call_command(
+            'audit_daily_operations', business='Smoke Test Biz',
+            date=yesterday.isoformat(), stdout=out,
+        )
+        output = out.getvalue()
+        self.assertIn('DAILY OPERATIONS AUDIT', output)
+        self.assertIn('SALES', output)
+        self.assertIn('SHIFTS', output)
+        self.assertIn('STOCK MOVEMENT', output)
+        self.assertIn('STOCK-TAKE VARIANCES', output)
+        self.assertIn('RECEIVING', output)
+        self.assertIn('EXPENSES', output)
+        self.assertIn('CORRECTIONS', output)
+        self.assertIn('audit complete', output)
+
+    def test_default_date_is_yesterday_not_today(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        biz = Business.objects.create(name='Default Date Biz')
+        Store.objects.create(business=biz, name='Bar')
+        out = StringIO()
+        call_command('audit_daily_operations', business='Default Date Biz', stdout=out)
+        expected = (timezone.localdate() - timedelta(days=1)).isoformat()
+        self.assertIn(expected, out.getvalue())
+
+    def test_no_matching_business_reports_error_not_crash(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command('audit_daily_operations', business='Nonexistent Biz XYZ', stdout=out)
+        self.assertIn('No matching business', out.getvalue())

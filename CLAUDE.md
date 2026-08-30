@@ -9890,3 +9890,56 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   unmodified. No migrations (pure computation over existing `Transaction.
   recorded_by`/`CustomerDebtPayment.recorded_by`/`UserProfile.role` fields
   — no new model fields). 2653 tests pass (core + accounts).
+- `audit_daily_operations` — one-shot daily transactional/service-process
+  audit (2026-08-30, same-day follow-up). Roy: "are you able to audit all
+  transactional and service processes for monsoon for me from yesterday" —
+  this session has no direct shell/DB access to Monsoon Inn's real
+  production database, so answered honestly and built the concrete
+  deliverable instead: a new, read-only management command consolidating
+  every relevant existing diagnostic into one report for a single
+  business+day, rather than asking Roy to run six separate commands
+  himself. `core/management/commands/audit_daily_operations.py`
+  (`--business=NAME [--date=YYYY-MM-DD, default yesterday]`) covers, in
+  order: **[1] Sales** — cash/mpesa/credit tie-out business-wide, per-
+  station (bar/kitchen), and per-staff (`recorded_by`), plus a check for
+  any real sale with neither `sale_amount` nor a priceable `item.
+  selling_price` (would silently read as KES 0 revenue); **[2] Shifts** —
+  per-shift `_reconcile()` figures, closing-vs-expected variance with the
+  existing >KES 500/unreviewed flag, and a same-station overlap visibility
+  note (explicitly non-alarming — `_shift_active_segments()` already de-
+  overlaps two real-custodian shifts correctly, this is shown for
+  transparency only, not as a bug flag); **[3] Stock movement** — a
+  per-type (Issue/Receipt/Wastage/Draw/etc.) count + net qty breakdown,
+  and a hard integrity check that no item touched that day shows a
+  negative `current_balance()` (should be structurally impossible per
+  `Item.capped_deduction()`, 2026-08-07 — a genuine hit here means that
+  guarantee was bypassed somewhere, e.g. a raw `Transaction.objects.
+  create()` outside the normal checkout path, exactly what my own smoke-
+  test fixture tripped by skipping a Receipt for one item — confirming
+  the check actually fires); **[4] Stock-take variances** raised or
+  resolved that day (item/direction/book/actual/status/kind/staff);
+  **[5] Receiving** — Kitchen Stock Receipts, keg RECEIVE weigh-ins, Gawa
+  Kuku PortioningEvents, and plain Receipt-type transactions (excluding
+  the `[ADJ]`/`[SVQ]`-family correction tags, which aren't real deliveries);
+  **[6] Expenses** — Counter Cash (Petty Cash) approved/pending/rejected
+  breakdown with an explicit note on which reduces `till_expected_cash()`
+  and which doesn't, plus Matumizi (ad-hoc `BusinessExpense`, explicitly
+  noted as bookkeeping-only, never till-affecting — see the 2026-08-09
+  entry establishing that distinction); **[7] Corrections** — a visibility
+  count of voids, split fragments, `[SVQ-REVERT]` miscount reversals,
+  `[ADJ]`/`[ADJ-NOLOSS]` Rekebisha adjustments, and `[THEFT]`-tagged
+  corrections. Then orchestrates the existing, already-tested
+  `diagnose_recent_sales_visibility`, `audit_debt_ledger_integrity
+  --all-customers`, and `audit_money_path_integrity` commands via Django's
+  own `call_command(..., stdout=self.stdout)` — deliberately NOT
+  reimplementing their logic, since each is already independently built
+  and tested; this command's own value-add is the day-scoped sections plus
+  composing everything into one report instead of six. Read-only
+  throughout — mutates nothing. 3 new tests
+  (`AuditDailyOperationsCommandTest`) — an end-to-end smoke test against a
+  realistic fixture (two stations, owner/staff/manager, an overlapping
+  manager shift, a transaction with no `recorded_by`, a voided sale, a
+  `[ADJ]`-tagged Wastage, pending petty cash, a resolved stock-take
+  variance) confirming every section renders without raising, the
+  default-to-yesterday date behavior, and the no-matching-business error
+  path. No migrations (no schema change). 2656 tests pass (core + accounts).
