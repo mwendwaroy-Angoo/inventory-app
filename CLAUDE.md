@@ -10367,3 +10367,72 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   be numerically identical, masking the bug for a single-debt customer)
   confirmed passing unmodified. No migrations (pure computation fix, no
   schema change).
+- Wall-QR search redesign — 3 proper sections + collapse the master
+  receipt's paid history (2026-09-03), live follow-up with screenshots:
+  the amount-fix above confirmed correct (5 rows now show 5 genuinely
+  different figures), but Roy pushed for a better shape: "aftee searching
+  the customer just sees three sections — Paid Bills (with indication of
+  what was debt then paid later on), Ongoing Tabs, Debts — items grouped
+  by date/timestamp, served by/recorded by," plus a complaint that
+  clicking one specific debt row landed on a giant, weeks-deep master
+  receipt (24 PINs, dozens of already-paid Kikombe lines) with the one
+  actually-relevant unpaid item buried among them. **Search results**
+  (`find_tab_search`, `core/keg_views.py`): the previous code only ever
+  distinguished 'debt' vs 'active', with a closed-and-fully-paid tab
+  silently lumped into 'active' and shown under "🍺 Bili Zinazoendelea"
+  (ongoing bills) — contradictory, since a paid bill isn't ongoing at all.
+  Split into a genuine third kind, `'paid'`, plus two new fields per row:
+  `served_by` (`BarTab.served_by`, matching the receipt page's own
+  existing "Served by" disclosure) and `was_debt` — whether a paid tab was
+  EVER real, converted debt before it got settled. `was_debt` uses
+  `Transaction.was_credit` (the 2026-08-15 CRITICAL FIX's own permanent
+  stamp, set ONLY on a genuine debt-tracker resolution, never an ordinary
+  open-tab settle) rather than re-deriving anything — exactly the signal
+  this needed, already built and already tested. `recorded_by` is read
+  from each tab's own `BarTabEntry.transaction.recorded_by` (one small
+  query per row, capped at 10 results by the existing `[:10]` slice — the
+  same distinction `customer_profile.py`'s `customer_transaction_history()`
+  already established: served_by is the waitress/bartender whose tab it
+  was, recorded_by is whoever actually keyed the sale in, routinely
+  different people). `find_tab.html`'s JS gained the third "✅ Malipo
+  Yaliyokamilika" section, and every card now shows "Aliyehudumia: X ·
+  Aliyeandika: Y" under the date/time, with a paid row reading "Ilikuwa
+  Deni — Sasa Imelipwa ✓" when `was_debt` is true, plain "Imelipwa ✓"
+  otherwise. Deliberately did NOT rebuild the summary around a per-
+  TRANSACTION query (mirroring `customer_transaction_history()`'s own
+  finer grain) — that would mean swapping the search endpoint's whole
+  tested privacy-window/dedup foundation (`_findable_tabs_qs`,
+  `FINDABLE_BY_NAME_DAYS`) for an unproven one on a PUBLIC, unauthenticated
+  surface; kept the existing per-BarTab grouping (already effectively
+  "one row per date" for this business's real usage pattern, per Roy's own
+  prior report) and only enriched each row. **Receipt-page clutter**
+  (`core/receipt_views.py` + `templates/core/receipt_public.html`): rather
+  than build a whole new tab-scoped payment page (would duplicate ~1000
+  lines of already-hardened cash/mpesa/STK checkbox logic — real money-path
+  risk on a page this session has already fixed several subtle bugs on),
+  made this a pure, additive DISPLAY change — every `is_paid` receipt line
+  (both the server-rendered static block AND the JS `renderLines()` used
+  by the 20s live poll, kept in lockstep per this file's own "fix one, fix
+  both render paths" rule) now carries a `paid-hist` class, hidden by
+  default (`display:none` unless also `.show`), with a "📜 Onyesha Historia
+  (N zilizolipwa) ▾" toggle above the lines block that reveals them all on
+  tap (label/count kept live across every poll refresh via a closure
+  variable, `paidHistOpen`, tracked inside the same IIFE that already owns
+  `renderLines`). New `paid_lines_count` context var in `public_receipt()`
+  drives the initial toggle visibility/label; nothing about payment logic,
+  totals, or which lines are payable changed — a genuinely still-unpaid
+  item (the actual reason the customer clicked through) is now what's
+  immediately visible, with the weeks of settled history one tap away
+  instead of dominating the screen. Write-off-explained lines (a separate,
+  rarer JS-only branch) were deliberately left OUT of the collapse — "the
+  business cleared this for you" is a disclosure Roy likely wants seen,
+  not clutter to hide. 6 new tests (added to `WallQrSearchEnrichmentTest`)
+  — the paid/active kind split, was_debt true for a genuine debt-then-paid
+  tab (driven through the real `/debt/<id>/payment/` view, not a hand-set
+  flag), was_debt false for a tab paid straight at the counter, served_by/
+  recorded_by surfaced correctly, and two receipt-page tests confirming
+  the toggle/count/hidden-class render correctly with paid history present
+  vs. absent. All 10 pre-existing `WallQrSearchEnrichmentTest`/
+  `FindTabSearchDedupTest` tests confirmed passing unmodified. No
+  migrations (no schema change — `was_credit`/`served_by`/`recorded_by`
+  were all already-existing fields).

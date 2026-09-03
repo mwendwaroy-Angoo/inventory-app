@@ -660,6 +660,15 @@ def public_receipt(request, token):
 
     tab_pins = _receipt_tab_pin(receipt)
 
+    # 2026-09-03 live report (Roy): clicking one specific date's debt from
+    # the wall-QR search landed on this same shared master receipt with
+    # every already-paid drink still visible — the one still-owed line
+    # buried among dozens of settled history. Already-paid lines are
+    # collapsed behind a toggle by default in the template; this count
+    # only drives that toggle's initial label — renderLines() (the live
+    # poll) recomputes it client-side on every refresh.
+    paid_lines_count = sum(1 for l in (receipt.lines or []) if l.get('is_paid'))
+
     return render(request, 'core/receipt_public.html', {
         'receipt':      receipt,
         'receipt_url':  receipt_url,
@@ -670,6 +679,7 @@ def public_receipt(request, token):
         'total_paid_so_far': total_paid_so_far,
         'tab_pins':     tab_pins,
         'other_debt':   _other_debt_link(receipt, tab_status),
+        'paid_lines_count': paid_lines_count,
     })
 
 

@@ -6030,7 +6030,7 @@ def find_tab_search(request, business_id):
     # PIN isn't a guessable public string the way a name is).
     tabs = _findable_tabs_qs(business).filter(
         customer_name__icontains=q,
-    ).order_by('-opened_at')[:10]
+    ).select_related('served_by', 'customer').order_by('-opened_at')[:10]
 
     # 2026-07-25 live report: a customer with tabs open on more than one
     # counter at once (e.g. Bar Board AND Bar Orders/Quick Sell) saw TWO
@@ -6071,6 +6071,7 @@ def find_tab_search(request, business_id):
     # link, so a customer with 5 separate debts shows 5 different numbers,
     # not one number 5 times.
     from core.debt_views import _get_customer_debt_data
+    from core.customer_profile import _person
     _debt_cache = {}
     for t in tabs:
         url = _resolve_tab_public_url(t)
@@ -6082,6 +6083,7 @@ def find_tab_search(request, business_id):
 
         unpaid = float(t.unpaid_total() or 0)
         is_debt = t.status != 'OPEN' and unpaid > 0
+        is_paid = t.status != 'OPEN' and unpaid <= 0
         amount = unpaid
         if is_debt and t.customer_id:
             if t.customer_id not in _debt_cache:
@@ -6099,6 +6101,36 @@ def find_tab_search(request, business_id):
                 _debt_cache[t.customer_id] = by_tab
             amount = _debt_cache[t.customer_id].get(t.id, unpaid)
 
+        # 2026-09-03 live request (Roy): "three sections... items grouped
+        # in regards to dates, timestamps, served by/recorded by." A
+        # genuinely PAID (closed, nothing owed) tab used to be lumped into
+        # the same 'active' bucket as a still-OPEN one — split into its
+        # own 'paid' kind. was_credit is stamped permanently the instant a
+        # transaction is resolved through a REAL debt-tracker payment (not
+        # an ordinary open-tab settle — see Transaction.save()'s own
+        # docstring), so it's the reliable signal for "was debt, now paid"
+        # vs. "was simply paid at the counter."
+        entries = list(
+            BarTabEntry.objects.filter(tab=t)
+            .select_related('transaction__recorded_by')
+            .order_by('id')
+        )
+        recorded_by = ''
+        was_debt = False
+        for e in entries:
+            if e.transaction_id:
+                if not recorded_by and e.transaction.recorded_by_id:
+                    recorded_by = _person(e.transaction.recorded_by)
+                if e.transaction.was_credit:
+                    was_debt = True
+
+        if is_debt:
+            kind = 'debt'
+        elif is_paid:
+            kind = 'paid'
+        else:
+            kind = 'active'
+
         _opened_local = timezone.localtime(t.opened_at)
         results.append({
             'name': t.customer_name or '—',
@@ -6106,7 +6138,10 @@ def find_tab_search(request, business_id):
             'opened_at': _opened_local.strftime('%I:%M %p').lstrip('0'),
             'opened_date': _opened_local.strftime('%d %b %Y'),
             'amount': round(amount, 2),
-            'kind': 'debt' if is_debt else 'active',
-            'settled': t.status != 'OPEN' and unpaid <= 0,
+            'kind': kind,
+            'settled': is_paid,  # kept for any older consumer
+            'was_debt': was_debt,
+            'served_by': _person(t.served_by) if t.served_by_id else '',
+            'recorded_by': recorded_by,
         })
     return JsonResponse({'tabs': results})

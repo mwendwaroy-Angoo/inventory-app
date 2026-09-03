@@ -44419,6 +44419,131 @@ class WallQrSearchEnrichmentTest(TestCase):
         total = _get_customer_debt_data(self.customer, self.biz, scope='all')['outstanding']
         self.assertEqual(total, 3840.0)
 
+    def test_paid_tab_shows_was_debt_when_it_was_originally_converted_to_debt(self):
+        """2026-09-03 live request (Roy): the search results' third section
+        — "Paid Bills (with indication of what was debt then paid later
+        on)" — needs a reliable way to tell a closed bill that was ONCE
+        real debt apart from one that was simply paid at the counter.
+        was_credit (Transaction.save()'s own permanent stamp, only set on
+        a genuine debt-tracker resolution, never an ordinary open-tab
+        settle) is exactly that signal."""
+        debt = self._tab(status='SETTLED', customer=self.customer)
+        self._entry(debt, Decimal('300'))
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 300}],
+                      customer_name='Roy', payment_method='credit',
+                      meta={'tab_id': debt.id})
+        import uuid as _uuid
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/{self.customer.id}/payment/', {
+            'amount_paid': '300', 'payment_method': 'cash',
+            'idempotency_token': str(_uuid.uuid4()),
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.client.logout()
+
+        rows = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Roy').json()['tabs']
+        paid_row = next(r for r in rows if r['kind'] == 'paid')
+        self.assertTrue(paid_row['was_debt'])
+
+    def test_plain_paid_tab_never_debt_does_not_say_was_debt(self):
+        """A tab paid straight at the counter — never converted to debt —
+        must land in the same 'paid' section but WITHOUT the was-debt
+        badge; it was never real credit to begin with."""
+        tab = self._tab(status='SETTLED')
+        self._entry(tab, Decimal('150'), is_paid=True, payment_method='cash')
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 150}],
+                      customer_name='Roy', payment_method='cash',
+                      meta={'tab_id': tab.id})
+        rows = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Roy').json()['tabs']
+        paid_row = next(r for r in rows if r['kind'] == 'paid')
+        self.assertFalse(paid_row['was_debt'])
+
+    def test_served_by_and_recorded_by_surfaced_per_row(self):
+        """Roy's own ask: every row names who served/recorded it, matching
+        the receipt page's own existing "Served by" disclosure."""
+        server = User.objects.create_user(username='wq_server', password='x')
+        UserProfile.objects.create(user=server, business=self.biz, role='staff')
+        tab = self._tab(status='OPEN')
+        tab.served_by = server
+        tab.save(update_fields=['served_by'])
+        entry = self._entry(tab, Decimal('80'))
+        entry.transaction.recorded_by = server
+        entry.transaction.save(update_fields=['recorded_by'])
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 80}],
+                      customer_name='Roy', payment_method='tab',
+                      meta={'tab_id': tab.id})
+        rows = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Roy').json()['tabs']
+        row = rows[0]
+        self.assertEqual(row['served_by'], server.username)
+        self.assertEqual(row['recorded_by'], server.username)
+
+    def test_paid_kind_is_split_from_active_kind(self):
+        """A genuinely OPEN tab and a genuinely CLOSED-and-paid one must
+        never share a kind — the pre-2026-09-03 code lumped both into
+        'active' with only a 'settled' flag distinguishing them, which is
+        why a paid bill used to render under "Bili Zinazoendelea" (ongoing
+        bills) — contradictory, since it isn't ongoing at all."""
+        open_tab = self._tab(status='OPEN')
+        self._entry(open_tab, Decimal('50'))
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 50}],
+                      customer_name='Roy', payment_method='tab',
+                      meta={'tab_id': open_tab.id})
+
+        paid_tab = self._tab(status='SETTLED')
+        self._entry(paid_tab, Decimal('60'), is_paid=True, payment_method='mpesa')
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 60}],
+                      customer_name='Roy', payment_method='mpesa',
+                      meta={'tab_id': paid_tab.id})
+
+        rows = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Roy').json()['tabs']
+        kinds = {r['kind'] for r in rows}
+        self.assertEqual(kinds, {'active', 'paid'})
+
+    def test_receipt_page_collapses_already_paid_history_behind_a_toggle(self):
+        """2026-09-03 live report (Roy): clicking through from search into
+        ONE specific debt landed on the full, weeks-deep shared master
+        receipt with every already-paid drink still visible on screen —
+        the one still-owed line buried among dozens. Already-paid lines
+        must render behind a collapsed toggle so the still-relevant
+        content is what's actually visible by default."""
+        tab = self._tab(status='SETTLED', customer=self.customer)
+        self._entry(tab, Decimal('80'), is_paid=True, payment_method='cash')
+        self._entry(tab, Decimal('160'), is_paid=True, payment_method='mpesa')
+        rcpt = Receipt.issue(
+            business=self.biz,
+            lines=[{'subtotal': 80, 'is_paid': True}, {'subtotal': 160, 'is_paid': True}],
+            customer_name='Roy', payment_method='credit',
+            meta={'tab_id': tab.id},
+        )
+        resp = self.client.get(f'/r/{rcpt.token}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['paid_lines_count'], 2)
+        html = resp.content.decode()
+        self.assertIn('paid-hist', html)
+        self.assertIn('id="paid-toggle-btn"', html)
+        self.assertIn('toggleReceiptHistory()', html)
+        # The toggle must actually name the count so the customer knows
+        # there's something to expand, not just a bare icon.
+        self.assertIn('2 zilizolipwa', html)
+
+    def test_receipt_page_no_toggle_when_nothing_is_paid_yet(self):
+        """A brand-new, still-fully-unpaid tab must show no collapse
+        toggle at all — there's nothing behind it to expand."""
+        tab = self._tab(status='OPEN')
+        self._entry(tab, Decimal('50'))
+        rcpt = Receipt.issue(
+            business=self.biz, lines=[{'subtotal': 50}],
+            customer_name='Roy', payment_method='tab',
+            meta={'tab_id': tab.id},
+        )
+        resp = self.client.get(f'/r/{rcpt.token}/')
+        self.assertEqual(resp.context['paid_lines_count'], 0)
+        html = resp.content.decode()
+        self.assertIn('id="paid-toggle-btn"', html)  # element exists…
+        # ...but stays hidden (this exact style string only ever appears
+        # when paid_lines_count > 0 in the template's own conditional).
+        self.assertNotIn('style="display:block;"', html)
+
 
 class OwnerConsumptionLimitTest(TestCase):
     """2026-08-23 live request (Roy), item 4: "set an amount and a window

@@ -76,6 +76,25 @@
             font-size: 0.88rem;
         }
         .receipt-line:last-child { border-bottom: none; }
+        /* 2026-09-03 (Roy): a customer clicking through from a wall-QR/name
+           search into ONE specific debt/date landed on the full,
+           weeks-deep master receipt with every already-paid drink still
+           visible — the one still-owed line buried among dozens. Already-
+           paid lines are collapsed behind a toggle by default; the toggle
+           label/count is kept live by renderLines() below. */
+        .receipt-line.paid-hist { display: none; }
+        .receipt-line.paid-hist.show { display: flex; }
+        .paid-toggle {
+            display: none;
+            text-align: center;
+            font-size: 0.78rem;
+            color: var(--gold);
+            padding: 0.55rem 1.2rem;
+            cursor: pointer;
+            border-bottom: 1px dashed #2e2e2e;
+            user-select: none;
+        }
+        .paid-toggle:active { opacity: 0.7; }
         .line-name { color: var(--pearl); flex: 1; }
         .line-qty { color: #b0b0b0; font-size: 0.78rem; margin: 0 0.75rem; white-space: nowrap; }
         .line-amount { color: var(--pearl); font-weight: 600; white-space: nowrap; }
@@ -453,10 +472,14 @@
         </div>
         {% endif %}
 
+        <div class="paid-toggle" id="paid-toggle-btn" onclick="toggleReceiptHistory()"
+             {% if paid_lines_count > 0 %}style="display:block;"{% endif %}>
+            📜 Onyesha Historia ({{ paid_lines_count }} zilizolipwa) ▾
+        </div>
         <div class="receipt-lines" id="receipt-lines-static">
             {% for line in receipt.lines %}
             {% if line.is_paid %}
-            <div class="receipt-line" style="opacity:0.6;"
+            <div class="receipt-line paid-hist" style="opacity:0.6;"
                  data-line-name="{{ line.name|escapejs }}" data-line-amount="{{ line.subtotal|floatformat:'2' }}">
                 <span class="line-name" style="text-decoration:line-through; color:#888;">{{ line.name }}</span>
                 <span style="color:#6ee7b7; font-size:0.72rem; white-space:nowrap; margin:0 0.5rem;">✓ Imelipwa</span>
@@ -1160,8 +1183,25 @@
     var countEl    = document.getElementById('live-countdown');
     var linesWrap  = document.querySelector('.receipt-lines');
     var totalEl    = document.querySelector('.total-amount');
+    var paidHistOpen = false;
 
     function fmt(n) { return 'KES ' + Number(n).toLocaleString('en-KE', {maximumFractionDigits: 0}); }
+
+    function updatePaidToggle(paidCount) {
+        var btn = document.getElementById('paid-toggle-btn');
+        if (!btn) return;
+        btn.style.display = paidCount > 0 ? 'block' : 'none';
+        btn.textContent = '📜 ' + (paidHistOpen ? 'Ficha' : 'Onyesha') + ' Historia ('
+            + paidCount + ' zilizolipwa) ' + (paidHistOpen ? '▴' : '▾');
+    }
+
+    window.toggleReceiptHistory = function () {
+        paidHistOpen = !paidHistOpen;
+        document.querySelectorAll('.receipt-line.paid-hist').forEach(function (el) {
+            el.classList.toggle('show', paidHistOpen);
+        });
+        updatePaidToggle(document.querySelectorAll('.receipt-line.paid-hist').length);
+    };
 
     function renderLines(lines) {
         if (!linesWrap || !lines) return;
@@ -1199,7 +1239,7 @@
                     (wo.written_off_at ? '<div style="width:100%;color:#777;font-size:0.68rem;margin-top:0.15rem;">Tarehe ' + wo.written_off_at + '</div>' : '') +
                     '</div>';
             } else if (l.is_paid) {
-                html += '<div class="receipt-line" style="opacity:0.6;">' +
+                html += '<div class="receipt-line paid-hist' + (paidHistOpen ? ' show' : '') + '" style="opacity:0.6;">' +
                     '<span class="line-name" style="text-decoration:line-through;color:#888;">' + (l.name || '') + '</span>' +
                     '<span style="color:#6ee7b7;font-size:0.72rem;white-space:nowrap;margin:0 0.5rem;">✓ Imelipwa</span>' +
                     '<span class="line-amount" style="text-decoration:line-through;color:#888;">KES ' +
@@ -1219,6 +1259,7 @@
             }
         });
         linesWrap.innerHTML = html;
+        updatePaidToggle(lines.filter(function (l) { return l.is_paid; }).length);
         if (!IS_DEBT && typeof window._receiptPayRenderLines === 'function') {
             window._receiptPayRenderLines(payableLines);
         }

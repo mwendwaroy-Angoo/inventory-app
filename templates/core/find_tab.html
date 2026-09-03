@@ -61,15 +61,17 @@
   }
   .tab-name { font-size: 0.95rem; font-weight: 500; }
   .tab-time { font-size: 0.78rem; color: var(--muted); margin-top: 0.12rem; }
+  .tab-who { font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem; opacity: 0.85; }
   .tab-amt { font-size: 0.9rem; font-weight: 700; white-space: nowrap; }
   .tab-amt.debt { color: #f87171; }
   .tab-amt.open { color: #c9a84c; }
-  .tab-amt.paid { color: #6ee7b7; font-size: 0.78rem; font-weight: 500; }
+  .tab-amt.paid { color: #6ee7b7; font-size: 0.78rem; font-weight: 500; text-align: right; }
   .sec-head {
     font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
     color: #c9a84c; margin: 1rem 0 0.4rem;
   }
   .sec-head.debt { color: #f87171; }
+  .sec-head.paid { color: #6ee7b7; }
   .tab-arrow { color: var(--gold); font-size: 1.1rem; }
   .empty-msg {
     text-align: center; color: var(--muted); font-size: 0.88rem;
@@ -140,31 +142,46 @@
         : '';
       return;
     }
-    // 2026-08-23 (Roy): split into two visually distinct sections so a
-    // still-running bill is never confused with money already owed, and
-    // show the date + amount on every row so the customer can tell which
+    // 2026-08-23 (Roy): split into visually distinct sections so a still-
+    // running bill is never confused with money already owed, and show
+    // the date + amount on every row so the customer can tell which
     // receipt is which without opening them at random.
+    //
+    // 2026-09-03 (Roy): a genuine third section — a closed, fully PAID
+    // bill used to be lumped in with still-open ones under "Bili
+    // Zinazoendelea," confusing (a paid bill isn't "ongoing"). It now
+    // gets its own section, showing plainly whether it was ever real debt
+    // before it got paid off. Every row also names who served/recorded
+    // it, matching how the receipt page itself already discloses this.
     function money(n) {
       return 'KES ' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
     }
     function card(tab) {
       var name = tab.name || '—';
       var amountBit = '';
-      if (tab.settled) {
-        amountBit = '<div class="tab-amt paid">Imelipwa ✓</div>';
+      if (tab.kind === 'paid') {
+        amountBit = tab.was_debt
+          ? '<div class="tab-amt paid">Ilikuwa Deni — Sasa Imelipwa ✓</div>'
+          : '<div class="tab-amt paid">Imelipwa ✓</div>';
       } else if (tab.amount > 0) {
         amountBit = '<div class="tab-amt ' + (tab.kind === 'debt' ? 'debt' : 'open') + '">'
           + money(tab.amount) + '</div>';
       }
+      var who = [];
+      if (tab.served_by) who.push('Aliyehudumia: ' + tab.served_by);
+      if (tab.recorded_by && tab.recorded_by !== tab.served_by) who.push('Aliyeandika: ' + tab.recorded_by);
+      var whoBit = who.length ? '<div class="tab-who">' + who.join(' · ') + '</div>' : '';
       return '<a class="tab-card" href="' + tab.url + '">' +
         '<div><div class="tab-name">' + name + '</div>' +
-        '<div class="tab-time">' + tab.opened_date + ' · saa ' + tab.opened_at + '</div></div>' +
+        '<div class="tab-time">' + tab.opened_date + ' · saa ' + tab.opened_at + '</div>' +
+        whoBit + '</div>' +
         '<div style="display:flex;align-items:center;gap:.5rem;">' + amountBit +
         '<span class="tab-arrow">›</span></div></a>';
     }
 
-    var active = data.tabs.filter(function (t) { return t.kind !== 'debt'; });
     var debts = data.tabs.filter(function (t) { return t.kind === 'debt'; });
+    var active = data.tabs.filter(function (t) { return t.kind === 'active'; });
+    var paid = data.tabs.filter(function (t) { return t.kind === 'paid'; });
     var html = '';
     if (debts.length) {
       html += '<div class="sec-head debt">💳 Deni — bado kulipa</div>'
@@ -173,6 +190,10 @@
     if (active.length) {
       html += '<div class="sec-head">🍺 Bili zinazoendelea</div>'
         + active.map(card).join('');
+    }
+    if (paid.length) {
+      html += '<div class="sec-head paid">✅ Malipo yaliyokamilika</div>'
+        + paid.map(card).join('');
     }
     results.innerHTML = html;
   }
