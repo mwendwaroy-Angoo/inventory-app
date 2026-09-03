@@ -478,7 +478,24 @@
         </div>
         <div class="receipt-lines" id="receipt-lines-static">
             {% for line in receipt.lines %}
-            {% if line.is_paid %}
+            {% if line.is_written_off %}
+            <!-- 2026-09-03 (Roy, "Risiti #2880" live report) — a debt
+                 write-off is shown struck through, explained, and excluded
+                 from what's owed — never silently vanished — matching the
+                 exact "explain, don't hide" treatment this app already
+                 established for a direct-sale write-off (see the
+                 meta.write_offs / _matchWriteOff block below), now applied
+                 natively to a tab-linked line too. -->
+            <div class="receipt-line" style="opacity:0.6; flex-wrap:wrap;"
+                 data-line-name="{{ line.name|escapejs }}" data-line-amount="0">
+                <span class="line-name" style="text-decoration:line-through; color:#888;">{{ line.name }}</span>
+                <span style="color:#c9a84c; font-size:0.72rem; white-space:nowrap; margin:0 0.5rem;">✕ Imefutwa na biashara</span>
+                <span class="line-amount" style="text-decoration:line-through; color:#888;">KES {{ line.subtotal|floatformat:"0" }}</span>
+                {% if line.written_off_at %}
+                <div style="width:100%; color:#777; font-size:0.68rem; margin-top:0.15rem;">Tarehe {{ line.written_off_at }}</div>
+                {% endif %}
+            </div>
+            {% elif line.is_paid %}
             <div class="receipt-line paid-hist" style="opacity:0.6;"
                  data-line-name="{{ line.name|escapejs }}" data-line-amount="{{ line.subtotal|floatformat:'2' }}">
                 <span class="line-name" style="text-decoration:line-through; color:#888;">{{ line.name }}</span>
@@ -1228,7 +1245,18 @@
         // was reworded to explain rather than hide.
         var payableLines = [];
         lines.forEach(function (l) {
-            var wo = _woRem.length ? _matchWriteOff(l) : null;
+            // 2026-09-03 — a tab-linked line now carries its own write-off
+            // state natively (BarTabEntry.written_off_at, read live by
+            // _get_live_tab_state — see that function's own docstring for
+            // why the separate meta.write_offs/name+amount matching below
+            // could silently miss a long-lived master receipt). Synthesize
+            // the same {name, amount, written_off_at} shape so it reuses
+            // the identical struck-through/explained rendering below with
+            // zero duplication, and is never ALSO matched against
+            // _writeOffLines (which is for a tab-less direct sale only).
+            var wo = l.is_written_off
+                ? { name: l.name, amount: l.subtotal, written_off_at: l.written_off_at }
+                : (_woRem.length ? _matchWriteOff(l) : null);
             if (!wo) payableLines.push(l);
             if (wo) {
                 html += '<div class="receipt-line" style="opacity:0.6; flex-wrap:wrap;">' +

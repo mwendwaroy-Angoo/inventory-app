@@ -391,6 +391,7 @@ def _get_live_tab_state(receipt):
     if not all_tab_ids:
         return False, None, None, None
     try:
+        from django.utils import timezone
         from .models import BarTab as _BarTab
         lines = []
         outstanding = 0.0
@@ -415,6 +416,29 @@ def _get_live_tab_state(receipt):
                     pass
                 icon = '🍽 ' if is_kitchen else '🍺 '
                 amt = float(e.amount)
+                # 2026-09-03 ("Risiti #2880" live report, Roy) — a debt
+                # write-off (_execute_write_off_approval) stamps THIS field
+                # so a written-off line is shown struck through, explained,
+                # and never counted as still owed — regardless of whether
+                # it had ever been paid/checked before, and regardless of
+                # the receipt's own age (see BarTabEntry.written_off_at's
+                # own docstring for the full root-cause trace this fixes:
+                # the underlying Transaction going 'void' was never enough
+                # on its own, since this loop only ever checked THIS
+                # entry's own payment_method, never the transaction's).
+                if e.written_off_at:
+                    lines.append({
+                        'name': icon + e.description,
+                        'qty': 1,
+                        'subtotal': amt,
+                        'entry_id': None,
+                        'tab_id': btab_id,
+                        'is_paid': False,
+                        'is_kitchen': is_kitchen,
+                        'is_written_off': True,
+                        'written_off_at': timezone.localtime(e.written_off_at).strftime('%d %b %Y, %H:%M'),
+                    })
+                    continue
                 if not e.is_paid:
                     # 2026-08-24 live report (Roy, Marley's tab): "still
                     # owed" must be remaining_amount(), not the line's full

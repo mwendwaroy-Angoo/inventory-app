@@ -14395,6 +14395,356 @@ class WriteOffOwnerSelfExecuteWordingTest(TestCase):
         self.assertIn('Stock imerejeshwa', data.get('message', ''))
 
 
+class WriteOffRejectedReconsiderationTest(TestCase):
+    """2026-09-03 live report (Roy, with screenshots): "the item that says
+    ilikataliwa, this was before we made the futa change for owner, like
+    tried to accept the futa ombi request when it was confusing owner
+    functionalities before we updated but nothing happened so I had to say
+    kataa and now it is stuck there I cannot change that status, this
+    should not be happening."
+
+    Root cause: request_write_off() hard-blocked ANY future action on a
+    transaction the moment its WriteOffRequest was rejected — even for the
+    owner himself — with no retry path at all, and the customer_debt_
+    profile.html template showed nothing but a bare "❌ Ilikataliwa" badge
+    for such a row (no Hamisha/Mmiliki/Sehemu/Futa buttons either). A
+    rejection never touches the underlying Transaction (it stays live,
+    unpaid credit the whole time) — it's a past decision, not an unfixable
+    fact, and every other "no" in this app is reconsiderable. Since
+    WriteOffRequest.transaction is a OneToOne, a fresh attempt now REUSES
+    the same row (reset to a clean state) instead of being blocked."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WO Reconsider Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='woreconsider_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='woreconsider_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='WO Reconsider Item',
+            material_no='WORECON-01', selling_price=Decimal('300'),
+        )
+
+    def _credit_txn(self, recipient='Reconsider Patron'):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), recipient=recipient,
+            payment_method='credit', sale_amount=Decimal('300'),
+        )
+
+    def _reject_via_owner(self, txn, requested_by):
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.create(
+            transaction=txn, requested_by=requested_by, reason='Original attempt',
+            customer_name_cache=txn.recipient,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/{wo.id}/reject/')
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        return wo
+
+    def test_owner_retry_after_rejection_no_longer_blocked(self):
+        """The literal reported bug: owner re-submits Futa on a rejected
+        row and it must actually go through, not 400."""
+        txn = self._credit_txn()
+        self._reject_via_owner(txn, self.staff)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Retrying now that the flow is fixed', 'is_mistake': '0',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertTrue(data.get('executed'), 'owner retry must self-execute immediately')
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'void')
+
+    def test_retry_reuses_the_same_row_not_a_second_one(self):
+        """WriteOffRequest.transaction is a OneToOne — a second Transaction.
+        objects.create() would raise IntegrityError. Confirm the SAME pk is
+        reused, with its decision-state fully reset."""
+        from core.models import WriteOffRequest
+        txn = self._credit_txn()
+        wo = self._reject_via_owner(txn, self.staff)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'New reason on retry', 'is_mistake': '0',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        self.assertEqual(WriteOffRequest.objects.filter(transaction=txn).count(), 1)
+        wo.refresh_from_db()
+        self.assertEqual(wo.status, WriteOffRequest.STATUS_APPROVED)
+        self.assertEqual(wo.reason, 'New reason on retry')
+        self.assertEqual(wo.requested_by_id, self.owner.id)
+        self.assertIsNotNone(wo.reviewed_at)
+
+    def test_retry_deletes_stale_haki_deduction_from_earlier_rejection(self):
+        """The real financial-correctness stake: rejecting a staff member's
+        real write-off request penalises THEM via a SalaryDeduction. If the
+        rejection itself was a mistake (Roy's own account — a UI bug made
+        approve look like it failed), the owner reconsidering and actually
+        writing it off must reverse that earlier wrongful deduction —
+        exactly the existing 'owner overrides' cleanup _execute_write_off_
+        approval() already does, which only works because the SAME row
+        (same pk) is reused rather than a fresh one created."""
+        from core.models import SalaryDeduction
+        txn = self._credit_txn()
+        wo = self._reject_via_owner(txn, self.staff)
+        self.assertEqual(SalaryDeduction.objects.filter(write_off=wo).count(), 1)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Reconsidered — this was real all along', 'is_mistake': '0',
+        })
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        self.assertEqual(SalaryDeduction.objects.filter(write_off=wo).count(), 0)
+
+    def test_pending_request_still_blocks_as_before(self):
+        """Regression lock: only REJECTED gained a retry path — a still-
+        PENDING request must keep blocking a duplicate submission."""
+        from core.models import WriteOffRequest
+        txn = self._credit_txn()
+        WriteOffRequest.objects.create(
+            transaction=txn, requested_by=self.staff, reason='Already pending',
+            customer_name_cache='Reconsider Patron',
+        )
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Second attempt', 'is_mistake': '0',
+        })
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json().get('ok'))
+
+    def test_approved_request_still_blocks_as_before(self):
+        """Regression lock: an approved write-off already voided the
+        transaction — get_object_or_404's own payment_method='credit'
+        filter blocks the retry before the existing/reused logic even
+        runs (the transaction no longer matches at all)."""
+        txn = self._credit_txn()
+        self.client.force_login(self.owner)
+        first = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Real debt', 'is_mistake': '0',
+        })
+        self.assertTrue(first.json().get('executed'), first.json())
+        second = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Try again', 'is_mistake': '0',
+        })
+        self.assertEqual(second.status_code, 404)
+
+    def test_qty_split_after_rejection_creates_a_fresh_row_not_the_stale_one(self):
+        """A rejected WHOLE-transaction request followed by a PARTIAL retry
+        (qty_to_erase < full qty) splits off a brand-new Transaction with
+        no write-off history of its own — must create a fresh
+        WriteOffRequest for it, never touch the old rejected row (still
+        pointing at the now-reduced original transaction)."""
+        from core.models import WriteOffRequest
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), recipient='Split Patron',
+            payment_method='credit', sale_amount=Decimal('600'),
+        )
+        old_wo = self._reject_via_owner(txn, self.staff)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Only one of the two units', 'is_mistake': '0',
+            'qty_to_erase': '1',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertTrue(data.get('executed'))
+        old_wo.refresh_from_db()
+        self.assertEqual(old_wo.status, WriteOffRequest.STATUS_REJECTED, 'the stale row is left untouched')
+        self.assertNotEqual(data.get('request_id'), old_wo.id)
+        self.assertEqual(WriteOffRequest.objects.filter(transaction__business=self.biz).count(), 2)
+
+    def test_rejected_row_shows_history_note_and_retry_buttons_on_debt_profile(self):
+        """The other half of the reported bug: the customer_debt_profile
+        page itself must offer a way forward, not just a dead-end badge."""
+        customer = Customer.objects.create(
+            business=self.biz, name='Reconsider Patron', credit_approved=True,
+        )
+        txn = self._credit_txn()
+        self._reject_via_owner(txn, self.staff)
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/debt/{customer.id}/')
+        content = resp.content.decode()
+        self.assertIn('Ilikataliwa awali', content)
+        self.assertIn('unaweza kujaribu tena', content)
+        self.assertIn(f'openWriteOffModal({txn.id}', content)
+
+    def test_approved_row_still_shows_only_the_final_badge_no_buttons(self):
+        """Regression lock: an approved write-off is genuinely final — the
+        badge-only treatment for that status must be completely unchanged."""
+        txn = self._credit_txn()
+        self.client.force_login(self.owner)
+        self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Real debt', 'is_mistake': '0',
+        })
+        # Approving voids the transaction, so it drops out of unpaid_transactions
+        # entirely — nothing left to assert on the debt profile page for it.
+        # Assert directly on the model instead.
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.get(transaction=txn)
+        self.assertEqual(wo.status, WriteOffRequest.STATUS_APPROVED)
+
+
+class WriteOffReflectsOnTabLinkedReceiptTest(TestCase):
+    """2026-09-03 live report (Roy, "Risiti #2880" screenshot): "I had
+    deleted one kibao out of the two on the customer's debt side + one cup
+    but it still shows on the receipt, this was before our fixes, how do i
+    backfill." Root-caused via full code trace: _execute_write_off_approval
+    voided the underlying Transaction (payment_method='void') but NEVER
+    touched the linked BarTabEntry — unlike void_tab/remove_tab_entry,
+    which both set entry.payment_method='void' in lockstep with the
+    transaction. _get_live_tab_state()'s per-entry exclusion check only
+    ever reads the ENTRY's own payment_method, never the transaction's, so
+    the written-off line stayed permanently visible (still counted as
+    owed, with a checkbox) on the customer's live receipt.
+
+    A second, independent bug compounded this for exactly the receipt
+    shape Roy reported: the SEPARATE meta.write_offs marker mechanism
+    (_mark_receipt_write_off) only tags receipts CREATED within the last
+    14 days of the write-off — but resolve_master_receipt() can keep one
+    receipt row alive and accumulating tabs (24 PINs, in Roy's case) for
+    WEEKS; Receipt.created_at is auto_now_add and never updated as new
+    tabs link into it, so a long-lived master receipt's write-off marker
+    could be silently skipped even when the write-off happened on the
+    very item the customer is looking at right now.
+
+    New BarTabEntry.written_off_at is the durable, always-correct,
+    per-entry fix: read NATIVELY by _get_live_tab_state() regardless of
+    the receipt's own age or how many tabs it has accumulated."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WO Tab Receipt Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='wotabrcpt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Kibao',
+            material_no='WOTABRCPT-01', selling_price=Decimal('300'),
+        )
+        self.customer = Customer.objects.create(
+            business=self.biz, name='Tab Receipt Patron', credit_approved=True,
+        )
+
+    def _make_debt_tab_entry(self, description='Kibao', amount='300'):
+        """A tab that's already been converted to debt — status stays
+        whatever a real convert_tab_to_debt call would leave it at
+        (SETTLED with an unpaid entry is the real 'debt' fingerprint this
+        app uses elsewhere), matching how a genuinely debt-side item
+        actually looks."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer=self.customer, customer_name=self.customer.name,
+            status='SETTLED', settled_at=timezone.now(),
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal(amount), payment_method='credit',
+            recipient=self.customer.name,
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=description,
+            amount=Decimal(amount), is_paid=False,
+        )
+        return tab, txn, entry
+
+    def _write_off(self, txn, is_mistake=False):
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.create(
+            transaction=txn, requested_by=self.owner, reason='Uncollectable',
+            customer_name_cache=self.customer.name,
+            request_type=(WriteOffRequest.TYPE_ERASE_MISTAKE if is_mistake else WriteOffRequest.TYPE_WRITEOFF),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/{wo.id}/approve/')
+        self.assertTrue(resp.json().get('ok'), resp.json())
+        return wo
+
+    def test_write_off_stamps_the_linked_tab_entry(self):
+        tab, txn, entry = self._make_debt_tab_entry()
+        self._write_off(txn)
+        entry.refresh_from_db()
+        self.assertIsNotNone(entry.written_off_at)
+
+    def test_write_off_never_stamps_a_tab_less_direct_sale(self):
+        """Regression lock: the existing meta.write_offs mechanism (for a
+        tab-less direct credit sale) must be completely unaffected — there
+        is simply no BarTabEntry to stamp."""
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('300'), payment_method='credit',
+            recipient=self.customer.name,
+        )
+        self._write_off(txn)  # must not raise
+
+    def test_live_tab_state_excludes_written_off_entry_from_outstanding(self):
+        from core.receipt_views import _get_live_tab_state
+        from core.models import Receipt
+        tab, txn, entry = self._make_debt_tab_entry()
+        # A second, still-genuinely-owed item on the same tab so outstanding
+        # isn't trivially zero either way.
+        txn2 = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('80'), payment_method='credit',
+            recipient=self.customer.name,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=txn2, description='Keg Gold', amount=Decimal('80'), is_paid=False,
+        )
+        self._write_off(txn)
+        receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=901, token='wotabrcpt-tok-1',
+            total=Decimal('380'), customer_name=self.customer.name, payment_method='credit',
+            meta={'tab_id': tab.id},
+        )
+        is_live, status, lines, outstanding = _get_live_tab_state(receipt)
+        self.assertTrue(is_live)
+        kibao_lines = [l for l in lines if l['name'].endswith('Kibao')]
+        self.assertEqual(len(kibao_lines), 1)
+        self.assertTrue(kibao_lines[0]['is_written_off'])
+        self.assertIsNone(kibao_lines[0]['entry_id'], 'a written-off line must never be payable')
+        # Only the genuinely-still-owed Keg Gold (80) counts — the
+        # written-off Kibao (300) must not inflate what's still owed.
+        self.assertEqual(outstanding, 80.0)
+
+    def test_written_off_line_never_disappears_it_explains_itself_on_the_receipt(self):
+        """The literal reported bug, reproduced end to end through the real
+        public receipt page — deliberately on an OLD receipt (created
+        20 days ago, well past _mark_receipt_write_off's own 14-day
+        window) to prove this fix works regardless of the receipt's own
+        age, exactly like Roy's real 24-PIN master receipt."""
+        from core.models import Receipt
+        tab, txn, entry = self._make_debt_tab_entry()
+        self._write_off(txn)
+        receipt = Receipt.objects.create(
+            business=self.biz, receipt_number=902, token='wotabrcpt-tok-2',
+            total=Decimal('300'), customer_name=self.customer.name, payment_method='credit',
+            meta={'tab_id': tab.id},
+        )
+        Receipt.objects.filter(pk=receipt.pk).update(
+            created_at=timezone.now() - timedelta(days=20),
+        )
+        resp = self.client.get(f'/r/{receipt.token}/')
+        content = resp.content.decode()
+        self.assertIn('Kibao', content)
+        self.assertIn('Imefutwa na biashara', content)
+        # Never silently vanished (the assertions above), and never still
+        # counted as owed — the only entry on this tab was written off, so
+        # the live-recomputed outstanding/Jumla total must be exactly 0,
+        # not the original 300.
+        self.assertEqual(float(resp.context['receipt'].total), 0.0)
+
+    def test_erase_mistake_write_off_also_stamps_the_entry(self):
+        """The 'explain, don't hide' treatment applies uniformly — both
+        write-off types already share the meta.write_offs mechanism this
+        way, so the new native mechanism matches that established
+        precedent rather than introducing an inconsistency between them."""
+        tab, txn, entry = self._make_debt_tab_entry()
+        self._write_off(txn, is_mistake=True)
+        entry.refresh_from_db()
+        self.assertIsNotNone(entry.written_off_at)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Analytics Module Audit — Theme 1 (money-path idempotency), 2026-07-21
 # ══════════════════════════════════════════════════════════════════════════════

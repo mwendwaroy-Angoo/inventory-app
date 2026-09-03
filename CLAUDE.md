@@ -10436,3 +10436,144 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   `FindTabSearchDedupTest` tests confirmed passing unmodified. No
   migrations (no schema change — `was_credit`/`served_by`/`recorded_by`
   were all already-existing fields).
+- Fix: a rejected write-off request permanently dead-ended a debt line,
+  even for the owner (2026-09-03), live report with screenshots: "the item
+  that says ilikataliwa, this was before we made the futa change for
+  owner, like tried to accept the futa ombi request when it was confusing
+  owner functionalities before we updated but nothing happened so I had
+  to say kataa and now it is stuck there I cannot change that status, this
+  should not be happening." Root cause, confirmed by direct trace, not
+  guessed: `request_write_off()` (`core/debt_views.py`) hard-blocked ANY
+  future action on a transaction the instant its `WriteOffRequest` was
+  rejected — `"Ombi lilikataliwa awali. Wasiliana na mmiliki moja kwa
+  moja."` (contact the owner directly) — even when the OWNER HIMSELF was
+  the one asking, with a 400 status. `customer_debt_profile.html`'s own
+  template compounded this: a rejected row rendered ONLY the "❌
+  Ilikataliwa" badge, with none of Hamisha/Mmiliki/Sehemu/Futa — the row
+  became permanently un-actionable the moment it was rejected, exactly
+  matching Roy's own account of getting stuck after using "Kataa" as a
+  workaround when "Idhinisha" appeared to silently fail under the
+  pre-2026-09-02 confusing owner-approval flow. Since
+  `WriteOffRequest.transaction` is a `OneToOneField` (only one row can
+  ever exist per transaction — confirmed by reading the model directly
+  before assuming a fix), a rejected request can't simply be superseded by
+  a second row; `request_write_off()` now REUSES the same row on a fresh
+  submission whenever its status is `REJECTED` (never for `PENDING`/
+  `APPROVED`, both still hard-block exactly as before) — resetting every
+  decision-state field (`status`→PENDING, `reviewed_by`/`reviewed_at`→
+  None, `manager_verdict`/`manager_by`/`manager_at`→cleared,
+  `haki_deduction_created`→False) while treating `requested_by`/`reason`/
+  `request_type`/`customer_name_cache` as genuinely fresh values from the
+  new submission — matching what would happen if a second row could be
+  created at all. A `qty_to_erase` partial split correctly bypasses this
+  reuse entirely (`existing.transaction_id == txn.id` no longer holds once
+  `Transaction.split_quantity_locked` reassigns `txn` to the new split-off
+  row), falling through to a plain `create()` for that brand-new
+  transaction instead — the stale rejected row (still describing the
+  now-reduced original transaction) is left untouched, not silently
+  repurposed for an unrelated partial amount. **A second, more serious
+  discovery made while designing this fix**: `reject_write_off()`
+  (unchanged, but re-read to design the reconsideration correctly)
+  creates a real `SalaryDeduction` against the REQUESTING STAFF MEMBER for
+  a rejected real write-off — meaning Roy's own "nothing happened, so I
+  said kataa" workaround had very likely already wrongly penalised a
+  staffer's pay for a rejection that was itself an artifact of a UI bug,
+  with the deduction permanently stuck (mirroring the debt line's own
+  stuck state) since nothing had ever un-rejected the request. Because the
+  fix REUSES the same row (same pk) rather than creating a new one, the
+  ALREADY-EXISTING cleanup in `_execute_write_off_approval()`
+  (`SalaryDeduction.objects.filter(write_off=wo).delete()`, built for
+  "owner overrides a manager's decision") automatically reverses that
+  stale deduction the moment Roy's reconsidered retry gets approved —
+  confirmed by a dedicated regression test, not assumed. Template fix:
+  `customer_debt_profile.html` restructured so only `status=='approved'`
+  keeps the terminal badge-only treatment; `'pending'` keeps its existing
+  badge+approve/reject buttons unchanged; `'rejected'` now falls through
+  to the SAME action-button block as "no write-off at all" (Hamisha/
+  Mmiliki/Sehemu/Futa all reachable again), with a small "❌ Ilikataliwa
+  awali na X — unaweza kujaribu tena" history note above the buttons so
+  the past decision is explained, not silently erased, matching this
+  app's own established wording/accountability standard. 8 new tests
+  (`WriteOffRejectedReconsiderationTest`) — the literal reported bug
+  reproduced end to end, the same-row-reuse-not-a-second-one regression
+  lock with full decision-state reset verified, the stale-Haki-deduction
+  reversal (the real financial-correctness stake), PENDING/APPROVED still
+  correctly blocking (regression locks), the qty-split-creates-a-fresh-row
+  case, and both template states (rejected shows history+retry, approved
+  still shows only the final badge). No migrations. 2706 tests pass (core
+  + accounts).
+- Fix: a debt write-off never reflected on the customer's own tab-linked
+  receipt (2026-09-03), same-day live report with a screenshot: "on this
+  receipt I had deleted one kibao out of the two on the customer's debt
+  side + one cup but it still shows on the receipt, this was before our
+  fixes, how do i backfill" ("Risiti #2880" — a long-lived master receipt
+  with 24 linked PINs and 39 collapsed paid-history items). Traced the
+  full mechanism end to end rather than guessing, across three files:
+  `_execute_write_off_approval()` (`core/debt_views.py`) voids the
+  underlying `Transaction` (`payment_method='void'`) but had NEVER touched
+  the linked `BarTabEntry` at all — a genuine inconsistency with the
+  established pattern this codebase already uses everywhere else a tab
+  item is voided: `remove_tab_entry()`/`void_tab()` (`core/keg_views.py`)
+  BOTH set `entry.payment_method='void'` TOGETHER with the transaction, in
+  lockstep, specifically because `_get_live_tab_state()`'s per-entry
+  exclusion check (`core/receipt_views.py`) only ever reads the ENTRY's
+  own `payment_method`, never the transaction's — write-off was the one
+  path that broke this contract, so a written-off item stayed permanently
+  visible on the customer's live tab-linked receipt (still counted as
+  owed, still shown with a checkbox, indistinguishable from a genuinely
+  unpaid item). **A second, independent bug compounded this for exactly
+  the receipt shape Roy reported**: the SEPARATE `meta.write_offs` marker
+  mechanism (`_mark_receipt_write_off`, the one that DOES exist and is
+  read by `receipt_public.html`'s JS for a tab-less direct sale) only tags
+  receipts `created_at__date__gte = (write-off date − 14 days)` — but
+  `Receipt.created_at` is `auto_now_add` (immutable, confirmed by reading
+  the model field directly) and `resolve_master_receipt()`
+  (`core/tab_receipts.py`) deliberately keeps ONE receipt row alive and
+  accumulating tabs over weeks via `meta.linked_tab_ids` — so a receipt's
+  own age says nothing about whether it's still the customer's live bill
+  today, and a write-off on an item belonging to a receipt older than 14
+  days would have silently never received the marker at all, even if the
+  fix above didn't exist. **Fix**: new `BarTabEntry.written_off_at`
+  (migration 0178, nullable, additive) — the durable, always-correct,
+  per-entry signal, stamped by `_execute_write_off_approval()` (via the
+  existing `_txn_tab_entry(txn)` helper, already used elsewhere in the
+  same file for the identical "does this transaction have a live
+  BarTabEntry" question) for BOTH a real write-off and `erase_mistake`,
+  matching the existing `meta.write_offs` mechanism's own established
+  "explain, don't hide" treatment for both types uniformly. Deliberately
+  a NEW, distinct field rather than reusing `payment_method='void'` on
+  the entry — `void_tab`/`remove_tab_entry`'s "this never really
+  happened, drop it entirely" semantics are wrong for a write-off, where
+  the sale WAS real and only the receivable is forgiven; the item must
+  stay visible with an explanation, not vanish. `_get_live_tab_state()`
+  now checks `e.written_off_at` FIRST (before the existing `is_paid`
+  branch) — a written-off entry gets `entry_id=None` (never payable
+  again), is excluded from `outstanding`, and carries `is_written_off`/
+  `written_off_at` (formatted `'%d %b %Y, %H:%M'` via
+  `timezone.localtime`, matching the existing marker format exactly) for
+  display. Both render paths in `receipt_public.html` updated in lockstep
+  per this file's own "fix one, fix both" rule: the static Django block
+  (`public_receipt()` mutates `receipt.lines` in-memory with the live-
+  recomputed lines before render — confirmed by reading the view directly,
+  not assumed — so the static block already WAS reading live data) gained
+  a new `{% if line.is_written_off %}` branch rendering the identical
+  struck-through "✕ Imefutwa na biashara" + timestamp treatment the
+  meta.write_offs mechanism already established; the JS `renderLines()`
+  (the 20s live poll) synthesizes a `{name, amount, written_off_at}`
+  object from `l.is_written_off` and feeds it through the EXISTING
+  `wo`-branch rendering with zero duplication, so a page already open in a
+  browser self-heals the moment the write-off happens, same as every
+  other live-recomputed state on this page. The existing `meta.write_offs`
+  mechanism is left completely in place, unmodified, as the fallback for a
+  genuinely tab-less direct credit sale (`_txn_tab_entry` correctly
+  returns `None` there — nothing to stamp, confirmed by a dedicated
+  regression test). 5 new tests (`WriteOffReflectsOnTabLinkedReceiptTest`)
+  — the entry gets stamped on write-off (both types), a tab-less sale is
+  unaffected, `_get_live_tab_state()` correctly excludes the written-off
+  amount from outstanding while a genuinely-still-owed second item on the
+  same tab is unaffected, and — the literal reported bug, reproduced end
+  to end through the real public receipt page — a receipt deliberately
+  backdated to 20 days old (well past the 14-day window, matching Roy's
+  real 24-PIN master receipt) correctly shows the item struck through and
+  explained with the outstanding total at 0, not still counted as owed.
+  One migration (0178, additive). 2711 tests pass (core + accounts).

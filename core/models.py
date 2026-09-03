@@ -5725,6 +5725,35 @@ class BarTabEntry(models.Model):
     # subtracted here instead).
     paid_at        = models.DateTimeField(null=True, blank=True)
     payment_method = models.CharField(max_length=10, blank=True)
+    written_off_at = models.DateTimeField(null=True, blank=True)
+    # ↑ 2026-09-03 (Roy, "Risiti #2880" live report) — a debt write-off
+    # (_execute_write_off_approval, core/debt_views.py) has always voided
+    # the underlying Transaction (payment_method='void'), but never touched
+    # this entry at all — unlike void_tab/remove_tab_entry, which both set
+    # entry.payment_method='void' TOGETHER with the transaction, in lockstep
+    # (see core/keg_views.py). _get_live_tab_state()'s per-entry exclusion
+    # check only ever reads THIS field, never the transaction's own
+    # payment_method, so a written-off item stayed permanently visible (and,
+    # if never settled, still counted as "owed" with a checkbox) on the
+    # customer's live tab-linked receipt — root cause of a real production
+    # report on a long-lived master receipt with 24 linked tabs, where the
+    # SEPARATE meta.write_offs marker mechanism (built for a much shorter-
+    # lived receipt shape) also silently missed it: _mark_receipt_write_off
+    # only tags receipts CREATED within the last 14 days of the write-off,
+    # but resolve_master_receipt() can keep one receipt row alive and
+    # accumulating tabs for weeks — its own immutable created_at (auto_
+    # now_add) says nothing about whether it's still the customer's live
+    # bill today. This field is the durable, always-correct, per-entry
+    # signal instead: set once at write-off time (both is_mistake and a
+    # real write-off), read natively by _get_live_tab_state() to show the
+    # item struck through with an explanation (never silently vanish — the
+    # same "explain, don't hide" wording/accountability standard the
+    # meta.write_offs mechanism already established) and exclude it from
+    # outstanding, regardless of the receipt's own age or how many tabs
+    # it's accumulated. Deliberately distinct from payment_method='void'
+    # (reserved for void_tab/remove_tab_entry's "this never really
+    # happened, drop it entirely" — a write-off means the sale WAS real,
+    # only the receivable is forgiven, so it must stay visible).
     settled_by     = models.ForeignKey(
         'auth.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
     )

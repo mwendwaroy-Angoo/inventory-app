@@ -576,14 +576,12 @@
                         </span>
                     </td>
                     <td class="pe-3 text-end" style="white-space:nowrap;">
-                        {% if entry.write_off %}
-                            {% if entry.write_off.status == 'approved' %}
+                        {% if entry.write_off and entry.write_off.status == 'approved' %}
                             <span style="color:#6ee7b7; font-size:0.72rem;">
                                 ✅ Imefutwa{% if entry.write_off.request_type == 'erase_mistake' %} (kosa — stock imerejeshwa){% endif %}
                             </span>
-                            {% elif entry.write_off.status == 'rejected' %}
-                            <span style="color:#f87171; font-size:0.72rem;">❌ Ilikataliwa</span>
-                            {% else %}
+                        {% else %}
+                        {% if entry.write_off and entry.write_off.status == 'pending' %}
                             <span style="color:#fbbf24; font-size:0.72rem;">
                                 ⏳ Inasubiri{% if entry.write_off.request_type == 'erase_mistake' %} (Kosa){% endif %}
                             </span>
@@ -597,8 +595,19 @@
                                        color:#c0395a;font-size:0.68rem;padding:0.12rem 0.45rem;cursor:pointer;margin-left:0.15rem;"
                                 title="Kataa{% if entry.write_off.request_type != 'erase_mistake' %} — Haki deduction{% endif %}">❌</button>
                             {% endif %}
-                            {% endif %}
                         {% else %}
+                        {% if entry.write_off and entry.write_off.status == 'rejected' %}
+                        <!-- 2026-09-03 live report (Roy): a rejected write-off used to
+                             permanently dead-end this row — no buttons at all, not even
+                             for the owner himself ("this should not be happening").
+                             It's now shown as history, not a wall — the action buttons
+                             below still work (request_write_off() reuses this same row
+                             as a fresh attempt when re-submitted, since a rejection never
+                             touched the underlying transaction). -->
+                        <div style="color:#f87171; font-size:0.68rem; margin-bottom:0.25rem;">
+                            ❌ Ilikataliwa awali{% if entry.write_off.reviewed_by %} na {{ entry.write_off.reviewed_by.get_full_name|default:entry.write_off.reviewed_by.username }}{% endif %} — unaweza kujaribu tena.
+                        </div>
+                        {% endif %}
                         {% if entry.tab_entry_id %}
                         <button onclick="window.openDebtItemTransfer({{ entry.tab_entry_id }}, {{ entry.source_tab_id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }})"
                             style="background:rgba(201,168,76,0.06);border:1px solid rgba(201,168,76,0.25);border-radius:6px;
@@ -631,6 +640,7 @@
                                    color:#c0395a;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;">
                             📝 {% if is_owner %}Futa{% else %}Omba Kufutwa{% endif %}
                         </button>
+                        {% endif %}
                         {% endif %}
                     </td>
                 </tr>

@@ -2309,15 +2309,28 @@ def request_write_off(request, txn_id):
         if get_active_staff_shift(up, up.business) is False:
             return JsonResponse({'ok': False, 'error': 'Fungua shift yako kwanza.'}, status=403)
 
-    # Check for an existing pending request on this transaction
+    # Check for an existing pending/approved request on this transaction.
+    # 2026-09-03 live report (Roy): a REJECTED request used to be a
+    # PERMANENT dead end here — no retry, not even for the owner himself,
+    # "wasiliana na mmiliki moja kwa moja" while Roy WAS the owner asking.
+    # His own account: he tried to approve a staff member's request under
+    # the pre-2026-09-02 confusing owner-approval flow, "nothing happened",
+    # so he rejected it instead as a workaround — and the row was then
+    # stuck forever with zero action buttons, even the customer's own item
+    # correction. A rejection never touches the underlying transaction at
+    # all (still fully live, unpaid credit) — it's a past decision, not an
+    # unfixable fact, and every other "no" in this app is reconsiderable
+    # (petty cash review, stock-variance dispute). REJECTED now falls
+    # through below instead of blocking — WriteOffRequest.transaction is a
+    # OneToOne, so a fresh attempt REUSES this same row (see below) rather
+    # than creating a second one.
     existing = WriteOffRequest.objects.filter(transaction=txn).first()
     if existing:
         if existing.status == WriteOffRequest.STATUS_PENDING:
             return JsonResponse({'ok': False, 'error': 'Ombi tayari lipo — subiri idhini ya mmiliki.'}, status=400)
         if existing.status == WriteOffRequest.STATUS_APPROVED:
             return JsonResponse({'ok': False, 'error': 'Kiingilio hiki kimefutwa tayari.'}, status=400)
-        if existing.status == WriteOffRequest.STATUS_REJECTED:
-            return JsonResponse({'ok': False, 'error': 'Ombi lilikataliwa awali. Wasiliana na mmiliki moja kwa moja.'}, status=400)
+        # STATUS_REJECTED: falls through — a fresh attempt is allowed.
 
     reason = request.POST.get('reason', '').strip()
     if not reason:
@@ -2373,13 +2386,37 @@ def request_write_off(request, txn_id):
     amount = float(txn.revenue())
     requester_name = request.user.get_full_name() or request.user.username
 
-    wo = WriteOffRequest.objects.create(
-        transaction=txn,
-        requested_by=request.user,
-        reason=reason,
-        customer_name_cache=customer_name,
-        request_type=request_type,
-    )
+    # 2026-09-03: reuse the existing REJECTED row for THIS SAME transaction
+    # (the OneToOne means there can only ever be one WriteOffRequest per
+    # Transaction) — treated as a genuinely fresh request in every way that
+    # matters (new requester, new reason, new type), with every prior
+    # decision-state field reset. If a partial qty_to_erase split happened
+    # just above, `txn` now points at a brand-new split-off Transaction with
+    # no write-off history of its own — `existing.transaction_id` (the OLD,
+    # full-amount transaction) won't match it, so this correctly falls
+    # through to a plain create() for that new row instead.
+    if existing and existing.status == WriteOffRequest.STATUS_REJECTED and existing.transaction_id == txn.id:
+        wo = existing
+        wo.requested_by = request.user
+        wo.reason = reason
+        wo.customer_name_cache = customer_name
+        wo.request_type = request_type
+        wo.manager_verdict = ''
+        wo.manager_by = None
+        wo.manager_at = None
+        wo.status = WriteOffRequest.STATUS_PENDING
+        wo.reviewed_by = None
+        wo.reviewed_at = None
+        wo.haki_deduction_created = False
+        wo.save()
+    else:
+        wo = WriteOffRequest.objects.create(
+            transaction=txn,
+            requested_by=request.user,
+            reason=reason,
+            customer_name_cache=customer_name,
+            request_type=request_type,
+        )
 
     # 2026-09-02 live report (Roy): "owner should not see... who is he
     # requesting to approve deletion when he is the owner surely." A REAL
@@ -2601,6 +2638,18 @@ def _execute_write_off_approval(wo, approver, self_service=False, base_url=''):
     wo.reviewed_by = approver
     wo.reviewed_at = timezone.now()
     wo.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
+
+    # 2026-09-03 ("Risiti #2880" live report) — stamp the linked BarTabEntry
+    # (if any) so _get_live_tab_state() can show this line struck through,
+    # explained, and excluded from what's owed, natively and reliably —
+    # regardless of the receipt's own age or how many tabs it's accumulated
+    # over time (see BarTabEntry.written_off_at's own docstring for the
+    # full root-cause trace). A tab-less direct credit sale has no entry to
+    # stamp — _mark_receipt_write_off() below is the fallback there.
+    _entry = _txn_tab_entry(txn)
+    if _entry is not None:
+        _entry.written_off_at = wo.reviewed_at
+        _entry.save(update_fields=['written_off_at'])
 
     # Same signal as void_tab: this credit is unrecoverable and the business
     # is eating the loss, so flag the customer the same way a voided debt tab
