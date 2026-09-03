@@ -531,6 +531,21 @@ class UserProfile(models.Model):
         ),
     )
 
+    can_stock_take = models.BooleanField(
+        default=False,
+        help_text=(
+            "2026-09-03 live request (Roy): a waitress is a concurrent helper, not the stock "
+            "custodian, so the 📦 Hesabu Stock offer (opening/closing/mid-shift counts) is "
+            "hidden from her on both boards by default — see bar_board.html/kitchen_board.html's "
+            "own IS_WAITRESS-gated buttons. With this on, a specific waitress trusted to help "
+            "with counts gets the same offers any other staff role already sees. The backend "
+            "endpoint (stock_take_api) itself has never blocked her by role — this toggle only "
+            "controls whether the FRONTEND shows her the button; nothing else changes about how "
+            "a submitted count is processed. Off by default. Has no effect for any role other "
+            "than waitress, since every other role can already do this."
+        ),
+    )
+
     can_manage_kegs = models.BooleanField(
         default=False,
         help_text=(

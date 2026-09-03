@@ -924,6 +924,7 @@ def bar_board(request):
         'can_convert_tabs_to_debt': getattr(up, 'can_convert_tabs_to_debt', False),
         'can_record_expenses': is_owner or getattr(up, 'can_record_expenses', False),
         'can_affirm_stock_take': is_owner or getattr(up, 'can_affirm_stock_take', False),
+        'can_stock_take': getattr(up, 'can_stock_take', False),
         'business': business,
         'success_data': success_data,
         'current_user_id': request.user.id,

@@ -10577,3 +10577,39 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   real 24-PIN master receipt) correctly shows the item struck through and
   explained with the outstanding total at 0, not still counted as owed.
   One migration (0178, additive). 2711 tests pass (core + accounts).
+- Waitress stock-take permission (2026-09-03), live request: "put stock take
+  functionality as a permission for the waitress." Traced first: the 📦
+  Hesabu Stock offer (opening/closing/mid-shift counts, on both Bar Board
+  and Kitchen Board) has been hidden from a waitress by a hardcoded
+  `!IS_WAITRESS` gate since 2026-08-16 ("a waitress is a concurrent helper,
+  not the stock custodian"), with no delegation option — matching the
+  original design intent, but with no way for an owner to grant a specific,
+  trusted waitress the same access. Confirmed the backend `stock_take_api()`
+  itself has NEVER blocked a waitress by role at all — the endpoint accepts
+  a valid POST from any staffer with an open shift for the business,
+  regardless of role; the whole exclusion has only ever been a frontend
+  visibility decision. New `UserProfile.can_stock_take` (accounts migration
+  0069, default False, matching this session's own established delegated-
+  toggle convention) narrows the existing `IS_WAITRESS` gate at all four
+  sites in BOTH boards — the mid-shift "📦 Hesabu Stock" button, the
+  post-open-shift explanatory text + footer button, and the post-close-shift
+  footer button insertion — from `!IS_WAITRESS` to `(!IS_WAITRESS ||
+  CAN_STOCK_TAKE)` (or the inverse `(IS_WAITRESS && !CAN_STOCK_TAKE)` where
+  the original was an early-return-empty-string ternary), mirroring the
+  exact `CAN_CONVERT_DEBT`/`IS_WAITRESS` pattern already established for
+  `can_convert_tabs_to_debt` (2026-08-11). The unrelated `!cash &&
+  !IS_WAITRESS` close-shift cash-count relaxation (waitress physically
+  never holds till cash, so she's never required to type a counted amount)
+  was deliberately left untouched — a different concern entirely. New
+  toggle in `staff_permissions.html`, scoped identically to its sibling
+  `can_convert_tabs_to_debt` block (`{% if staff_profile.role == 'waitress'
+  %}{% if biz_profile.modules.keg or biz_profile.modules.kitchen %}`), and
+  wired into `accounts.views.staff_permissions()`'s existing read/save
+  list. 8 new tests (`WaitressStockTakePermissionTest`) — both boards'
+  context/rendered-JS reflect the toggle on and off, a non-waitress role's
+  own context value is confirmed irrelevant (her `!IS_WAITRESS` check
+  already lets her through), the backend-was-never-role-blocked regression
+  lock (a waitress with `can_stock_take=False` still successfully POSTs a
+  real stock count directly to the endpoint), the permissions-page save
+  round-trip (on and off), and the toggle rendering only for a waitress
+  profile, never a plain staff one. One migration (0069, additive).

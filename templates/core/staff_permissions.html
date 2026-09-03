@@ -349,6 +349,27 @@
             </div>
         </div>
         {% endif %}
+
+        <!-- Waitress: participate in stock take (2026-09-03) -->
+        {% if biz_profile.modules.keg or biz_profile.modules.kitchen %}
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-3" style="margin-top:1rem;padding-top:1rem;border-top:1px solid #2a2a2a;">
+            <div>
+                <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                    📦 {% trans 'Stock Take Access' %}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                    {% trans "Show this waitress the same \"Hesabu Stock\" (stock take) offer at shift open/close/mid-shift that other staff already see. Off by default — a waitress is a concurrent helper, not the stock custodian, unless the owner trusts her to help count." %}
+                </div>
+            </div>
+            <div class="form-check form-switch" style="padding-top:.25rem;">
+                <input type="checkbox" name="can_stock_take"
+                       id="can_stock_take"
+                       class="form-check-input" role="switch"
+                       style="width:3rem; height:1.5rem; cursor:pointer;"
+                       {% if staff_profile.can_stock_take %}checked{% endif %}>
+            </div>
+        </div>
+        {% endif %}
         {% endif %}
 
         <!-- Keg management delegation (2026-08-11) -->

@@ -1789,6 +1789,8 @@
   var CAN_CONVERT_DEBT = {% if can_convert_tabs_to_debt %}true{% else %}false{% endif %};
   // 2026-08-27 live request (Roy) — parity with bar_board.html.
   var CAN_AFFIRM_STOCK_TAKE = {% if can_affirm_stock_take %}true{% else %}false{% endif %};
+  // 2026-09-03 live request (Roy) — parity with bar_board.html.
+  var CAN_STOCK_TAKE = {% if can_stock_take %}true{% else %}false{% endif %};
   var CAN_RECEIVE_STOCK = {% if can_receive_stock %}true{% else %}false{% endif %};
 
   // ── Order Queue Drawer (2026-08-06 — mirrors bar_board.html's identical
@@ -5376,9 +5378,10 @@
     // 2026-08-21 live request (Roy): a mid-service, peace-of-mind stock
     // check staff can choose to run any time a shift is open — not tied
     // to opening/closing. Same is_mine/!IS_WAITRESS scoping as the
-    // open/close stock-take offers.
+    // open/close stock-take offers — unless she's been explicitly granted
+    // CAN_STOCK_TAKE (2026-09-03).
     var midShiftBtnHtml = '';
-    if (s.is_mine && s.status === 'OPEN' && !IS_WAITRESS) {
+    if (s.is_mine && s.status === 'OPEN' && (!IS_WAITRESS || CAN_STOCK_TAKE)) {
       midShiftBtnHtml = '<button class="btn btn-sm" style="background:rgba(201,168,76,.1); border:1px solid rgba(201,168,76,.3); color:#c9a84c;" ' +
         'onclick="window.openStockTake(' + s.id + ', \'midshift\')" ' +
         'title="Hesabu ya haraka wakati wa zamu — ya taarifa tu">📦 Hesabu Stock</button>';
@@ -5493,7 +5496,7 @@
           _justOpenedWelcomeMessage + '</div>' : '') +
         '<div style="color:#4caf50; font-size:.9rem; font-weight:600;">✓ Umefungua shift na float ya KES ' +
         Math.round(parseFloat(openingFloat)) + '</div>' +
-        (IS_WAITRESS ? '' :
+        ((IS_WAITRESS && !CAN_STOCK_TAKE) ? '' :
         '<p style="font-size:.78rem; color:#888; margin-top:.5rem;">Unaweza hesabu bidhaa zilizopo sasa kama ' +
         'kianzio (hiari) — hii itasaidia kulinganisha na hesabu ya mwisho wa shift.</p>');
     }
@@ -5506,12 +5509,13 @@
     // stockTakeModal simply stacks on top, matching the close-shift path
     // (which never had this bug, since it never hides closeShiftModal
     // first either). Waitress exempted from the stock-take offer entirely —
-    // she's a concurrent helper, not the stock custodian.
+    // she's a concurrent helper, not the stock custodian. 2026-09-03:
+    // unless explicitly granted CAN_STOCK_TAKE.
     if (footer) {
       footer.innerHTML =
         '<button type="button" class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;"' +
         ' onclick="hideModal(\'openShiftModal\'); loadShift();">Maliza</button>' +
-        (IS_WAITRESS ? '' :
+        ((IS_WAITRESS && !CAN_STOCK_TAKE) ? '' :
         '<button type="button" class="btn btn-gold btn-sm"' +
         ' onclick="loadShift(); window.openStockTake(' +
         _justOpenedShiftId + ', \'opening\');">📦 Hesabu Stock</button>');
@@ -6048,7 +6052,8 @@
           btn.parentNode.insertBefore(doneBtn, btn);
 
           // 2026-08-16 (Roy): waitress exempted from the stock-take offer.
-          if (!IS_WAITRESS) {
+          // 2026-09-03: unless explicitly granted CAN_STOCK_TAKE.
+          if (!IS_WAITRESS || CAN_STOCK_TAKE) {
             var stBtn = document.createElement('button');
             stBtn.className = 'btn btn-gold btn-sm';
             stBtn.textContent = '📦 Hesabu Stock';

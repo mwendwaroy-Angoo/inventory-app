@@ -2047,6 +2047,11 @@
   // "Zote Zinalingana" to affirm without re-typing every already-correct
   // number — see UserProfile.can_affirm_stock_take's own docstring.
   var CAN_AFFIRM_STOCK_TAKE = {% if can_affirm_stock_take %}true{% else %}false{% endif %};
+  // 2026-09-03 live request (Roy): a waitress explicitly granted
+  // can_stock_take now sees the same Hesabu Stock offers every other role
+  // already does — everywhere else IS_WAITRESS hides them, this narrows
+  // those checks further, same pattern as CAN_CONVERT_DEBT above.
+  var CAN_STOCK_TAKE = {% if can_stock_take %}true{% else %}false{% endif %};
   window.PETTY_CASH_STATION = 'bar';  // 2026-07-27 — which till the shared petty cash modal records against on this board
   window.EXPENSE_STATION = 'bar';  // 2026-08-09 — which counter the shared ad-hoc expense modal tags entries with
   var CSRF        = "{{ csrf_token }}";
@@ -5119,9 +5124,10 @@
     // check staff can choose to run any time an shift is open — not tied
     // to opening/closing. Same is_mine/!IS_WAITRESS scoping as the
     // open/close stock-take offers (a waitress is a concurrent helper, not
-    // the stock custodian).
+    // the stock custodian) — unless she's been explicitly granted
+    // CAN_STOCK_TAKE (2026-09-03).
     var midShiftBtnHtml = '';
-    if (s.is_mine && s.status === 'OPEN' && !IS_WAITRESS) {
+    if (s.is_mine && s.status === 'OPEN' && (!IS_WAITRESS || CAN_STOCK_TAKE)) {
       midShiftBtnHtml = '<button class="btn btn-sm" style="background:rgba(201,168,76,.1); border:1px solid rgba(201,168,76,.3); color:#c9a84c;" ' +
         'onclick="window.openStockTake(' + s.id + ', \'midshift\')" ' +
         'title="Hesabu ya haraka wakati wa zamu — ya taarifa tu">📦 Hesabu Stock</button>';
@@ -5284,7 +5290,7 @@
           _justOpenedWelcomeMessage + '</div>' : '') +
         '<div style="color:#4caf50; font-size:.9rem; font-weight:600;">✓ Umefungua shift na float ya KES ' +
         Math.round(parseFloat(openingFloat)) + '</div>' +
-        (IS_WAITRESS ? '' :
+        ((IS_WAITRESS && !CAN_STOCK_TAKE) ? '' :
         '<p style="font-size:.78rem; color:#888; margin-top:.5rem;">Unaweza hesabu bidhaa zilizopo sasa kama ' +
         'kianzio (hiari) — hii itasaidia kulinganisha na hesabu ya mwisho wa shift.</p>');
     }
@@ -5301,12 +5307,13 @@
     // lets Bootstrap stack them, exactly like the fix below now also does.
     // Also: a waitress is a concurrent helper, not the stock custodian —
     // Roy's explicit call is to exempt her from the stock-take offer
-    // entirely, both opening and closing.
+    // entirely, both opening and closing — unless CAN_STOCK_TAKE
+    // (2026-09-03) grants her the same access.
     if (footer) {
       footer.innerHTML =
         '<button type="button" class="btn btn-sm" style="background:#333; border:1px solid #444; color:#b0b0b0;"' +
         ' onclick="hideModal(\'openShiftModal\'); loadShift();">Maliza</button>' +
-        (IS_WAITRESS ? '' :
+        ((IS_WAITRESS && !CAN_STOCK_TAKE) ? '' :
         '<button type="button" class="btn btn-gold btn-sm"' +
         ' onclick="loadShift(); window.openStockTake(' +
         _justOpenedShiftId + ', \'opening\');">📦 Hesabu Stock</button>');
@@ -5925,7 +5932,8 @@
 
           // 2026-08-16 (Roy): waitress is a concurrent helper, not the
           // stock custodian — exempt her from the stock-take offer here too.
-          if (!IS_WAITRESS) {
+          // 2026-09-03: unless explicitly granted CAN_STOCK_TAKE.
+          if (!IS_WAITRESS || CAN_STOCK_TAKE) {
             var stBtn = document.createElement('button');
             stBtn.className = 'btn btn-gold btn-sm';
             stBtn.textContent = '📦 Hesabu Stock';

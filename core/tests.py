@@ -41529,6 +41529,126 @@ class WaitressLiveShiftTimerTest(TestCase):
         self.assertEqual(row['staff_role'], 'waitress')
 
 
+class WaitressStockTakePermissionTest(TestCase):
+    """2026-09-03 live request (Roy): "put stock take functionality as a
+    permission for the waitress." The 📦 Hesabu Stock offer (opening/
+    closing/mid-shift counts, on both Bar Board and Kitchen Board) has
+    always been hidden from a waitress by design (2026-08-16 — "a waitress
+    is a concurrent helper, not the stock custodian") via a hardcoded
+    !IS_WAITRESS gate, with no way for an owner to grant a trusted waitress
+    the same access. New UserProfile.can_stock_take (default False,
+    matching every other delegated toggle's default) narrows that
+    exclusion — same CAN_CONVERT_DEBT/IS_WAITRESS pattern already
+    established for can_convert_tabs_to_debt (2026-08-11).
+
+    The backend stock_take_api() itself has NEVER blocked a waitress by
+    role — this whole feature is a pure frontend visibility change; the
+    server-side POST already worked for a waitress regardless, which the
+    regression lock below confirms explicitly rather than leaving it
+    assumed."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WST Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='wst_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='wst_waitress', password='x')
+        self.waitress_profile = UserProfile.objects.create(
+            user=self.waitress, business=self.biz, role='waitress', can_stock_take=False,
+        )
+        self.staff = User.objects.create_user(username='wst_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='WST Item',
+            material_no='WST-01', unit='pcs', selling_price=Decimal('50'),
+        )
+
+    def test_bar_board_context_reflects_toggle_off(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/bar/')
+        self.assertFalse(resp.context['can_stock_take'])
+        self.assertContains(resp, 'CAN_STOCK_TAKE = false')
+
+    def test_bar_board_context_reflects_toggle_on(self):
+        self.waitress_profile.can_stock_take = True
+        self.waitress_profile.save(update_fields=['can_stock_take'])
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/bar/')
+        self.assertTrue(resp.context['can_stock_take'])
+        self.assertContains(resp, 'CAN_STOCK_TAKE = true')
+
+    def test_kitchen_board_context_reflects_toggle(self):
+        self.waitress_profile.can_access_kitchen = True
+        self.waitress_profile.can_stock_take = True
+        self.waitress_profile.save(update_fields=['can_access_kitchen', 'can_stock_take'])
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/kitchen/')
+        self.assertTrue(resp.context['can_stock_take'])
+        self.assertContains(resp, 'CAN_STOCK_TAKE = true')
+
+    def test_non_waitress_role_context_ignores_field_value(self):
+        """The field means nothing for any role other than waitress — the
+        board still renders it (harmless), but every other role's own
+        !IS_WAITRESS check already lets them through regardless."""
+        self.client.force_login(self.staff)
+        resp = self.client.get('/bar/')
+        self.assertFalse(resp.context['can_stock_take'])
+        self.assertContains(resp, 'IS_WAITRESS = false')
+
+    def test_backend_endpoint_never_blocked_waitress_by_role(self):
+        """Regression lock: the toggle is a pure frontend visibility gate —
+        stock_take_api() has always accepted a valid POST from a waitress
+        with an open shift, on or off. Confirms the model docstring's own
+        claim rather than leaving it assumed."""
+        import uuid
+        shift = Shift.objects.create(
+            business=self.biz, store=self.bar_store, staff=self.waitress,
+            status='OPEN', opening_float=Decimal('0'), station='bar',
+        )
+        self.client.force_login(self.waitress)
+        resp = self.client.post(
+            f'/bar/shift/{shift.id}/stock-take/',
+            {
+                'counts': json.dumps([{'item_id': self.item.id, 'actual_count': '0'}]),
+                'phase': 'closing',
+                'idempotency_token': str(uuid.uuid4()),
+            },
+        )
+        self.assertTrue(resp.json()['ok'], resp.json())
+        self.assertTrue(
+            ShiftStockCount.objects.filter(shift=shift, item=self.item, phase='closing').exists()
+        )
+
+    def test_staff_permissions_save_persists_toggle(self):
+        self.client.force_login(self.owner)
+        resp = self.client.post(
+            f'/business/staff/{self.waitress_profile.id}/permissions/',
+            {'can_stock_take': 'on'},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.waitress_profile.refresh_from_db()
+        self.assertTrue(self.waitress_profile.can_stock_take)
+
+    def test_staff_permissions_save_persists_toggle_off(self):
+        self.waitress_profile.can_stock_take = True
+        self.waitress_profile.save(update_fields=['can_stock_take'])
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/business/staff/{self.waitress_profile.id}/permissions/', {})
+        self.assertEqual(resp.status_code, 302)
+        self.waitress_profile.refresh_from_db()
+        self.assertFalse(self.waitress_profile.can_stock_take)
+
+    def test_staff_permissions_toggle_visible_only_for_waitress(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/business/staff/{self.waitress_profile.id}/permissions/')
+        self.assertContains(resp, 'name="can_stock_take"')
+
+        staff_profile = UserProfile.objects.get(user=self.staff)
+        resp2 = self.client.get(f'/business/staff/{staff_profile.id}/permissions/')
+        self.assertNotContains(resp2, 'name="can_stock_take"')
+
+
 class ShiftHistorySearchTest(TestCase):
     """2026-08-12 live request (Roy): shift_history() had zero filter params
     — always the last 60 shifts. New preset/date-range/status/staff_id
