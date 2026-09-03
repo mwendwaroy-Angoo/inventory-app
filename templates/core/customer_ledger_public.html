@@ -91,6 +91,13 @@
                 {% if r.is_paid is False %}<span class="pill" style="color:#f87171;border-color:rgba(248,113,113,.4);">bado</span>{% endif %}
             </span>
             <span class="amt">KES {{ r.amount|floatformat:0 }}</span>
+            {% if r.served_by or r.recorded_by %}
+            <span class="covered">
+                {% if r.served_by %}Aliyehudumia: {{ r.served_by }}{% endif %}
+                {% if r.served_by and r.recorded_by %} · {% endif %}
+                {% if r.recorded_by %}Aliyeandika: {{ r.recorded_by }}{% endif %}
+            </span>
+            {% endif %}
         </div>
         {% empty %}
         <div class="empty">Hakuna manunuzi yaliyorekodiwa bado.</div>

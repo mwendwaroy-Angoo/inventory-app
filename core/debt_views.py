@@ -2381,11 +2381,24 @@ def request_write_off(request, txn_id):
         request_type=request_type,
     )
 
-    if is_mistake and not up.business.debt_erase_requires_approval:
+    # 2026-09-02 live report (Roy): "owner should not see... who is he
+    # requesting to approve deletion when he is the owner surely." A REAL
+    # write-off (is_mistake=False) used to ALWAYS create a PENDING
+    # WriteOffRequest and wait for a separate approve step, even when the
+    # OWNER himself submitted it — since the final decision on a real
+    # write-off is owner-only anyway (see _can_approve_debt_action), the
+    # owner ended up having to approve his own request, a confusing,
+    # meaningless extra click. A MANAGER submitting a real write-off still
+    # goes through the pending state below — that IS genuine two-person
+    # control, since a manager can only recommend (manager_review_write_
+    # off), never give the final decision. is_mistake's own existing
+    # self-service gate (debt_erase_requires_approval) is untouched —
+    # `or up.is_owner` only ever ADDS a bypass, never removes one.
+    if (is_mistake and not up.business.debt_erase_requires_approval) or up.is_owner:
         # Self-service — no approval needed, execute right now. Still goes
         # through _execute_write_off_approval() (the same code approve_write_off
-        # uses) so a self-executed erase is indistinguishable in its effect
-        # from an approved one — only who/when differs.
+        # uses) so a self-executed erase/write-off is indistinguishable in
+        # its effect from an approved one — only who/when differs.
         result = _execute_write_off_approval(
             wo, request.user, self_service=True,
             base_url=request.build_absolute_uri('/').rstrip('/'),
@@ -2607,7 +2620,17 @@ def _execute_write_off_approval(wo, approver, self_service=False, base_url=''):
 
     verb = 'amefuta (kosa — stock imerejeshwa)' if is_mistake else 'amefuta'
     if self_service:
-        message = f'Imefutwa — KES {amount:,.0f} ({item_name}) kutoka kwa deni la {customer_name}. Stock imerejeshwa.'
+        # 2026-09-02 — self_service now also fires for an owner's own REAL
+        # write-off (is_mistake=False), which never restores stock (the
+        # goods genuinely left — only the receivable is forgiven). This
+        # message used to unconditionally claim "Stock imerejeshwa" (stock
+        # restored), which was only ever true for the is_mistake branch —
+        # would have been a factually wrong confirmation for a real
+        # write-off otherwise.
+        if is_mistake:
+            message = f'Imefutwa — KES {amount:,.0f} ({item_name}) kutoka kwa deni la {customer_name}. Stock imerejeshwa.'
+        else:
+            message = f'Imefutwa — KES {amount:,.0f} ({item_name}) kutoka kwa deni la {customer_name}.'
     else:
         title_verb = '✅ Kosa Limefutwa' if is_mistake else '✅ Write-off Imeidhinishwa'
         Notification.objects.create(

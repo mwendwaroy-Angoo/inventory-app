@@ -13855,7 +13855,16 @@ class DebtEraseMistakeTest(TestCase):
     def test_regular_writeoff_never_touches_keg_barrel_envelope(self):
         """A REAL write-off (goods really left the shelf, only the
         receivable is forgiven) must NOT reverse the barrel's envelope —
-        only the erase_mistake path represents a sale that never happened."""
+        only the erase_mistake path represents a sale that never happened.
+
+        2026-09-02 (Roy: "owner should not see... who is he requesting to
+        approve deletion when he is the owner surely"): an owner's own real
+        write-off now self-executes immediately (see request_write_off's
+        `or up.is_owner` bypass) instead of always creating a pending
+        request that then needed a SEPARATE approve step from the same
+        owner — rewritten from the pre-fix two-step flow to match. The
+        manager-still-goes-through-pending case is covered separately by
+        test_manager_real_writeoff_still_requires_owner_approval below."""
         barrel = KegBarrel.objects.create(
             business=self.biz, store=self.store, item=self.item,
             cost_price=Decimal('12000'), target_revenue=Decimal('20000'),
@@ -13872,20 +13881,44 @@ class DebtEraseMistakeTest(TestCase):
         resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
             'reason': 'Uncollectable', 'is_mistake': '0',
         })
-        self.assertTrue(resp.json().get('ok'), resp.json())
-        # A real write-off only ever creates a pending request — never
-        # self-executes regardless of who requested it — so approve it
-        # explicitly to actually exercise _execute_write_off_approval()
-        # with is_mistake=False.
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data.get('executed'), 'owner-submitted real write-off must self-execute now')
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'void')
+        self.assertEqual(txn.qty, Decimal('-500'), "A real write-off must never touch qty")
+        barrel.refresh_from_db()
+        self.assertEqual(barrel.revenue_collected, Decimal('200'), "A real write-off must never reverse the envelope")
+        self.assertEqual(barrel.volume_dispensed_ml, Decimal('500'))
+
+    def test_manager_real_writeoff_still_requires_owner_approval(self):
+        """Unlike the owner, a manager submitting a REAL write-off still
+        goes through the pending state — genuine two-person control, since
+        a manager can only recommend (manager_review_write_off), never give
+        the final decision on a real write-off."""
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-2'), recipient='Erase Patron',
+            payment_method='credit', sale_amount=Decimal('200'),
+        )
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Uncollectable', 'is_mistake': '0',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertNotIn('executed', data)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'credit', 'still pending — must not be voided yet')
+
         from core.models import WriteOffRequest
         wo = WriteOffRequest.objects.get(transaction=txn)
+        self.assertEqual(wo.status, WriteOffRequest.STATUS_PENDING)
+        self.client.force_login(self.owner)
         approve_resp = self.client.post(f'/debt/write-off/{wo.id}/approve/')
         self.assertTrue(approve_resp.json().get('ok'), approve_resp.json())
         txn.refresh_from_db()
-        self.assertEqual(txn.qty, Decimal('-500'), "A real write-off must never touch qty")
-        barrel.refresh_from_db()
-        self.assertEqual(barrel.revenue_collected, Decimal('200'))
-        self.assertEqual(barrel.volume_dispensed_ml, Decimal('500'))
+        self.assertEqual(txn.payment_method, 'void')
 
     def test_self_service_erase_never_flags_customer_as_defaulter(self):
         customer = Customer.objects.create(business=self.biz, name='Erase Patron', credit_approved=True)
@@ -14149,6 +14182,8 @@ class DebtWriteOffQuantitySplitViewTest(TestCase):
         self.store = Store.objects.create(business=self.biz, name='Bar')
         self.owner = User.objects.create_user(username='woqty_owner', password='x')
         UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='woqty_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
         self.item = Item.objects.create(
             business=self.biz, store=self.store, description='Kc Smooth 250ml',
             material_no='WOQTY-01', selling_price=Decimal('400'),
@@ -14230,13 +14265,43 @@ class DebtWriteOffQuantitySplitViewTest(TestCase):
         })
         self.assertEqual(resp.status_code, 400)
 
-    def test_real_writeoff_with_quantity_split_requires_approval_and_only_voids_the_split_portion(self):
-        """A real Write-off (deni halisi, not 'Ilikuwa Kosa') always needs
-        owner/manager approval regardless of quantity-splitting — the split
-        happens up front, then the normal approve flow takes over,
-        affecting only the split-off transaction."""
+    def test_owner_real_writeoff_with_quantity_split_self_executes_only_the_split_portion(self):
+        """A real Write-off (deni halisi, not 'Ilikuwa Kosa') submitted by
+        the OWNER now self-executes immediately (2026-09-02 fix — see
+        request_write_off's `or up.is_owner` bypass) — the split still
+        happens up front, then execution affects only the split-off
+        transaction, never the original (remaining) one."""
         txn = self._credit_txn()
         self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Real uncollectable half', 'qty_to_erase': '1',
+        })
+        data = resp.json()
+        self.assertTrue(data['ok'], data)
+        self.assertTrue(data.get('executed'))
+
+        from core.models import WriteOffRequest
+        wo = WriteOffRequest.objects.get(id=data['request_id'])
+        # The write-off request must point at the SPLIT-OFF sibling, not
+        # the original (now-reduced) transaction.
+        self.assertNotEqual(wo.transaction_id, txn.id)
+        self.assertEqual(wo.transaction.qty, Decimal('-1'))
+        self.assertEqual(wo.status, WriteOffRequest.STATUS_APPROVED)
+        wo.transaction.refresh_from_db()
+        self.assertEqual(wo.transaction.payment_method, 'void')
+        # Real write-off never touches qty (goods really left the shelf) —
+        # only the ORIGINAL (remaining) transaction stays as live credit.
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('-1'))
+        self.assertEqual(txn.payment_method, 'credit')
+
+    def test_manager_real_writeoff_with_quantity_split_still_requires_owner_approval(self):
+        """The same split-then-write-off flow, but submitted by a MANAGER —
+        must still go through the pending state and a separate owner
+        approve step, since a manager can never give the final decision on
+        a real write-off."""
+        txn = self._credit_txn()
+        self.client.force_login(self.manager)
         resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
             'reason': 'Real uncollectable half', 'qty_to_erase': '1',
         })
@@ -14246,20 +14311,88 @@ class DebtWriteOffQuantitySplitViewTest(TestCase):
 
         from core.models import WriteOffRequest
         wo = WriteOffRequest.objects.get(id=data['request_id'])
-        # The write-off request must point at the SPLIT-OFF sibling, not
-        # the original (now-reduced) transaction.
+        self.assertEqual(wo.status, WriteOffRequest.STATUS_PENDING)
         self.assertNotEqual(wo.transaction_id, txn.id)
         self.assertEqual(wo.transaction.qty, Decimal('-1'))
 
+        self.client.force_login(self.owner)
         approve_resp = self.client.post(f'/debt/write-off/{wo.id}/approve/')
         self.assertTrue(approve_resp.json().get('ok'), approve_resp.json())
         wo.transaction.refresh_from_db()
         self.assertEqual(wo.transaction.payment_method, 'void')
-        # Real write-off never touches qty (goods really left the shelf) —
-        # only the ORIGINAL (remaining) transaction stays as live credit.
         txn.refresh_from_db()
         self.assertEqual(txn.qty, Decimal('-1'))
         self.assertEqual(txn.payment_method, 'credit')
+
+
+class WriteOffOwnerSelfExecuteWordingTest(TestCase):
+    """2026-09-02 live report (Roy): "debt item erasing (futa) owner should
+    not see (futa/omba) who is he requesting to approve deletion when he
+    is the owner surely." The row button/modal used to read "Futa / Omba"
+    for the owner — confusing, since a real write-off used to always
+    create a pending request even for the owner, who then had to separately
+    approve his own submission. Now that request_write_off self-executes
+    for the owner (see WriteOffOwnerSelfExecuteWordingTest's sibling tests
+    in DebtEraseMistakeTest/DebtWriteOffQuantitySplitViewTest above), the
+    wording is updated to match: no more "Omba" (request) language for the
+    owner anywhere on the page, and the self-service message never claims
+    stock was restored for a REAL write-off (only erase_mistake restores
+    stock)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WO Wording Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='wowording_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='wowording_staff', password='x')
+        self.staff_profile = UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='WO Wording Item',
+            material_no='WOWORD-01', selling_price=Decimal('100'),
+        )
+        self.customer = Customer.objects.create(business=self.biz, name='Wording Patron', credit_approved=True)
+        self.txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), recipient='Wording Patron',
+            payment_method='credit', sale_amount=Decimal('100'),
+        )
+
+    def test_owner_debt_profile_never_says_omba(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        content = resp.content.decode()
+        self.assertNotIn('Futa / Omba', content)
+        self.assertIn('Futa Kiingilio', content, 'modal title should read plainly for the owner')
+
+    def test_staff_debt_profile_still_shows_request_wording(self):
+        """Staff genuinely IS requesting — this wording is correct and must
+        stay unchanged."""
+        self.client.force_login(self.staff)
+        resp = self.client.get(f'/debt/{self.customer.id}/')
+        self.assertContains(resp, 'Omba Kufutwa')
+
+    def test_owner_real_writeoff_message_never_claims_stock_restored(self):
+        """A REAL write-off never restores stock — only erase_mistake does.
+        The self-service execution message must reflect this correctly."""
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{self.txn.id}/', {
+            'reason': 'Uncollectable', 'is_mistake': '0',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('executed'), data)
+        self.assertNotIn('Stock imerejeshwa', data.get('message', ''))
+
+    def test_owner_erase_mistake_message_still_claims_stock_restored(self):
+        """Regression lock: the erase_mistake self-service message (which
+        DOES restore stock) must keep saying so — only the real-write-off
+        branch's wording changed."""
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/debt/write-off/request/{self.txn.id}/', {
+            'reason': 'Wrong customer entirely', 'is_mistake': '1',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('executed'), data)
+        self.assertIn('Stock imerejeshwa', data.get('message', ''))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -37461,6 +37594,44 @@ class BarBoardBackdatedCheckoutTest(TestCase):
         self.assertGreater(txn.created_at, timezone.now() - timedelta(minutes=5))
 
 
+class BarBoardTabPartialAmountInputTest(TestCase):
+    """2026-09-02 live report (Roy): "there is no partial payment for keg
+    in the bar board in tabs." Root cause: bar_board.html's renderTabs()
+    has TWO separate tab-card render paths — the REGULAR one (an ordinary
+    keg/bar tab, what every plain keg tab actually renders through) and a
+    MIXED one (a food tab that also happens to carry bar items, merged
+    cross-counter). Only the MIXED path ever built the "Kiasi" amount
+    <input id="tab-partial-amount-<id>"> — the REGULAR path's own
+    partial-selection row jumped straight from the selected-total display
+    to the Cash/M-Pesa/STK buttons with no way to type a smaller amount.
+    settleTabPartial()/settleTabPartialStk() both already look up that
+    input by this exact id regardless of which path built the card — with
+    it missing on the regular path, checking items and tapping a payment
+    button always settled the FULL selected total; a customer paying
+    "mpesa 70 of an 80 keg tab" had no way to be recorded correctly. Fixed
+    by mirroring the same input markup into the regular render path."""
+
+    def setUp(self):
+        self.biz, self.store, self.owner_user, self.item, self.barrel, self.preset = _make_keg_fixtures(
+            'BB Partial Input Biz'
+        )
+        UserProfile.objects.create(user=self.owner_user, business=self.biz, role='owner')
+        self.client.force_login(self.owner_user)
+
+    def test_regular_and_mixed_tab_render_paths_both_define_the_amount_input(self):
+        resp = self.client.get('/bar/')
+        content = resp.content.decode()
+        # Both renderTabs() paths must define this input by the same id
+        # pattern the shared settle JS already reads — one per function
+        # definition (these are JS string-concatenation templates, built
+        # once per page load, not once per rendered tab).
+        self.assertEqual(
+            content.count('id="tab-partial-amount-'), 2,
+            'expected the Kiasi amount input in both the regular AND the '
+            'mixed food+bar tab-card render paths',
+        )
+
+
 class KitchenBatchOpenBatchReceivedOnTest(TestCase):
     """2026-08-12 live request (Roy) — the OTHER half of the same complaint:
     "+Pata Stok" for a batch item (raw-material draw or plain manual cost)
@@ -42815,6 +42986,79 @@ class StaffPermissionsAffirmAndExpenseWiringTest(TestCase):
         self.assertFalse(self.up.can_record_expenses)
 
 
+class KitchenPataStokVisibilityForCrossAccessStaffTest(TestCase):
+    """2026-08-31 live report (Roy, Monsoon Inn): a bar staffer covering for
+    kitchen staff on leave was given Kitchen Board access (can_access_
+    kitchen) plus the general Stock Receiving Access toggle (can_receive_
+    stock) — but still had no "+Pata Stok" button on the Kitchen Board
+    itself. Root cause: Kitchen Board's own receive flow is gated by a
+    SEPARATE, role-agnostic field, can_receive_kitchen_stock (core.
+    kitchen_views: `is_owner or getattr(up, 'can_receive_kitchen_stock',
+    False)` — see e.g. KitchenStockReceiptPermissionTest.
+    test_staff_with_can_receive_kitchen_stock_allowed, which already
+    exercises this for a role='kitchen' staffer) — but templates/core/
+    staff_permissions.html only ever rendered that toggle when
+    staff_profile.role == 'kitchen', so the owner had no way to grant it
+    to a cross-access bar/general staffer without reassigning their role
+    (which Roy explicitly did not want to do)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Pata Stok Vis Biz', has_kitchen=True)
+        Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='psv_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.bar_staff = User.objects.create_user(username='psv_bar_staff', password='x')
+        self.up = UserProfile.objects.create(
+            user=self.bar_staff, business=self.biz, role='staff', can_access_kitchen=True,
+        )
+        self.client.force_login(self.owner)
+
+    def test_toggle_visible_for_cross_access_bar_staff(self):
+        resp = self.client.get(f'/business/staff/{self.up.id}/permissions/')
+        self.assertContains(resp, 'name="can_receive_kitchen_stock"')
+        self.assertContains(resp, 'Pata Stok')
+
+    def test_toggle_hidden_for_staff_without_kitchen_access(self):
+        no_access_staff = User.objects.create_user(username='psv_no_access', password='x')
+        up2 = UserProfile.objects.create(
+            user=no_access_staff, business=self.biz, role='staff', can_access_kitchen=False,
+        )
+        resp = self.client.get(f'/business/staff/{up2.id}/permissions/')
+        self.assertNotContains(resp, 'name="can_receive_kitchen_stock"')
+
+    def test_still_visible_for_native_kitchen_role(self):
+        kitchen_staff = User.objects.create_user(username='psv_kitchen', password='x')
+        up3 = UserProfile.objects.create(user=kitchen_staff, business=self.biz, role='kitchen')
+        resp = self.client.get(f'/business/staff/{up3.id}/permissions/')
+        self.assertContains(resp, 'name="can_receive_kitchen_stock"')
+
+    def test_hidden_when_business_has_no_kitchen_module(self):
+        no_kitchen_biz = Business.objects.create(name='No Kitchen Biz')
+        cross_staff = User.objects.create_user(username='psv_nokitchenbiz', password='x')
+        up4 = UserProfile.objects.create(
+            user=cross_staff, business=no_kitchen_biz, role='staff', can_access_kitchen=True,
+        )
+        no_kitchen_owner = User.objects.create_user(username='psv_nk_owner', password='x')
+        UserProfile.objects.create(user=no_kitchen_owner, business=no_kitchen_biz, role='owner')
+        self.client.force_login(no_kitchen_owner)
+        resp = self.client.get(f'/business/staff/{up4.id}/permissions/')
+        self.assertNotContains(resp, 'name="can_receive_kitchen_stock"')
+
+    def test_can_save_can_receive_kitchen_stock_for_cross_access_bar_staff(self):
+        self.client.post(f'/business/staff/{self.up.id}/permissions/', {
+            'can_access_kitchen': 'on',
+            'can_receive_kitchen_stock': 'on',
+        })
+        self.up.refresh_from_db()
+        self.assertTrue(self.up.can_receive_kitchen_stock)
+
+        self.client.post(f'/business/staff/{self.up.id}/permissions/', {
+            'can_access_kitchen': 'on',
+        })
+        self.up.refresh_from_db()
+        self.assertFalse(self.up.can_receive_kitchen_stock)
+
+
 class VarianceLossKesAffirmationTest(TestCase):
     """2026-08-22 fix — _staff_contribution()'s variance_loss_kes used to sum
     EVERY decrease-direction variance attributed to a staffer's shift
@@ -43750,6 +43994,59 @@ class CustomerProfilingTest(TestCase):
         self.assertEqual(a, b)
         self.assertTrue(a)
 
+    # ── 2026-09-02 live report (Roy): "there is a receipt I just viewed
+    # here and it is showing everything the customer ever took and paid
+    # and has not paid yet, that is good but it needs dates and staff who
+    # served and recorded." The underlying data (customer_transaction_
+    # history) already carried served_by/recorded_by — customer_journey.
+    # html (staff-facing) already rendered them; customer_ledger_public.
+    # html (the CUSTOMER-facing page Roy was actually looking at) never
+    # did. Dates were already shown there. ─────────────────────────────
+    def test_public_ledger_shows_served_by_and_recorded_by(self):
+        from core.customer_profile import ensure_ledger_token
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Roy', status='OPEN',
+            source='bar', store=self.store, served_by=self.waiter,
+        )
+        self._sale(Decimal('250'), tab=tab, description='Tusker Baridi',
+                   recorded_by=self.staff)
+        token = ensure_ledger_token(self.customer)
+        resp = self.client.get(f'/ledger/{token}/')
+        content = resp.content.decode()
+        self.assertIn('Dush M', content, 'served_by (Aliyehudumia) missing from the public ledger')
+        self.assertIn('Susan N', content, 'recorded_by (Aliyeandika) missing from the public ledger')
+
+    # ── 2026-09-02 live report (Roy): "debt item deletion isn't reflecting
+    # on customer's live receipt." Root cause, tied to the SAME session's
+    # fix to request_write_off: before that fix, an owner-submitted real
+    # write-off only ever created a PENDING WriteOffRequest — the
+    # Transaction was never actually voided until a SEPARATE approve step
+    # — so of course the customer's ledger still showed it as owed, since
+    # it genuinely still WAS owed. Now that an owner's write-off self-
+    # executes immediately, the already-correct exclusion in customer_
+    # transaction_history (payment_method='void' is filtered out, locked
+    # in by test_history_excludes_voided_and_internal_tag_transactions
+    # above) takes effect on the very next page load — reproduced here
+    # end to end through the real endpoint, not just the data function. ──
+    def test_write_off_by_owner_disappears_from_public_ledger_immediately(self):
+        from core.customer_profile import ensure_ledger_token
+        txn = self._sale(Decimal('250'))
+        token = ensure_ledger_token(self.customer)
+
+        resp = self.client.get(f'/ledger/{token}/')
+        self.assertContains(resp, 'KES 250')
+
+        self.client.force_login(self.owner)
+        wo_resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Uncollectable', 'is_mistake': '0',
+        })
+        self.assertTrue(wo_resp.json().get('executed'), wo_resp.json())
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'void')
+
+        resp2 = self.client.get(f'/ledger/{token}/')
+        self.assertNotContains(resp2, 'KES 250')
+
 
 class DebtReminderEnforcementTest(TestCase):
     """2026-08-23 (Roy): "a rule that forces an automatic reminder to get sent
@@ -44209,10 +44506,20 @@ class OwnerConsumptionLimitTest(TestCase):
         )
 
     def test_daily_window_ignores_an_earlier_day(self):
-        from core.owner_limits import owner_consumption_usage
+        from core.owner_limits import owner_consumption_usage, window_start
         old = self._draw(400)
+        # Must land on an EARLIER CALENDAR DAY (excluded from 'daily') but
+        # still inside the CURRENT CALENDAR MONTH (included in 'monthly').
+        # A hardcoded `timezone.now() - timedelta(days=2)` broke this test
+        # every time it happened to run on the 1st or 2nd of a month (2
+        # days ago lands in the PREVIOUS month) — the same day/month-
+        # boundary wall-clock fragility already documented repeatedly in
+        # this file (PettyCashReviewUndoTest, BarZReportOverlappingShiftsTest,
+        # etc.), this time a month-boundary variant. Anchoring to the start
+        # of the current month (+1h, so it's unambiguously inside that
+        # calendar day) is deterministic regardless of what day it is run.
         Transaction.objects.filter(id=old.id).update(
-            created_at=timezone.now() - timedelta(days=2))
+            created_at=window_start('monthly') + timedelta(hours=1))
         self._draw(100)
         self.assertEqual(
             owner_consumption_usage(self.owner_profile, self.biz, window='daily'),

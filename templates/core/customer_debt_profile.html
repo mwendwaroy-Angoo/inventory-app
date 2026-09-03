@@ -629,7 +629,7 @@
                         <button onclick="openWriteOffModal({{ entry.txn.id }}, '{{ entry.txn.item.description|escapejs }}', {{ entry.amount }}, {{ entry.txn.qty }}, {{ entry.tab_entry_id|default:'null' }})"
                             style="background:rgba(192,57,90,0.06);border:1px solid rgba(192,57,90,0.25);border-radius:6px;
                                    color:#c0395a;font-size:0.72rem;padding:0.18rem 0.55rem;cursor:pointer;">
-                            📝 {% if is_owner %}Futa / Omba{% else %}Omba Kufutwa{% endif %}
+                            📝 {% if is_owner %}Futa{% else %}Omba Kufutwa{% endif %}
                         </button>
                         {% endif %}
                     </td>
@@ -794,13 +794,21 @@ function revertDebtPayment(paymentId, amount) {
         <div class="modal-content border-0" style="background:#1e1e1e; border:1px solid rgba(255,255,255,0.1) !important;">
             <div class="modal-header border-0 pb-0">
                 <h5 class="modal-title" style="color:var(--gold); font-family:'Playfair Display',serif; font-size:1rem;">
-                    📝 {% if is_owner %}Futa / Omba Write-off{% else %}Omba Kufutwa{% endif %}
+                    📝 {% if is_owner %}Futa Kiingilio{% else %}Omba Kufutwa{% endif %}
                 </h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <p id="woItemName" style="color:#fbbf24; font-size:0.88rem; font-weight:600; margin-bottom:0.75rem;"></p>
-                {% if not is_owner %}
+                {% if is_owner %}
+                <!-- 2026-09-02 live report (Roy): the owner has full authority
+                     already — this now executes immediately on submit, no
+                     separate self-approval step (see request_write_off's
+                     `or up.is_owner` bypass). -->
+                <div style="background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:0.7rem 0.9rem; margin-bottom:1rem; font-size:0.8rem; color:#b0b0b0;">
+                    📌 Hii itafutwa mara moja — hakuna idhini inayohitajika kwako.
+                </div>
+                {% else %}
                 <div style="background:rgba(201,168,76,0.06); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:0.7rem 0.9rem; margin-bottom:1rem; font-size:0.8rem; color:#b0b0b0;">
                     📌 Ombi lako litatumwa kwa mmiliki/meneja kwa idhini. Mteja anaweza kulipa wakati wowote — huhitaji kusubiri.
                 </div>
@@ -855,7 +863,7 @@ function revertDebtPayment(paymentId, amount) {
                             style="border-color:rgba(255,255,255,0.2); color:#b0b0b0;">Ghairi</button>
                         <button type="submit" id="woSubmitBtn" class="btn btn-sm"
                             style="background:rgba(192,57,90,0.15); border:1px solid rgba(192,57,90,0.4); color:#c0395a;">
-                            Tuma Ombi
+                            {% if is_owner %}Futa{% else %}Tuma Ombi{% endif %}
                         </button>
                     </div>
                 </form>
@@ -1588,6 +1596,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         _woSubmitted = true;
         var btn = document.getElementById('woSubmitBtn');
+        var _woOrigBtnText = btn.textContent;
         btn.disabled = true; btn.textContent = '⏳ Inatumwa...';
         fetch('/debt/write-off/request/' + txnId + '/', {
             method: 'POST',
@@ -1607,13 +1616,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 setTimeout(function() { location.reload(); }, 400);
             } else {
                 document.getElementById('woError').textContent = d.error || 'Hitilafu. Jaribu tena.';
-                btn.disabled = false; btn.textContent = 'Tuma Ombi';
+                btn.disabled = false; btn.textContent = _woOrigBtnText;
                 _woSubmitted = false;
             }
         })
         .catch(function() {
             document.getElementById('woError').textContent = 'Hitilafu ya mtandao. Angalia uunganisho na ujaribu tena.';
-            btn.disabled = false; btn.textContent = 'Tuma Ombi';
+            btn.disabled = false; btn.textContent = _woOrigBtnText;
             _woSubmitted = false;
         });
     });

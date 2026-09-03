@@ -3362,6 +3362,23 @@
           '<div class="tab-entries-list" id="tab-entries-' + tab.id + '">' + entriesHtml + '</div>' +
           '<div id="tab-sel-row-' + tab.id + '" style="display:none; background:rgba(201,168,76,0.07); border:1px solid rgba(201,168,76,0.2); border-radius:8px; padding:.35rem .55rem; margin:.35rem 0; align-items:center; gap:.4rem; flex-wrap:wrap;">' +
           '<span style="color:#b0b0b0; font-size:.78rem;">Vilivyochaguliwa: <strong id="tab-sel-total-' + tab.id + '" style="color:#c9a84c;">KES 0</strong></span>' +
+          /* 2026-09-02 live report (Roy): "no partial payment for keg in the
+             bar board in tabs" — a REGULAR (non-food-mixed) tab card, the
+             one every ordinary keg tab actually renders through, was
+             missing this amount input entirely; only the sibling MIXED
+             (food-tab-with-bar-items) render path above had it, even though
+             settleTabPartial()/settleTabPartialStk() both already look for
+             it by this exact id regardless of which render path built the
+             card. Without it, checking items and tapping Cash/M-Pesa always
+             settled the FULL selected total — there was genuinely no way
+             to type a smaller "mpesa 70 kati ya 80" amount for a keg tab. */
+          '<span style="display:flex;align-items:center;gap:.25rem;">' +
+          '<span style="color:#888;font-size:.72rem;">Kiasi:</span>' +
+          '<input type="number" id="tab-partial-amount-' + tab.id + '" min="0" step="1" ' +
+          'oninput="this.dataset.autofilled=\'0\'" ' +
+          'style="width:80px;background:#111;border:1px solid #444;border-radius:5px;color:#f0ece4;padding:.15rem .35rem;font-size:.75rem;" ' +
+          'title="Badilisha kama mteja analipa sehemu tu (mfano: mpesa 70 kati ya 80)">' +
+          '</span>' +
           '<button id="tab-partial-cash-' + tab.id + '" class="tab-partial-btn tab-btn-cash" disabled onclick="window.settleTabPartial(' + tab.id + ',\'cash\')">💰 Cash</button>' +
           '<button id="tab-partial-mpesa-' + tab.id + '" class="tab-partial-btn tab-btn-mpesa" disabled onclick="window.settleTabPartial(' + tab.id + ',\'mpesa\')">📱 M-Pesa</button>' +
           '<button id="tab-partial-stk-' + tab.id + '" class="tab-partial-btn tab-btn-stk" disabled onclick="window.settleTabPartialStk(' + tab.id + ',\'' + safeCust + '\')">📲 STK</button>' +

@@ -10099,3 +10099,157 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   amount --dry-run` (omit `--business=` to scan every business) on
   Render's Shell to see the true scope platform-wide, then re-run without
   `--dry-run` to apply.
+- Fix: Kitchen Board's own "+Pata Stok" invisible for a cross-access bar
+  staffer (2026-08-31), live request: Roy gave a bar staffer (Recheal
+  Katanu) Kitchen Board access (`can_access_kitchen`) plus the general
+  "Stock Receiving Access" toggle (`can_receive_stock`) to cover for
+  kitchen staff on leave, without changing her role — but the "+Pata Stok"
+  button never appeared on the Kitchen Board itself. Root cause, confirmed
+  by direct code trace: Kitchen Board's own receive flow is gated by a
+  SEPARATE, already-role-agnostic field, `can_receive_kitchen_stock`
+  (`core/kitchen_views.py`: `is_owner or getattr(up, 'can_receive_kitchen_
+  stock', False)` — already exercised for a non-owner staffer by the
+  pre-existing `KitchenStockReceiptPermissionTest.test_staff_with_can_
+  receive_kitchen_stock_allowed`), completely independent of `can_receive_
+  stock` (which only governs Add Transaction's Receipt flow and Quick
+  Sell's own "+Pata Stok" shortcut, per its own 2026-08-11 migration help
+  text). The toggle for the CORRECT field exists in `staff_permissions.
+  html` — but was wrapped in `{% if biz_profile.modules.kitchen and staff_
+  profile.role == 'kitchen' %}`, so it was completely invisible for any
+  staffer whose role isn't literally `'kitchen'`, even with full cross-
+  access granted. Widened the condition to `staff_profile.role ==
+  'kitchen' or staff_profile.can_access_kitchen` — matching the backend's
+  own role-agnostic check exactly — via two separate nested `{% if %}`
+  tags rather than one combined `and`/`or` expression, since Django
+  templates evaluate `and` before `or` with no way to parenthesize a
+  sub-clause, and the naive single-line version I first wrote (`A and B or
+  C`) would have parsed as `(A and B) or C`, wrongly showing the toggle
+  even for a `can_access_kitchen` staffer on a business with NO kitchen
+  module at all — caught before shipping, not after. This block used to be
+  nested inside the outer `{% if staff_profile.is_kitchen_staff %}` that
+  also wraps the separate "Require Shift Before Kitchen Work" toggle right
+  above it — pulled the Pata Stok block out to be a fully independent
+  sibling `{% if %}` (closing `is_kitchen_staff` immediately after the
+  shift-requirement div instead), so the shift-requirement toggle's own
+  visibility (still role=='kitchen' only, untouched — out of scope for
+  this report) can never be accidentally affected by this change.
+  `accounts/views.py`'s `staff_permissions()` POST handler already reads
+  and saves `can_receive_kitchen_stock` unconditionally regardless of
+  role (matching its own "harmless no-op to save 'off' for a [role] who
+  could never reach [this] control anyway" convention already used for
+  the manager-only toggles) — no backend change needed, this was a purely
+  template-visibility gap. 5 new tests
+  (`KitchenPataStokVisibilityForCrossAccessStaffTest`) — toggle now visible
+  for a cross-access bar staffer, still hidden for a staffer with neither
+  role='kitchen' nor can_access_kitchen, still visible for native kitchen
+  role (regression lock), hidden entirely on a business with no kitchen
+  module (the exact case the and/or precedence bug would have broken),
+  and a full save/unsave round-trip through the real POST endpoint. No
+  migrations (no schema change — template-only fix).
+- Test-suite fix, same session (2026-09-02): the full-suite run crashed
+  outright (a pickle error from Django's parallel test runner, masking the
+  real failure) on `OwnerConsumptionLimitTest.test_daily_window_ignores_
+  an_earlier_day` — same day/month-boundary wall-clock test-authoring bug
+  class already documented repeatedly in this file
+  (`PettyCashReviewUndoTest`, `BarZReportOverlappingShiftsTest`,
+  `AdHocExpenseDayReconciliationTest`), a month-boundary variant this
+  time: the test hardcoded `timezone.now() - timedelta(days=2)` for a
+  transaction meant to land on "an earlier day, still this month" — which
+  breaks whenever the suite happens to run on the 1st or 2nd of a
+  calendar month, since 2 days ago then falls in the PREVIOUS month
+  (`owner_consumption_usage`'s `'monthly'` window correctly, deliberately
+  resets at `window_start('monthly')` = the 1st of the current month —
+  production behavior is right, only the test's date construction was
+  wrong). Fixed by anchoring to `window_start('monthly') + timedelta(hours=1)`
+  instead — deterministic and always inside the current calendar month
+  regardless of what day the suite runs on. No migrations.
+- Four live fixes in one message (2026-09-02): owner self-approving his own
+  debt write-off, a write-off's removal not reflecting on the customer's
+  live receipt, the public ledger missing staff names, and no partial
+  payment for a keg tab in Bar Board. **(1) Owner write-off self-
+  approval confusion** — Roy: "owner should not see (futa/omba) who is he
+  requesting to approve deletion when he is the owner surely." Root cause,
+  confirmed by direct code trace: `request_write_off()`
+  (`core/debt_views.py`) ALWAYS created a PENDING `WriteOffRequest` for a
+  REAL write-off (`is_mistake=False` — the checkbox's own default state),
+  regardless of who submitted it, per the function's own docstring:
+  "Owner/manager: same — approval is always a separate action for audit
+  trail." For the owner specifically this meant submitting a request and
+  then having to separately click ✅ approve on his OWN just-submitted
+  request — meaningless friction, since the final decision on a real
+  write-off has always been owner-only anyway (`_can_approve_debt_
+  action`). Fixed: `if (is_mistake and not up.business.debt_erase_
+  requires_approval) or up.is_owner:` — the owner now ALWAYS self-executes
+  immediately via the same `_execute_write_off_approval(..., self_
+  service=True)` path already used for the pre-existing erase_mistake
+  self-service case, for BOTH is_mistake and a real write-off. A MANAGER
+  submitting a real write-off is deliberately UNCHANGED — still goes
+  through the pending state, genuine two-person control, since a manager
+  can never give the final decision on a real write-off (only recommend,
+  via `manager_review_write_off`). Found and fixed a real bug WHILE making
+  this change: `_execute_write_off_approval`'s `self_service=True` message
+  branch unconditionally said "Stock imerejeshwa" (stock restored) —
+  correct for erase_mistake, but now also reachable for a REAL write-off
+  (which never restores stock, only forgives the receivable) — would have
+  been a factually wrong confirmation shown to the owner. Now branches on
+  `is_mistake` for the message text. Button/modal wording updated to match
+  — row button: "Futa" (was "Futa / Omba"); modal title: "Futa Kiingilio"
+  (was "Futa / Omba Write-off"); submit button: "Futa" for owner, "Tuma
+  Ombi" unchanged for staff (who genuinely IS requesting); the modal's
+  info banner now tells the owner plainly "itafutwa mara moja — hakuna
+  idhini inayohitajika kwako" instead of the staff-only "will be sent for
+  approval" text, which was never conditionally hidden from the owner's
+  submit-button reset path before either (fixed the JS to capture and
+  restore the button's own original text on error, instead of two
+  hardcoded 'Tuma Ombi' resets that would have been wrong for the owner's
+  now-different label). **(2) Write-off not reflecting on the customer's
+  live receipt** — same root cause as (1), not a separate bug: before this
+  fix, an owner's real write-off sat PENDING (the `Transaction` was never
+  actually voided until a separate approve click), so of course the
+  customer's own ledger still showed it as owed — it genuinely still WAS
+  owed. Confirmed `customer_transaction_history()` (`core/customer_
+  profile.py`) already correctly `.exclude(payment_method='void')` — the
+  moment the write-off actually executes (now immediate for the owner),
+  the customer's ledger self-corrects on its very next load with zero
+  additional code needed. **(3) Public ledger missing staff names** — Roy:
+  "it needs dates and staff who served and recorded" — traced to
+  `templates/core/customer_ledger_public.html` specifically: dates were
+  ALREADY shown there; `customer_transaction_history()`'s row dict already
+  carries `served_by`/`recorded_by` (confirmed already correctly rendered
+  on the STAFF-facing sibling page, `customer_journey.html`) — only the
+  CUSTOMER-facing public ledger template never rendered them. Added a
+  "Aliyehudumia: X · Aliyeandika: Y" line per row, matching `customer_
+  journey.html`'s own wording convention. **(4) No partial payment for a
+  keg tab in Bar Board's tabs drawer** — Roy: "there is no partial payment
+  for keg in the bar board in tabs." Root cause, confirmed by direct code
+  trace: `bar_board.html`'s `renderTabs()` has TWO separate tab-card
+  render paths — the REGULAR one (an ordinary keg/bar tab — what every
+  plain keg tab actually renders through) and a MIXED one (a food tab that
+  also carries bar items, cross-counter-merged). Only the MIXED path ever
+  built the "Kiasi" amount `<input id="tab-partial-amount-<id>">` — the
+  REGULAR path's own partial-selection row jumped straight from the
+  selected-total display to the Cash/M-Pesa/STK buttons, with no way to
+  type a smaller amount. `settleTabPartial()`/`settleTabPartialStk()` both
+  already look up that input by this exact id regardless of which path
+  built the card — with it missing, `amountEl` was always `null`,
+  `userTouched` always `false`, so checking items and tapping a payment
+  button ALWAYS settled the full selected total; a customer paying "mpesa
+  70 of an 80 keg tab" had no way to be recorded correctly. The backend
+  (`settle_entries_amount_locked`, shipped 2026-07-25) already fully
+  supports a partial amount — this was purely a template gap in the
+  REGULAR render path, mirrored in from the MIXED path's own already-
+  correct markup. `quick_sell.html` was confirmed to have only one render
+  path (already correct, no gap); `kitchen_board.html` uses a modal-based
+  settle flow entirely, a different mechanism not affected by this bug.
+  60 new tests (`WriteOffOwnerSelfExecuteWordingTest`,
+  `BarBoardTabPartialAmountInputTest`, plus additions to
+  `CustomerProfilingTest`) — including the exact reported end-to-end
+  scenario (owner submits a real write-off with no separate approve step,
+  it disappears from the customer's own public ledger on the very next
+  load) and 2 pre-existing tests updated for the new owner-self-executes
+  contract (`DebtEraseMistakeTest.test_regular_writeoff_never_touches_
+  keg_barrel_envelope`, `DebtWriteOffQuantitySplitViewTest`'s quantity-
+  split real-write-off test) with a new manager-still-needs-approval
+  sibling test added alongside each so the two-person-control case stays
+  regression-locked. No migrations (no schema change — pure view-logic +
+  template fix).
