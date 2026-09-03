@@ -10613,3 +10613,35 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   real stock count directly to the endpoint), the permissions-page save
   round-trip (on and off), and the toggle rendering only for a waitress
   profile, never a plain staff one. One migration (0069, additive).
+- Waitress Stock List access, "but logically" (2026-09-03), same-day follow-up.
+  Roy's own qualifier turned out to be the whole answer: `stock_list()`
+  (`core/views.py`) was already fully, correctly scoped for a waitress with
+  ZERO code change needed — `_station_scope(up)` already treats her exactly
+  like any other bar/general staffer (bar-station items only, unless
+  `can_access_kitchen` is granted, same Station Scoping Principle every
+  other view already follows); the "Price (KES)" cost column is already
+  strictly `{% if user.userprofile.is_owner %}`-gated (never leaks to
+  manager or any staff role); the ⚖️ Rekebisha correction button/modal is
+  already gated to `is_owner_or_manager or can_adjust_stock`, so a plain
+  waitress with no delegated permission sees neither. The ONLY actual gap:
+  the `is_waitress` navbar block (both the mobile and desktop copies in
+  `base.html`) was the sole role missing a Stock List link at all — every
+  other staff role (`is_staff_member`, `is_kitchen_staff` has its own gaps
+  unrelated to this report, the owner/manager `{% else %}` block) already
+  had it, first in the list. Added the same link to both `is_waitress`
+  blocks, in the same position. Confirmed via a dedicated test that
+  `home.html`'s own dashboard ALREADY had two unrelated, role-agnostic
+  Stock List links (a stat-card tile + a "📋 View Stock List" quick-action
+  button) reachable from the home page for any staff regardless of role —
+  so a waitress could always technically reach the page by navigating home
+  first; the real friction this closes is reaching it directly from Bar
+  Board/Order Desk/anywhere else without detouring through Home. 7 new
+  tests (`WaitressStockListAccessTest`) — the navbar link now present
+  (precisely scoped to the `nav-link` anchor class so it doesn't
+  double-count the two pre-existing, unrelated home.html dashboard links),
+  the pre-existing station-scoping regression lock (bar-only by default,
+  widens with `can_access_kitchen`), the pre-existing cost-price-hidden/
+  shown regression lock for waitress vs owner, and the pre-existing
+  Rekebisha-hidden/shown regression lock for a plain vs `can_adjust_stock`-
+  delegated waitress. No migrations (template-only change — no backend/
+  model change was needed at all).

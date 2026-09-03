@@ -41649,6 +41649,117 @@ class WaitressStockTakePermissionTest(TestCase):
         self.assertNotContains(resp2, 'name="can_stock_take"')
 
 
+class WaitressStockListAccessTest(TestCase):
+    """2026-09-03 live follow-up (Roy): "and access to stock list to the
+    waitress too but logically." The is_waitress navbar block (both mobile
+    and desktop copies in base.html) had NO Stock List link at all — the
+    only role missing it, unlike is_staff_member/owner/manager, which have
+    always had it first in the list.
+
+    Investigated whether stock_list() itself needed any new gating before
+    adding the link — it did not. It already:
+      - station-scopes items/stores via _station_scope(up), which already
+        treats a waitress exactly like any other bar/general staffer (bar
+        items only, unless can_access_kitchen is granted) — the same
+        Station Scoping Principle every other view in this app follows;
+      - hides the Price (KES) cost column behind {% if
+        user.userprofile.is_owner %} strictly (never manager, never
+        anyone else);
+      - hides the ⚖️ Rekebisha correction column/button behind {% if
+        is_owner_or_manager or can_adjust_stock %} — a plain waitress with
+        no delegated permission sees neither.
+    So "logically" was already true at the view/template layer; the only
+    real gap was the missing navbar link, which these tests confirm was
+    the sole change needed — nothing about what she can see/do on the page
+    itself changed."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='WSL Biz', has_kitchen=True)
+        self.bar_store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='wsl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='wsl_waitress', password='x')
+        self.waitress_profile = UserProfile.objects.create(
+            user=self.waitress, business=self.biz, role='waitress',
+        )
+        self.bar_item = Item.objects.create(
+            business=self.biz, store=self.bar_store, description='WSL Bar Item',
+            material_no='WSL-B1', unit='pcs', selling_price=Decimal('50'),
+            cost_price=Decimal('30'),
+        )
+        self.kitchen_item = Item.objects.create(
+            business=self.biz, store=self.kitchen_store, description='WSL Kitchen Item',
+            material_no='WSL-K1', unit='pcs', selling_price=Decimal('80'),
+            cost_price=Decimal('55'),
+        )
+
+    def test_navbar_now_shows_stock_list_link_for_waitress(self):
+        """The literal reported gap — both the mobile and desktop copies of
+        the is_waitress navbar block now carry the link (was absent
+        before this fix). Note: home.html's own dashboard already had two
+        unrelated, role-agnostic Stock List links (a stat-card tile and a
+        quick-action button) reachable from the home page only — this
+        checks the persistent NAVBAR specifically (nav-link class), since
+        that's what's actually reachable from every other screen (Bar
+        Board, Order Desk, etc.), not just home."""
+        from django.urls import reverse
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/')
+        stock_list_url = reverse('stock_list')
+        self.assertContains(resp, f'class="nav-link" href="{stock_list_url}"', count=2)
+
+    def test_view_already_station_scopes_bar_only_for_plain_waitress(self):
+        """Regression lock proving the pre-existing view logic, not new
+        code, is what makes this 'logical' — a plain waitress (no
+        can_access_kitchen) sees only bar-station items, same as any other
+        bar/general staffer."""
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/stock/')
+        item_names = [i.description for i in resp.context['items']]
+        self.assertIn('WSL Bar Item', item_names)
+        self.assertNotIn('WSL Kitchen Item', item_names)
+
+    def test_view_widens_to_both_stations_with_cross_access(self):
+        self.waitress_profile.can_access_kitchen = True
+        self.waitress_profile.save(update_fields=['can_access_kitchen'])
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/stock/')
+        item_names = [i.description for i in resp.context['items']]
+        self.assertIn('WSL Bar Item', item_names)
+        self.assertIn('WSL Kitchen Item', item_names)
+
+    def test_waitress_never_sees_cost_price_column(self):
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/stock/')
+        self.assertNotContains(resp, 'Price (KES)')
+
+    def test_owner_still_sees_cost_price_column(self):
+        self.client.force_login(self.owner)
+        resp = self.client.get('/stock/')
+        self.assertContains(resp, 'Price (KES)')
+
+    def test_waitress_without_delegation_has_no_rekebisha_access(self):
+        """The 'Rekebisha' word itself also appears in an unrelated,
+        unconditional uncounted-item badge tooltip (2026-08-19 R1 "Anza
+        bila kuhesabu"), and the bare 'data-adjust-item=' substring also
+        matches an unconditional JS querySelector string used to auto-open
+        the modal when deep-linked (?adjust_item=) — neither is a
+        permission leak. This checks the actual per-row HTML button
+        element, which IS what's gated by is_owner_or_manager /
+        can_adjust_stock."""
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/stock/')
+        self.assertNotContains(resp, '<button class="btn btn-sm" data-adjust-item=')
+
+    def test_waitress_with_can_adjust_stock_delegation_gets_rekebisha_access(self):
+        self.waitress_profile.can_adjust_stock = True
+        self.waitress_profile.save(update_fields=['can_adjust_stock'])
+        self.client.force_login(self.waitress)
+        resp = self.client.get('/stock/')
+        self.assertContains(resp, '<button class="btn btn-sm" data-adjust-item=')
+
+
 class ShiftHistorySearchTest(TestCase):
     """2026-08-12 live request (Roy): shift_history() had zero filter params
     — always the last 60 shifts. New preset/date-range/status/staff_id

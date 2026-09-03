@@ -488,6 +488,13 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'waitress_screen' %}">📋 {% trans 'Order Desk' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
+                        <!-- 2026-09-03: stock_list() already station-scopes correctly for
+                             her (_station_scope treats waitress as bar-only unless
+                             can_access_kitchen, same as any other bar/general staffer),
+                             cost price stays owner-only, Rekebisha stays gated to
+                             is_owner_or_manager/can_adjust_stock — the view was already
+                             "logical" for her, only the navbar link was missing. -->
+                        <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">🕒 {% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>
@@ -700,6 +707,7 @@
                         <li class="nav-item"><a class="nav-link" href="{% url 'waitress_screen' %}">📋 {% trans 'Order Desk' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'bar_board' %}">🍺 {% trans 'Bar Board' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'quick_sell' %}">⚡ {% if biz_profile.type == 'bar' %}Bar Orders{% else %}{% trans 'Quick Sell' %}{% endif %}</a></li>
+                        <li class="nav-item"><a class="nav-link" href="{% url 'stock_list' %}">{% trans 'Stock List' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'transaction_history' %}">🕒 {% trans 'History' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'debt_dashboard' %}">💳 {% trans 'Debt Tracker' %}</a></li>
                         <li class="nav-item"><a class="nav-link" href="{% url 'shift_history' %}">📅 {% trans 'Shifts' %}</a></li>
