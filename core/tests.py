@@ -50031,3 +50031,362 @@ class CustomerCaseInsensitiveDebtLookupTest(TestCase):
             'A real write-off must flag the EXISTING Customer row despite the case difference',
         )
         self.assertEqual(Customer.objects.filter(business=self.biz).count(), 1)
+
+
+class ReceiptDeleteLineTest(TestCase):
+    """2026-09-03 live request (Roy, with a rejected-tab-transfer screenshot
+    trail proving nothing was silently duplicated — see diagnose_customer_
+    debt's own output): "a way for the owner to delete items on the
+    receipt and set it as a permission for all staff, stock balances
+    relevant to time/date stamps and the money paths connected should be
+    appended accordingly."
+
+    A new 🗑 action directly on receipt_public.html (an otherwise fully
+    public/token-based page) that dispatches to whichever EXISTING
+    correction primitive already applies to the clicked line's live
+    state — never a fourth, parallel deletion mechanism:
+      - a still-open, unpaid tab entry  → remove_tab_entry() ("✕ Futa")
+      - payment_method='credit' (either a plain direct credit sale, or a
+        debt-converted tab entry — its Transaction stays 'credit' until
+        settled, exactly the signal the debt tracker itself reads) →
+        request_write_off() with is_mistake=1 (the existing "Ilikuwa
+        Kosa" self-service erase)
+      - a plain cash/mpesa sale with no live tab entry → void_direct_
+        transaction() ("🗑 Futa" from Recent Payments)
+    Every branch delegates directly to the real, already-tested view on
+    the SAME request rather than re-implementing any stock/money logic —
+    so "stock balances relative to time/date stamps" (qty zeroed IN PLACE
+    on the original transaction, never a new "today"-dated compensating
+    row) and every connected money path (till, debt tracker, envelope
+    reversal) are inherited for free from those primitives' own existing,
+    separately-tested correctness.
+
+    Gated by a new delegable UserProfile.can_delete_receipt_items
+    (default False, owner/manager always exempt) — "a permission for all
+    staff" means toggleable per staffer, matching every other delegated
+    toggle in this app, not a blanket default-on grant. The permission
+    check AND a same-business check both happen server-side, independent
+    of whatever the template chose to render — this page has zero
+    @login_required anywhere else, so this is the one new authenticated
+    gate on it.
+    """
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Receipt Delete Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='rdl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='rdl_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='rdl_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.staff_permitted = User.objects.create_user(username='rdl_staff_perm', password='x')
+        UserProfile.objects.create(
+            user=self.staff_permitted, business=self.biz, role='staff',
+            can_delete_receipt_items=True,
+        )
+        Shift.objects.create(business=self.biz, staff=self.staff_permitted, status='OPEN')
+
+        self.other_biz = Business.objects.create(name='Receipt Delete Other Biz')
+        self.other_owner = User.objects.create_user(username='rdl_other_owner', password='x')
+        UserProfile.objects.create(user=self.other_owner, business=self.other_biz, role='owner')
+
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='RDL Tusker',
+            material_no='RDL-01', unit='Pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('150'), opening_bin_balance=Decimal('20'),
+        )
+
+    def _receipt_for(self, txn):
+        return Receipt.issue(
+            business=self.biz, payment_method=txn.payment_method,
+            lines=[{'name': self.item.description, 'subtotal': float(txn.revenue()), 'txn_id': txn.id}],
+        )
+
+    def _direct_cash_txn(self):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='cash',
+        )
+
+    def _direct_credit_txn(self, recipient='RDL Patron'):
+        return Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='credit',
+            recipient=recipient,
+        )
+
+    def _open_tab_entry(self):
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='RDL Tab Patron', status='OPEN',
+            source='bar', store=self.store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='credit',
+            recipient='RDL Tab Patron',
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=self.item.description, amount=Decimal('200'),
+        )
+        return tab, entry, txn
+
+    def _debt_converted_entry(self):
+        customer = Customer.objects.create(business=self.biz, name='RDL Debt Patron', credit_approved=True)
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=customer.name, customer=customer, status='SETTLED',
+            source='bar', store=self.store,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('200'), payment_method='credit',
+            recipient=customer.name,
+        )
+        entry = BarTabEntry.objects.create(
+            tab=tab, transaction=txn, description=self.item.description, amount=Decimal('200'),
+        )
+        return customer, tab, entry, txn
+
+    # ── Access gate ──────────────────────────────────────────────────────
+
+    def test_anonymous_cannot_reach_the_endpoint(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertNotEqual(resp.status_code, 200)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash', 'anonymous request must never mutate the sale')
+
+    def test_cross_business_staff_denied_even_as_owner_of_own_business(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.other_owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 403)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')
+
+    def test_plain_staff_without_toggle_denied(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.staff)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 403)
+        txn.refresh_from_db()
+        self.assertEqual(txn.payment_method, 'cash')
+
+    def test_staff_with_toggle_is_allowed(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.staff_permitted)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_owner_always_allowed_regardless_of_toggle(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_manager_always_allowed_regardless_of_toggle(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.manager)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+    def test_missing_txn_id_rejected(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_txn_from_a_different_business_rejected(self):
+        other_store = Store.objects.create(business=self.other_biz, name='Bar')
+        other_item = Item.objects.create(
+            business=self.other_biz, store=other_store, description='Other Item',
+            material_no='RDL-OTHER-01', selling_price=Decimal('100'),
+        )
+        other_txn = Transaction.objects.create(
+            business=self.other_biz, item=other_item, type='Issue',
+            qty=Decimal('-1'), sale_amount=Decimal('100'), payment_method='cash',
+        )
+        own_txn = self._direct_cash_txn()
+        receipt = self._receipt_for(own_txn)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': other_txn.id})
+        self.assertEqual(resp.status_code, 404)
+
+    # ── Dispatch correctness ─────────────────────────────────────────────
+
+    def test_direct_cash_sale_routes_to_void(self):
+        self.assertEqual(self.item.current_balance(), Decimal('20'))
+        txn = self._direct_cash_txn()
+        self.assertEqual(self.item.current_balance(), Decimal('19'))
+        receipt = self._receipt_for(txn)
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id, 'reason': 'Kosa'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('0'), 'must zero qty IN PLACE — the stock-timestamp fix, never a new dated row')
+        self.assertEqual(txn.payment_method, 'void')
+        self.assertEqual(
+            self.item.current_balance(), Decimal('20'),
+            'stock restored via the original transaction, correct at its true original moment',
+        )
+
+    def test_open_tab_entry_routes_to_remove_tab_entry(self):
+        tab, entry, txn = self._open_tab_entry()
+        self.assertEqual(self.item.current_balance(), Decimal('19'))
+        receipt = self._receipt_for(txn)
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id, 'reason': 'Wrong item'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+        entry.refresh_from_db()
+        txn.refresh_from_db()
+        self.assertTrue(entry.is_paid)
+        self.assertEqual(entry.payment_method, 'void')
+        self.assertEqual(txn.qty, Decimal('0'))
+        self.assertEqual(txn.payment_method, 'void')
+        self.assertEqual(self.item.current_balance(), Decimal('20'))
+
+    def test_debt_converted_entry_routes_to_write_off(self):
+        customer, tab, entry, txn = self._debt_converted_entry()
+        self.assertEqual(self.item.current_balance(), Decimal('19'))
+        receipt = self._receipt_for(txn)
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+        txn.refresh_from_db()
+        entry.refresh_from_db()
+        customer.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('0'), 'erase_mistake restores stock')
+        self.assertEqual(txn.payment_method, 'void')
+        self.assertIsNotNone(entry.written_off_at, 'the live receipt must show this struck through, not vanished')
+        self.assertFalse(customer.is_defaulter, 'erase_mistake never flags the customer — it was the business own mistake')
+        self.assertEqual(self.item.current_balance(), Decimal('20'))
+
+    def test_plain_direct_credit_sale_routes_to_write_off(self):
+        txn = self._direct_credit_txn()
+        receipt = self._receipt_for(txn)
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'], resp.json())
+
+        txn.refresh_from_db()
+        self.assertEqual(txn.qty, Decimal('0'))
+        self.assertEqual(txn.payment_method, 'void')
+        self.assertEqual(txn.recipient, '')
+
+    def test_blank_reason_on_credit_dispatch_uses_a_fallback_default(self):
+        """request_write_off() itself requires a non-blank reason — the
+        dispatcher must never surface that as a confusing block to a staffer
+        who simply didn't type one, matching this app's own established
+        "never block on a skipped reason" convention."""
+        from core.models import WriteOffRequest
+        txn = self._direct_credit_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id, 'reason': ''})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['ok'], resp.json())
+        wo = WriteOffRequest.objects.get(transaction_id=txn.id)
+        self.assertTrue(wo.reason)
+
+    def test_already_paid_tab_entry_rejected(self):
+        tab, entry, txn = self._open_tab_entry()
+        entry.is_paid = True
+        entry.payment_method = 'cash'
+        entry.save(update_fields=['is_paid', 'payment_method'])
+        receipt = self._receipt_for(txn)
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 400)
+        entry.refresh_from_db()
+        self.assertNotEqual(entry.payment_method, 'void', 'must never touch an already-settled entry')
+
+    def test_already_written_off_entry_rejected(self):
+        customer, tab, entry, txn = self._debt_converted_entry()
+        entry.written_off_at = timezone.now()
+        entry.save(update_fields=['written_off_at'])
+        receipt = self._receipt_for(txn)
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_already_voided_direct_sale_rejected(self):
+        txn = self._direct_cash_txn()
+        txn.payment_method = 'void'
+        txn.qty = Decimal('0')
+        txn.save(update_fields=['payment_method', 'qty'])
+        receipt = self._receipt_for(txn)
+
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/r/{receipt.token}/delete-line/', {'txn_id': txn.id})
+        self.assertEqual(resp.status_code, 400)
+
+    # ── Template rendering (never trust the button alone — but it must
+    #    still be genuinely offered to a permitted viewer) ────────────────
+
+    def test_receipt_page_shows_delete_button_for_permitted_staff(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.owner)
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertContains(resp, 'deleteReceiptLine(' + str(txn.id))
+
+    def test_receipt_page_hides_delete_button_for_anonymous(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertNotContains(resp, 'deleteReceiptLine(' + str(txn.id))
+        self.assertContains(resp, 'CAN_DELETE_RECEIPT_LINE = false')
+
+    def test_receipt_page_hides_delete_button_for_unpermitted_staff(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.staff)
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertNotContains(resp, 'deleteReceiptLine(' + str(txn.id))
+
+    def test_receipt_page_shows_button_for_permitted_toggled_staff(self):
+        txn = self._direct_cash_txn()
+        receipt = self._receipt_for(txn)
+        self.client.force_login(self.staff_permitted)
+        resp = self.client.get(f'/r/{receipt.token}/')
+        self.assertContains(resp, 'CAN_DELETE_RECEIPT_LINE = true')
+        self.assertContains(resp, 'deleteReceiptLine(' + str(txn.id))
+
+    # ── Staff Permissions toggle round-trip ──────────────────────────────
+
+    def test_staff_permissions_toggle_persists(self):
+        staff_up_id = self.staff.userprofile.id
+        self.client.force_login(self.owner)
+        resp = self.client.post(f'/business/staff/{staff_up_id}/permissions/', {
+            'can_delete_receipt_items': 'on',
+        })
+        self.assertEqual(resp.status_code, 302)
+        staff_profile = UserProfile.objects.get(pk=staff_up_id)
+        self.assertTrue(staff_profile.can_delete_receipt_items)
+
+        resp = self.client.post(f'/business/staff/{staff_up_id}/permissions/', {})
+        staff_profile.refresh_from_db()
+        self.assertFalse(staff_profile.can_delete_receipt_items)

@@ -14,6 +14,30 @@ from .views import get_user_profile, owner_required
 logger = logging.getLogger(__name__)
 
 
+def _receipt_delete_permission(request, receipt):
+    """UserProfile if the current viewer may delete a line on this receipt
+    (authenticated staff of the SAME business, owner/manager or explicitly
+    granted UserProfile.can_delete_receipt_items) — else None.
+
+    2026-09-03 ("delete items on the receipt" live request, Roy — see the
+    Cause-and-Effect map in this sprint's CLAUDE.md entry). public_receipt()
+    is otherwise a fully public/anonymous page (no @login_required at all —
+    a customer reaches it via a bare token/PIN link), so this is the ONE
+    server-side gate deciding whether the 🗑 delete action is even offered.
+    Called twice, deliberately: once by public_receipt() to decide whether
+    to render the button, and again independently by receipt_delete_line()
+    itself — never trust the button merely being hidden client-side.
+    """
+    if not request.user.is_authenticated:
+        return None
+    up = get_user_profile(request)
+    if not up or up.business_id != receipt.business_id:
+        return None
+    if up.is_owner_or_manager or getattr(up, 'can_delete_receipt_items', False):
+        return up
+    return None
+
+
 @login_required
 def receipts_list(request):
     user_profile = get_user_profile(request)
@@ -433,6 +457,7 @@ def _get_live_tab_state(receipt):
                         'subtotal': amt,
                         'entry_id': None,
                         'tab_id': btab_id,
+                        'txn_id': e.transaction_id,
                         'is_paid': False,
                         'is_kitchen': is_kitchen,
                         'is_written_off': True,
@@ -457,6 +482,7 @@ def _get_live_tab_state(receipt):
                     'subtotal': amt,
                     'entry_id': e.id if not e.is_paid else None,
                     'tab_id': btab_id,
+                    'txn_id': e.transaction_id,
                     'is_paid': e.is_paid,
                     'is_kitchen': is_kitchen,
                 })
@@ -693,6 +719,13 @@ def public_receipt(request, token):
     # poll) recomputes it client-side on every refresh.
     paid_lines_count = sum(1 for l in (receipt.lines or []) if l.get('is_paid'))
 
+    # 2026-09-03 ("delete items on the receipt" live request) — see
+    # _receipt_delete_permission()'s own docstring. Computed once here for
+    # the initial render; the JS live poll (renderLines()) reuses this same
+    # server-decided flag (window.CAN_DELETE_RECEIPT_LINE) rather than
+    # re-deciding it client-side on every refresh.
+    can_delete_line = _receipt_delete_permission(request, receipt) is not None
+
     return render(request, 'core/receipt_public.html', {
         'receipt':      receipt,
         'receipt_url':  receipt_url,
@@ -704,7 +737,85 @@ def public_receipt(request, token):
         'tab_pins':     tab_pins,
         'other_debt':   _other_debt_link(receipt, tab_status),
         'paid_lines_count': paid_lines_count,
+        'can_delete_line': can_delete_line,
     })
+
+
+@login_required
+@require_POST
+def receipt_delete_line(request, token):
+    """Staff-only: delete one line from a receipt, dispatching to whichever
+    EXISTING correction primitive already applies to that line's live
+    state — never duplicating any of their stock/money logic. See the
+    2026-09-03 CLAUDE.md sprint entry's Cause-and-Effect map for the full
+    reasoning.
+
+    Identified purely by txn_id (both direct-sale lines and tab-linked
+    lines now carry one — see _live_direct_lines()/_get_live_tab_state()).
+    Dispatch order:
+      1. Still-open, unpaid tab entry → remove_tab_entry() ("✕ Futa" —
+         an ordinary "wrong item on this tab" correction).
+      2. payment_method='credit' (a plain direct credit sale, OR a
+         debt-converted tab entry — its Transaction stays 'credit' until
+         settled, same signal the debt tracker itself reads) →
+         request_write_off() with is_mistake=1 (the existing "Ilikuwa
+         Kosa" self-service erase — restores stock, forgives the
+         receivable, never flags the customer, respects Business.
+         debt_erase_requires_approval exactly like the debt tracker's own
+         "Futa" button).
+      3. Plain cash/mpesa, no live tab entry → void_direct_transaction()
+         ("🗑 Futa" from Recent Payments).
+
+    Each branch DELEGATES to the real, already-tested view function on
+    this same request (same station-scope + shift-gate checks, same
+    notifications, same stock/envelope reversal) rather than re-implementing
+    any of it — the only new work here is figuring out which one applies.
+    """
+    receipt = get_object_or_404(Receipt, token=token)
+    up = _receipt_delete_permission(request, receipt)
+    if not up:
+        return JsonResponse({'ok': False, 'error': 'Huna ruhusa ya kufuta bidhaa kwenye risiti hii.'}, status=403)
+
+    txn_id = (request.POST.get('txn_id') or '').strip()
+    if not txn_id:
+        return JsonResponse({'ok': False, 'error': 'txn_id inahitajika.'}, status=400)
+
+    from .models import Transaction
+    txn = get_object_or_404(
+        Transaction.objects.select_related('item__store'),
+        id=txn_id, business=receipt.business, type='Issue',
+    )
+
+    from .debt_views import _txn_tab_entry
+    entry = _txn_tab_entry(txn)
+
+    if entry is not None and entry.is_paid:
+        return JsonResponse(
+            {'ok': False, 'error': 'Kipengele hiki tayari kimelipwa — rejesha malipo kwanza kabla ya kukifuta.'},
+            status=400,
+        )
+
+    if entry is not None and entry.written_off_at:
+        return JsonResponse({'ok': False, 'error': 'Tayari kimefutwa.'}, status=400)
+
+    if entry is not None and entry.tab.status == 'OPEN':
+        from .keg_views import remove_tab_entry
+        return remove_tab_entry(request, entry.tab_id, entry.id)
+
+    if txn.payment_method == 'credit':
+        from .debt_views import request_write_off
+        post = request.POST.copy()
+        post['is_mistake'] = '1'
+        post['reason'] = (request.POST.get('reason') or '').strip() or 'Imefutwa kwenye risiti'
+        post.pop('qty_to_erase', None)
+        request.POST = post
+        return request_write_off(request, txn.id)
+
+    if txn.payment_method in ('cash', 'mpesa') and entry is None:
+        from .keg_views import void_direct_transaction
+        return void_direct_transaction(request, txn.id)
+
+    return JsonResponse({'ok': False, 'error': 'Muamala huu tayari umefutwa au hauwezi kufutwa hapa.'}, status=400)
 
 
 def _other_debt_link(receipt, tab_status):

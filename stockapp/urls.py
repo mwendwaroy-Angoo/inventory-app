@@ -283,7 +283,7 @@ from core.recurring_expense_views import (
     ad_hoc_expenses_list,
     edit_ad_hoc_expense,
 )
-from core.receipt_views import receipts_list, public_receipt, send_receipt, receipt_live_status, receipt_pay, tab_live_view, receipt_respond_tab_transfer, tab_respond_tab_transfer
+from core.receipt_views import receipts_list, public_receipt, send_receipt, receipt_live_status, receipt_pay, tab_live_view, receipt_respond_tab_transfer, tab_respond_tab_transfer, receipt_delete_line
 from core.onboarding_views import mark_section_seen
 from core.restricted_items_views import (
     request_sale_approval, pending_approvals,
@@ -856,6 +856,7 @@ urlpatterns = [
     path("r/<str:token>/", public_receipt, name="public_receipt"),
     path("r/<str:token>/live/", receipt_live_status, name="receipt_live_status"),
     path("r/<str:token>/pay/", receipt_pay, name="receipt_pay"),
+    path("r/<str:token>/delete-line/", receipt_delete_line, name="receipt_delete_line"),
     path("r/<str:token>/tab-transfers/<int:transfer_id>/respond/", receipt_respond_tab_transfer, name="receipt_respond_tab_transfer"),
     path("receipts/<int:receipt_id>/send/", send_receipt, name="send_receipt"),
     # ── Scan to View Your Bill — wall QR ─────────────────────────────────────

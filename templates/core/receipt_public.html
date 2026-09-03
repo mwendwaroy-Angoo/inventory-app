@@ -98,6 +98,13 @@
         .line-name { color: var(--pearl); flex: 1; }
         .line-qty { color: #b0b0b0; font-size: 0.78rem; margin: 0 0.75rem; white-space: nowrap; }
         .line-amount { color: var(--pearl); font-weight: 600; white-space: nowrap; }
+        .receipt-del-btn {
+            background: none; border: none; color: #c0395a; opacity: 0.55;
+            font-size: 0.9rem; cursor: pointer; margin-left: 0.6rem; padding: 0.1rem 0.2rem;
+            line-height: 1;
+        }
+        .receipt-del-btn:hover { opacity: 1; }
+        .receipt-del-btn:disabled { opacity: 0.25; cursor: default; }
         .receipt-total {
             background: rgba(201,168,76,0.06);
             border-top: 2px solid var(--gold);
@@ -394,6 +401,7 @@
             .receipt-line { border-bottom: 1px dashed #ccc; }
             .line-name, .line-amount { color: #000; }
             .line-qty { color: #444; }
+            .receipt-del-btn { display: none; }
             .receipt-total { background: #fff; border-top: 2px solid #000; }
             .total-label, .total-amount { color: #000; }
             .receipt-footer { color: #444; }
@@ -530,6 +538,10 @@
                 <span class="line-name">{{ line.name }}</span>
                 {% if line.qty > 1 %}<span class="line-qty">×{{ line.qty|floatformat:"-2" }}</span>{% endif %}
                 <span class="line-amount">KES {{ line.subtotal|floatformat:"0" }}</span>
+                {% if can_delete_line and line.txn_id %}
+                <button type="button" class="receipt-del-btn" title="Futa"
+                        onclick="deleteReceiptLine({{ line.txn_id }}, this)">🗑</button>
+                {% endif %}
             </div>
             {% endif %}
             {% endfor %}
@@ -926,6 +938,44 @@
     });
 })();
 
+/* ── Delete a receipt line (2026-09-03 live request, staff-only) ──
+   Unconditional (not nested inside the is_live_tab poll block below) so
+   it works identically for a direct-sale receipt AND a tab-linked one —
+   the server (receipt_delete_line) is what actually decides which
+   correction primitive applies, this is just the trigger. can_delete_line
+   is computed server-side by public_receipt() from an authenticated,
+   same-business staff member with the right permission — never trust the
+   button alone, the endpoint re-checks independently. */
+window.CAN_DELETE_RECEIPT_LINE = {{ can_delete_line|yesno:"true,false" }};
+window.deleteReceiptLine = function (txnId, btnEl) {
+    if (!confirm('Una uhakika unataka kufuta bidhaa hii kwenye risiti? Stock na deni vitarekebishwa.')) return;
+    var reason = prompt('Sababu (hiari):', '') || '';
+    if (btnEl) btnEl.disabled = true;
+    fetch('/r/{{ receipt.token|escapejs }}/delete-line/', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-CSRFToken': '{{ csrf_token }}',
+        },
+        body: 'txn_id=' + encodeURIComponent(txnId) + '&reason=' + encodeURIComponent(reason),
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.ok) {
+                alert(d.message || 'Imefutwa.');
+                location.reload();
+            } else {
+                if (btnEl) btnEl.disabled = false;
+                alert((d && d.error) || 'Hitilafu.');
+            }
+        })
+        .catch(function () {
+            if (btnEl) btnEl.disabled = false;
+            alert('Hitilafu ya mtandao.');
+        });
+};
+
 {% if is_live_tab and tab_status == 'DEBT' %}
 /* ── Debt block payment UI ── */
 (function () {
@@ -1283,7 +1333,11 @@
             } else {
                 html += '<div class="receipt-line"><span class="line-name">' + (l.name || '') + '</span>' +
                     (l.qty && l.qty > 1 ? '<span class="line-qty">×' + l.qty + '</span>' : '') +
-                    '<span class="line-amount">' + fmt(l.subtotal || 0) + '</span></div>';
+                    '<span class="line-amount">' + fmt(l.subtotal || 0) + '</span>' +
+                    (window.CAN_DELETE_RECEIPT_LINE && l.txn_id
+                        ? '<button type="button" class="receipt-del-btn" title="Futa" onclick="deleteReceiptLine(' + l.txn_id + ', this)">🗑</button>'
+                        : '') +
+                    '</div>';
             }
         });
         linesWrap.innerHTML = html;

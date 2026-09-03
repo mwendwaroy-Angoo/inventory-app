@@ -249,6 +249,7 @@ def staff_permissions(request, staff_id):
         staff_profile.can_record_expenses = request.POST.get('can_record_expenses') == 'on'
         staff_profile.can_affirm_stock_take = request.POST.get('can_affirm_stock_take') == 'on'
         staff_profile.can_stock_take = request.POST.get('can_stock_take') == 'on'
+        staff_profile.can_delete_receipt_items = request.POST.get('can_delete_receipt_items') == 'on'
         # Manager-only toggles — template only renders these two for role='manager',
         # but the fields exist on every profile; harmless no-op to save 'off' for
         # a non-manager who could never reach these controls anyway.
@@ -262,7 +263,7 @@ def staff_permissions(request, staff_id):
             'can_manage_kegs', 'can_adjust_stock', 'can_convert_tabs_to_debt',
             'can_review_petty_cash', 'can_confirm_shifts', 'can_approve_debt_erase',
             'can_revert_debt_payment', 'can_record_expenses', 'can_affirm_stock_take',
-            'can_stock_take',
+            'can_stock_take', 'can_delete_receipt_items',
         ])
         staff_name = staff_profile.user.get_full_name() or staff_profile.user.username
         messages.success(request, _(f'Permissions updated for {staff_name}.'))

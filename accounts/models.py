@@ -560,6 +560,22 @@ class UserProfile(models.Model):
         ),
     )
 
+    can_delete_receipt_items = models.BooleanField(
+        default=False,
+        help_text=(
+            '2026-09-03 live request (Roy, with a rejected-tab-transfer screenshot trail): '
+            'a "🗑 Futa" action directly on the receipt page (customer_journey/receipt_public) '
+            'lets staff delete an unwanted/mistaken line without navigating to the debt tracker '
+            'or Recent Payments panel first. Owner/manager-only by default — grant explicitly '
+            'per staffer, matching this app\'s established delegated-toggle convention. Dispatches '
+            'to whichever EXISTING correction primitive already applies to the line\'s live state '
+            '(remove_tab_entry for a still-open tab item, the debt "Ilikuwa Kosa" write-off for a '
+            'credit/debt line, void_direct_transaction for a plain cash/mpesa sale) — this toggle '
+            'only gates the new entry point; every underlying primitive keeps its own independent '
+            'station-scope and shift-gate checks unchanged.'
+        ),
+    )
+
     # ── Manager-only delegated oversight (2026-07-30) ──────────────────
     can_review_petty_cash = models.BooleanField(
         default=False,

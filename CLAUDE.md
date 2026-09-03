@@ -10645,3 +10645,57 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   Rekebisha-hidden/shown regression lock for a plain vs `can_adjust_stock`-
   delegated waitress. No migrations (template-only change — no backend/
   model change was needed at all).
+- Delete items on the receipt, staff-permission-gated (2026-09-03), live
+  request with 3 screenshots: after `diagnose_customer_debt` confirmed a
+  string of Roy's own tab-transfer attempts had all been REJECTED (nothing
+  silently lost or duplicated — the debt tracker's figures were already
+  correct), he asked directly: "a way for the owner to delete items on the
+  receipt and set it as a permission for all staff, stock balances relevant
+  to time/date stamps and the money paths connected should be appended
+  accordingly. NOTE: observe the cause and effect protocol." Produced and
+  shared the Cause-and-Effect Map before writing any code, per CLAUDE.md's
+  own binding protocol. Investigation confirmed three separate, already-
+  correct correction primitives already existed for every possible line
+  state — `remove_tab_entry` (✕ Futa, still-open tab entry), `request_
+  write_off`'s `is_mistake=1` self-service erase (✕ Ilikuwa Kosa, credit/
+  debt line), `void_direct_transaction` (🗑 Futa, plain cash/mpesa) — the
+  real gap was purely a missing front door: none were reachable directly
+  from the receipt page itself, which had zero `request.user` awareness at
+  all (a fully public, token-based page). New `UserProfile.can_delete_
+  receipt_items` (accounts migration 0070, default `False`, owner/manager
+  always exempt — matching this app's own consistent delegated-toggle
+  convention: "a permission for all staff" means toggleable per staffer,
+  not a blanket default-on grant) gates a new `receipt_delete_line`
+  endpoint (`/r/<token>/delete-line/`) — the ONE authenticated action on
+  this otherwise-public page, via new `_receipt_delete_permission()`
+  (same-business + permission check, called independently by both
+  `public_receipt()` for the button's visibility AND the delete endpoint
+  itself — never trust the button alone). Given a `txn_id` (added to
+  tab-linked lines in `_get_live_tab_state()`, matching what direct lines
+  already carried since 2026-08-21), the dispatcher determines which
+  primitive applies from the transaction's LIVE state — a still-open,
+  unpaid tab entry → `remove_tab_entry`; `payment_method='credit'` (either
+  a plain direct credit sale, or a debt-converted tab entry, whose
+  Transaction stays 'credit' until settled — the same signal the debt
+  tracker itself reads) → `request_write_off` with `is_mistake=1` injected
+  into a copy of `request.POST` (a blank reason gets a fallback default,
+  since that view requires one non-blank); plain cash/mpesa with no live
+  tab entry → `void_direct_transaction` — and DELEGATES directly to that
+  real view function on the same request object rather than re-implementing
+  any of its logic, so every connected surface (stock restored via `qty=0`
+  IN PLACE on the original transaction — never a new "today"-dated
+  compensating row, satisfying "relevant to time/date stamps" for free —
+  till reconciliation, debt tracker, envelope reversal, notifications) is
+  inherited unmodified from those already-separately-tested primitives.
+  🗑 button wired into both `receipt_public.html`'s static render AND its
+  live-poll `renderLines()` (kept in lockstep per this file's own "fix one,
+  fix both render paths" rule), plus a new toggle in Staff Permissions.
+  21 new tests (`ReceiptDeleteLineTest`) — the full access-gate matrix
+  (anonymous, cross-business staff even as an owner of their own business,
+  plain staff without the toggle, permitted staff, owner/manager always),
+  all three dispatch paths verified end-to-end against stock balance/
+  payment_method/envelope effects, already-paid/already-written-off/
+  already-voided rejection, the blank-reason fallback, missing/cross-
+  business `txn_id` rejection, template button visibility for every viewer
+  type, and the Staff Permissions toggle save round-trip. Full pre-existing
+  suite (2747 tests) re-run clean. One migration (accounts 0070, additive).

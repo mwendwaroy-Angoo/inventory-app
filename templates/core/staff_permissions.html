@@ -372,6 +372,27 @@
         {% endif %}
         {% endif %}
 
+        <!-- Delete receipt items (2026-09-03) — role-agnostic, applies to
+             every business regardless of module (a plain cash/mpesa sale
+             needs this too, not just bar/kitchen items). -->
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-3" style="margin-top:1rem;padding-top:1rem;border-top:1px solid #2a2a2a;">
+            <div>
+                <div style="font-weight:600; color:var(--pearl); margin-bottom:0.25rem;">
+                    🗑 {% trans 'Delete Receipt Items' %}
+                </div>
+                <div style="color:#b0b0b0; font-size:0.82rem; max-width:480px;">
+                    {% trans "Allow this staff member to delete an unwanted/mistaken line directly from a customer's receipt page. Off by default. Stock and money are always corrected via the same existing tool that already applies to that line's state (open tab, debt/credit, or a plain cash/mpesa sale) — this only opens a faster door to it." %}
+                </div>
+            </div>
+            <div class="form-check form-switch" style="padding-top:.25rem;">
+                <input type="checkbox" name="can_delete_receipt_items"
+                       id="can_delete_receipt_items"
+                       class="form-check-input" role="switch"
+                       style="width:3rem; height:1.5rem; cursor:pointer;"
+                       {% if staff_profile.can_delete_receipt_items %}checked{% endif %}>
+            </div>
+        </div>
+
         <!-- Keg management delegation (2026-08-11) -->
         {% if biz_profile.modules.keg %}
         <div class="d-flex align-items-start justify-content-between flex-wrap gap-3" style="margin-top:1rem;padding-top:1rem;border-top:1px solid #2a2a2a;">
