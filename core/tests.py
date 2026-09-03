@@ -44363,6 +44363,62 @@ class WallQrSearchEnrichmentTest(TestCase):
         resp = self.client.get(f'/r/{rcpt.token}/')
         self.assertIsNone(resp.context['other_debt'])
 
+    def test_multiple_debt_tabs_show_their_own_amount_not_the_combined_total(self):
+        """2026-09-03 live report (Roy, screenshot from a real wall-QR
+        search): a customer with several debt-converted tabs — one item
+        per date — saw the SAME combined total repeated on every single
+        row instead of each row's own amount. Root cause: the debt figure
+        was cached PER CUSTOMER (_get_customer_debt_data(...)['outstanding']
+        — the customer's whole combined outstanding) and reused for every
+        tab that customer owns, instead of being attributed back to the
+        specific tab each row is about. Two separate debt tabs of
+        DIFFERENT amounts must show their own distinct figures, never one
+        number duplicated across both."""
+        debt1 = self._tab(status='SETTLED', customer=self.customer)
+        self._entry(debt1, Decimal('900'))
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 900}],
+                      customer_name='Roy', payment_method='credit',
+                      meta={'tab_id': debt1.id})
+
+        debt2 = self._tab(status='SETTLED', customer=self.customer)
+        self._entry(debt2, Decimal('300'))
+        Receipt.issue(business=self.biz, lines=[{'subtotal': 300}],
+                      customer_name='Roy', payment_method='credit',
+                      meta={'tab_id': debt2.id})
+
+        rows = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Roy').json()['tabs']
+        debt_rows = [r for r in rows if r['kind'] == 'debt']
+        self.assertEqual(len(debt_rows), 2)
+        amounts = sorted(r['amount'] for r in debt_rows)
+        # Each row shows its OWN amount — never the combined 1200 total
+        # duplicated on both rows (the literal reported bug).
+        self.assertEqual(amounts, [300.0, 900.0])
+
+    def test_three_identical_amount_debt_tabs_still_each_get_their_own_line(self):
+        """The exact shape from the live screenshot — 5 rows all showing
+        KES 1,280 — is genuinely ambiguous by eye alone (could be 5 real
+        debts of 1280 each, or 1 duplicated 5x). This locks in that when
+        3 debt tabs GENUINELY share the same amount, each still resolves
+        independently via its own tab_entry rather than accidentally
+        collapsing into one shared figure by coincidence of value."""
+        for _ in range(3):
+            d = self._tab(status='SETTLED', customer=self.customer)
+            self._entry(d, Decimal('1280'))
+            Receipt.issue(business=self.biz, lines=[{'subtotal': 1280}],
+                          customer_name='Roy', payment_method='credit',
+                          meta={'tab_id': d.id})
+
+        rows = self.client.get(f'/bar/find-tab/{self.biz.id}/search/?q=Roy').json()['tabs']
+        debt_rows = [r for r in rows if r['kind'] == 'debt']
+        self.assertEqual(len(debt_rows), 3)
+        self.assertEqual([r['amount'] for r in debt_rows], [1280.0, 1280.0, 1280.0])
+        # And the customer's true combined outstanding is the sum of all
+        # three, not any single row's figure — proving these are 3 real,
+        # independent debts, not the same total shown 3 times.
+        from core.debt_views import _get_customer_debt_data
+        total = _get_customer_debt_data(self.customer, self.biz, scope='all')['outstanding']
+        self.assertEqual(total, 3840.0)
+
 
 class OwnerConsumptionLimitTest(TestCase):
     """2026-08-23 live request (Roy), item 4: "set an amount and a window

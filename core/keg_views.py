@@ -6058,6 +6058,18 @@ def find_tab_search(request, business_id):
     # (the exact staleness _debt_converted_tabs_qs and _get_live_tab_state
     # both already correct for elsewhere). The debt tracker's own aggregate is
     # the honest number to show a customer.
+    #
+    # 2026-09-03 live report (Roy): a customer with several debt-converted
+    # tabs (one item per date) saw the SAME total repeated on every single
+    # row instead of each row's own amount — root cause was caching
+    # _get_customer_debt_data(...)['outstanding'] PER CUSTOMER and reusing
+    # that one combined figure for every tab that customer owns, instead of
+    # attributing it back to the specific tab each row is about. Fixed by
+    # building a per-tab breakdown from the SAME debt-tracker data
+    # (unpaid_transactions already carries each transaction's own remaining
+    # amount — see _get_customer_debt_data's docstring) via its tab_entry
+    # link, so a customer with 5 separate debts shows 5 different numbers,
+    # not one number 5 times.
     from core.debt_views import _get_customer_debt_data
     _debt_cache = {}
     for t in tabs:
@@ -6073,14 +6085,19 @@ def find_tab_search(request, business_id):
         amount = unpaid
         if is_debt and t.customer_id:
             if t.customer_id not in _debt_cache:
+                by_tab = {}
                 try:
-                    _debt_cache[t.customer_id] = float(
-                        _get_customer_debt_data(t.customer, business, scope='all')['outstanding']
-                    )
+                    _data = _get_customer_debt_data(t.customer, business, scope='all')
+                    for entry in _data['unpaid_transactions']:
+                        try:
+                            tab_id = entry['txn'].tab_entry.tab_id
+                        except Exception:
+                            continue  # non-tab-linked debt has nothing to attribute here
+                        by_tab[tab_id] = by_tab.get(tab_id, 0.0) + float(entry['amount'])
                 except Exception:
                     logger.exception('Debt lookup failed for tab %s in find_tab_search', t.id)
-                    _debt_cache[t.customer_id] = unpaid
-            amount = _debt_cache[t.customer_id]
+                _debt_cache[t.customer_id] = by_tab
+            amount = _debt_cache[t.customer_id].get(t.id, unpaid)
 
         _opened_local = timezone.localtime(t.opened_at)
         results.append({

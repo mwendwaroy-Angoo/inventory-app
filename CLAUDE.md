@@ -10324,3 +10324,46 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   flagging sites (`void_tab`, real write-off) landing on the existing
   Customer rather than silently missing it. No migrations (pure query/
   string-normalization fix, no schema change).
+- Fix: wall-QR "Tafuta Tab Yako" search showed the SAME combined debt
+  total on every row for a customer with several debt-converted tabs
+  (2026-09-03), live report with a screenshot: 5 rows for "Eugene," each a
+  different date/time, each showing the identical "KES 1,280" — looking
+  like the same debt duplicated 5 times rather than 5 real, separate
+  debts. Root-caused in `find_tab_search()` (`core/keg_views.py`): the
+  debt figure was cached PER CUSTOMER —
+  `_debt_cache[t.customer_id] = _get_customer_debt_data(t.customer,
+  business, scope='all')['outstanding']` — and that ONE combined total
+  was then reused as `amount` for EVERY tab belonging to that customer,
+  instead of being attributed back to the specific tab each row is about.
+  A customer with N debt-converted tabs therefore always showed their
+  grand total repeated N times, never each tab's own individual amount —
+  confirmed as a genuine display bug, not proof either way of whether the
+  underlying debts were real duplicates or 5 legitimately separate KES
+  1,280 charges (couldn't be told apart from the screenshot alone,
+  exactly why this needed a code trace rather than a guess). Fixed by
+  building a per-tab breakdown from the SAME debt-tracker data instead of
+  discarding its granularity: `_get_customer_debt_data(...)
+  ['unpaid_transactions']` already carries each transaction's own
+  individually-computed remaining amount (built for the 2026-08-15
+  partial-payment-accuracy fix) — each entry's `txn.tab_entry.tab_id`
+  (same reverse-OneToOne-with-try/except pattern used throughout this
+  file) maps it back to the exact `BarTab` it belongs to, so the per-
+  customer cache now stores a `{tab_id: amount}` dict built once, and
+  each row reads its own `by_tab.get(t.id, unpaid)` instead of the
+  customer-wide total. A non-tab-linked debt (no `tab_entry`) is simply
+  skipped when building the map — nothing to attribute to a specific tab
+  row there, unaffected either way. 2 new tests added to
+  `WallQrSearchEnrichmentTest` — two debt tabs of genuinely different
+  amounts (300 vs 900) now each show their own figure instead of one
+  duplicated on both (this test failed against the old code, returning
+  1200/1200 instead of 300/900, confirming the fix), and a second test
+  proving 3 debt tabs that GENUINELY happen to share the same amount
+  (1280 each, mirroring the live screenshot's own shape) still resolve
+  independently — each its own real row — with the customer's true
+  combined outstanding (3840) computed separately to prove these are 3
+  real, independent debts, not one total shown 3 times. All 4 pre-
+  existing `WallQrSearchEnrichmentTest` tests (single-debt-tab cases,
+  where the customer-wide total and the per-tab total always happened to
+  be numerically identical, masking the bug for a single-debt customer)
+  confirmed passing unmodified. No migrations (pure computation fix, no
+  schema change).
