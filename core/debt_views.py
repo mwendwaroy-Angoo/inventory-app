@@ -2555,8 +2555,10 @@ def _execute_write_off_approval(wo, approver, self_service=False, base_url=''):
     # (it was the business's own data-entry error, not the customer's debt).
     _flag_customer = None
     if not is_mistake and customer_name and customer_name != '—':
+        # 2026-09-03 — name__iexact, not a bare =. See core/views.py's
+        # add_transaction comment for the full root-cause explanation.
         _flag_customer = Customer.objects.filter(
-            business=wo.transaction.business, name=customer_name,
+            business=wo.transaction.business, name__iexact=customer_name,
         ).first()
         if _flag_customer is not None:
             require_reminder_before_flagging(

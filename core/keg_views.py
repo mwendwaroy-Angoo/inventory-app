@@ -4006,8 +4006,12 @@ def void_tab(request, tab_id):
     # nothing yet to remind them about.
     _flag_customer = None
     if had_credit and tab.customer_name:
+        # 2026-09-03 — name__iexact, not a bare =. See core/views.py's
+        # add_transaction comment for the full root-cause explanation
+        # (the same customer typed with different capitalization silently
+        # produces a second Customer row that this exact lookup then misses).
         _flag_customer = Customer.objects.filter(
-            business=up.business, name=tab.customer_name,
+            business=up.business, name__iexact=tab.customer_name,
         ).first()
         if _flag_customer is not None:
             from core.debt_views import require_reminder_before_flagging
@@ -4052,8 +4056,9 @@ def void_tab(request, tab_id):
 
     # Only mark defaulter when the voided tab actually carried converted credit transactions
     if had_credit and tab.customer_name:
+        # 2026-09-03 — name__iexact, not a bare =. See _flag_customer above.
         cust_obj = Customer.objects.filter(
-            business=up.business, name=tab.customer_name
+            business=up.business, name__iexact=tab.customer_name
         ).first()
         if cust_obj:
             Customer.objects.filter(pk=cust_obj.pk).update(is_defaulter=True)

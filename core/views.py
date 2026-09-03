@@ -1403,8 +1403,22 @@ def add_transaction(request):
 
         new_customer_name = request.POST.get("new_customer_name", "").strip()
         if new_customer_name and trans_type == "Issue":
+            # 2026-09-03 live report (Roy) — "for direct debt sales when
+            # they put in 2 items it shows the two items in recent sales
+            # but in the debt tracker it only shows one": traced to a real,
+            # confirmed root cause — this exact-string lookup (unlike the
+            # rest of the app's own established name__iexact convention,
+            # see customer_identity_q()'s docstring) meant typing the same
+            # customer's name with different capitalization on separate
+            # occasions silently created a SECOND Customer row; the receipt
+            # dedup logic further down merges by name__iexact (so both
+            # sales still show together there), but each Customer's own
+            # debt profile only ever queries Transaction.recipient=<that
+            # exact string>, so the other sale's item never appears on
+            # either individual debt page. Fixed here and at every other
+            # credit/debt-sale Customer lookup in this file.
             customer = Customer.objects.filter(
-                business=user_profile.business, name=new_customer_name
+                business=user_profile.business, name__iexact=new_customer_name
             ).first()
             if customer is None:
                 customer = Customer.objects.create(
@@ -1419,8 +1433,10 @@ def add_transaction(request):
                 and request.POST.get("payment_method", "cash") == "credit"
                 and recipient):
             from core.credit_policy import evaluate_credit
+            # 2026-09-03 — name__iexact, not a bare =. See the matching
+            # comment on new_customer_name above.
             _cust_gate = Customer.objects.filter(
-                business=user_profile.business, name=recipient
+                business=user_profile.business, name__iexact=recipient
             ).first()
             if _cust_gate is None:
                 _cust_gate = Customer.objects.create(
@@ -3469,6 +3485,35 @@ def quick_sell(request):
             cart = []
 
         credit_recipient = request.POST.get("recipient", "").strip()
+        # 2026-09-03 live report (Roy, relaying a staff claim): "for direct
+        # debt sales when they put in 2 items it shows the two items in
+        # recent sales but in the debt tracker it only shows one." Fixing
+        # every Customer LOOKUP below to use name__iexact (matching the
+        # app's own established convention) closes half of this — no new
+        # duplicate Customer row gets created from typing a different case
+        # — but is not sufficient on its own: Transaction.recipient is
+        # written as whatever raw string was typed THIS checkout, and
+        # _get_customer_debt_data()'s credit_qs matches
+        # `recipient=customer.name` — a plain EXACT string, deliberately
+        # (see that function's own docstring: two Customer rows sharing a
+        # name is the KNOWN failure mode it defends against, via merge, not
+        # via a broader match here). So a second checkout typed "roy"
+        # against an existing Customer("Roy") would reuse the same
+        # Customer (no duplicate) but still write recipient='roy' — which
+        # STILL doesn't exact-match customer.name='Roy', so the item still
+        # would not appear on that (correctly singular) customer's debt
+        # profile. Normalizing HERE, once, to whatever's already on file —
+        # before any Transaction gets created — is what actually closes
+        # the loop: every downstream use (the per-item loop's recipient=,
+        # the BarTab customer_name= lookup, the DENI branch's own receipt/
+        # Customer handling) then consistently uses the one canonical
+        # spelling already stored on the Customer record.
+        if credit_recipient:
+            _existing_credit_cust = Customer.objects.filter(
+                business=user_profile.business, name__iexact=credit_recipient,
+            ).first()
+            if _existing_credit_cust:
+                credit_recipient = _existing_credit_cust.name
         credit_phone     = request.POST.get("credit_phone", "").strip()
         payment_method_raw = request.POST.get("payment_method", "cash")
         # 'tab' is a UI-only value — persisted to Transaction as 'credit' (same
@@ -3570,8 +3615,10 @@ def quick_sell(request):
         if payment_method_raw == 'credit' and credit_recipient:
             from core.models import Customer as _CustomerModel
             from core.credit_policy import evaluate_credit
+            # 2026-09-03 — name__iexact, not a bare =. See add_transaction's
+            # matching comment above for the full root-cause explanation.
             _cust_gate = _CustomerModel.objects.filter(
-                business=user_profile.business, name=credit_recipient
+                business=user_profile.business, name__iexact=credit_recipient
             ).first()
             if _cust_gate is None:
                 # Auto-create approved — owner is initiating this credit sale
@@ -3599,8 +3646,10 @@ def quick_sell(request):
         if _wants_partial_credit:
             from core.models import Customer as _CustomerModel
             from core.credit_policy import evaluate_credit
+            # 2026-09-03 — name__iexact, not a bare =. See add_transaction's
+            # matching comment above for the full root-cause explanation.
             _cust_gate = _CustomerModel.objects.filter(
-                business=user_profile.business, name=credit_recipient
+                business=user_profile.business, name__iexact=credit_recipient
             ).first()
             if _cust_gate is None:
                 _cust_gate = _CustomerModel.objects.create(
@@ -3887,8 +3936,10 @@ def quick_sell(request):
                             _qs_credit_split_ids, user_profile.business,
                         )
                         from .models import Customer as _CustomerQsPartial
+                        # 2026-09-03 — name__iexact, not a bare =. See
+                        # add_transaction's matching comment above.
                         _cust_partial = _CustomerQsPartial.objects.filter(
-                            business=user_profile.business, name=credit_recipient
+                            business=user_profile.business, name__iexact=credit_recipient
                         ).first()
                         if _cust_partial is None:
                             _cust_partial = _CustomerQsPartial.objects.create(
@@ -3977,8 +4028,10 @@ def quick_sell(request):
                     )
                 # Ensure Customer record exists with phone so debt tracker can SMS them
                 from .models import Customer as _Customer
+                # 2026-09-03 — name__iexact, not a bare =. See
+                # add_transaction's matching comment above.
                 _cust = _Customer.objects.filter(
-                    business=user_profile.business, name=credit_recipient
+                    business=user_profile.business, name__iexact=credit_recipient
                 ).first()
                 if _cust is None:
                     _cust = _Customer.objects.create(
@@ -4078,8 +4131,11 @@ def quick_sell(request):
                 # Auto-create Customer for credit (deni) sales so debt tracker finds them
                 if payment_method_qs == "credit" and credit_recipient:
                     from .models import Customer as _Customer
+                    # 2026-09-03 — name__iexact, not a bare =. See
+                    # add_transaction's matching comment above — this is the
+                    # site most directly behind Roy's own live report.
                     cust_obj = _Customer.objects.filter(
-                        business=user_profile.business, name=credit_recipient
+                        business=user_profile.business, name__iexact=credit_recipient
                     ).first()
                     if cust_obj is None:
                         cust_obj = _Customer.objects.create(
@@ -4121,8 +4177,9 @@ def quick_sell(request):
                         else:
                             try:
                                 from core.debt_views import _build_credit_receipt_meta
+                                # 2026-09-03 — name__iexact, not a bare =.
                                 _cust_for_meta = _Customer.objects.filter(
-                                    business=user_profile.business, name=credit_recipient
+                                    business=user_profile.business, name__iexact=credit_recipient
                                 ).first()
                                 if _cust_for_meta:
                                     rcpt_meta = _build_credit_receipt_meta(

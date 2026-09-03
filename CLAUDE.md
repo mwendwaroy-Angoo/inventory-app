@@ -10253,3 +10253,74 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   sibling test added alongside each so the two-person-control case stays
   regression-locked. No migrations (no schema change — pure view-logic +
   template fix).
+- Fix: direct credit sales silently split across a duplicate Customer row
+  (2026-09-03), live report — Roy relayed a staff claim: "for direct debt
+  sales when they put in 2 items it shows the two items in recent sales
+  but in the debt tracker it only shows one." Investigated rather than
+  reproduced verbatim (a SINGLE Quick Sell checkout with 2 cart items
+  turned out NOT to be able to split — one POST captures `recipient` once
+  and reuses it identically for every cart-loop iteration) — but found the
+  REAL, confirmed, reproducible mechanism one layer up: the same customer
+  typed with different capitalization on two SEPARATE credit checkouts
+  (very plausible on a busy counter — `qsRecipientData`'s own JS is a bare
+  `customerName.trim()`, no autocomplete forcing a canonical spelling).
+  `core/customer_profile.py`'s own docstring already documents the
+  established, correct convention for this exact risk: "case-insensitive
+  throughout... never a bare =, since the same person is routinely typed
+  with different capitalization across a busy evening" — and every OTHER
+  counter already follows it (`kitchen_views.py`'s credit-checkout
+  Customer lookup uses `name__iexact`; so does every relevant `keg_views.
+  py` lookup). Quick Sell (`core/views.py`) was the one exception: found
+  SEVEN separate `Customer.objects.filter(..., name=credit_recipient)`
+  calls — a bare, case-SENSITIVE match — auto-creating/reusing the
+  customer for a credit sale. Typing "roy" against an existing
+  Customer("Roy") silently created a SECOND Customer row; the Receipt's
+  own same-day dedup (`_existing_rcpt` lookup) already merges by
+  `customer_name__iexact`, so both sales still appeared together on one
+  receipt — but each Customer's own debt profile
+  (`_get_customer_debt_data`'s `credit_qs`) filters
+  `Transaction.recipient=customer.name`, a deliberate EXACT string match
+  (see that function's own docstring — two Customer rows sharing a name is
+  the KNOWN failure mode it defends against via the "🔀 Sahihisha Jina la
+  Mteja" merge tool, not via a broader match there), so the second item
+  never showed on either individual debt page — matching the reported
+  symptom precisely. **Two-part fix, both needed together** (confirmed by
+  a failing intermediate test before the second part): (1) every credit/
+  debt-sale Customer LOOKUP fixed to `name__iexact` — `core/views.py`
+  (`add_transaction`'s `new_customer_name` + CREDIT DISCIPLINE GATE, and
+  all 6 remaining Quick Sell sites: full-credit gate, partial-credit gate,
+  the "Lipa kidogo" split lookup, the TAB SALE branch, the DENI/direct
+  branch — the site most directly behind the report — and the receipt's
+  `_build_credit_receipt_meta` lookup), `core/keg_views.py` (`void_tab`'s
+  two defaulter-flagging lookups), `core/debt_views.py`
+  (`_execute_write_off_approval`'s defaulter-flagging lookup), and the
+  same bug class in three UBA module views (`payment_plans_views.py`,
+  `rentals_views.py`, `salon_views.py`) — prevents a NEW duplicate
+  Customer row from ever being created this way again. (2) NOT sufficient
+  on its own, confirmed by writing the test first: reusing the existing
+  Customer still leaves `Transaction.recipient` written as whatever raw
+  string was typed THIS checkout, which still fails the debt tracker's
+  own deliberately-exact match against `customer.name`. Fixed by
+  normalizing `credit_recipient` itself ONCE, right where it's first read
+  from POST in `quick_sell()` — before any Transaction, BarTab, or receipt
+  branch runs — to the EXISTING Customer's canonical `.name` when one is
+  found (`name__iexact`); a genuinely new customer name is left as typed,
+  becoming the canonical spelling for every future sale under it. This
+  single normalization point means every downstream use (the per-item
+  loop's `recipient=`, the BarTab `customer_name=` lookup, the DENI
+  branch's own Customer/receipt handling) all consistently reference one
+  spelling, closing the loop end to end. Existing, ALREADY-split duplicate
+  Customer rows from before this fix are not retroactively merged —
+  `🔀 Sahihisha Jina la Mteja` (per-customer) and
+  `audit_debt_ledger_integrity --all-customers` (whole-business scan,
+  2026-08-14) are the existing, already-built tools for that; not rebuilt
+  here. 6 new tests (`CustomerCaseInsensitiveDebtLookupTest`) — a single
+  checkout reusing an existing differently-cased Customer (no duplicate
+  created), the literal two-separate-checkouts reported scenario end to
+  end (asserts both items land on ONE customer's `unpaid_transactions`,
+  matching the merged receipt — this test failed after part (1) alone,
+  confirming part (2) was genuinely necessary, not defensive
+  over-engineering), `add_transaction`'s two sites, and both defaulter-
+  flagging sites (`void_tab`, real write-off) landing on the existing
+  Customer rather than silently missing it. No migrations (pure query/
+  string-normalization fix, no schema change).

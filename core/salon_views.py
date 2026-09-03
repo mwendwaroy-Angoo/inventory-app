@@ -117,7 +117,9 @@ def create_appointment(request):
     customer_name = (request.POST.get('customer_name') or '').strip()
     customer = None
     if customer_name:
-        customer = Customer.objects.filter(business=business, name=customer_name).first()
+        # 2026-09-03 — name__iexact, not a bare =. See core/views.py's
+        # add_transaction comment for the full root-cause explanation.
+        customer = Customer.objects.filter(business=business, name__iexact=customer_name).first()
         if not customer:
             customer = Customer.objects.create(
                 business=business, name=customer_name, phone=request.POST.get('customer_phone', ''),

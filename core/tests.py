@@ -49108,3 +49108,164 @@ class AuditDailyOperationsCommandTest(TestCase):
         out = StringIO()
         call_command('audit_daily_operations', business='Nonexistent Biz XYZ', stdout=out)
         self.assertIn('No matching business', out.getvalue())
+
+
+class CustomerCaseInsensitiveDebtLookupTest(TestCase):
+    """2026-09-03 live report (Roy, relaying a staff claim): "for direct
+    debt sales when they put in 2 items it shows the two items in recent
+    sales but in the debt tracker it only shows one." Root-caused, not
+    guessed: every credit/debt-sale Customer lookup in the app is supposed
+    to follow the SAME established convention already documented in
+    core/customer_profile.py's own docstring — "case-insensitive
+    throughout... never a bare =, since the same person is routinely typed
+    with different capitalization across a busy evening" — and every OTHER
+    counter already follows it (kitchen_views.py's own credit-checkout
+    lookup uses name__iexact; so does every keg_views.py customer lookup
+    bar board's own tab/credit flows use). Quick Sell's credit checkout
+    (core/views.py) was the one exception: SEVEN separate Customer.objects.
+    filter(...) calls used a bare `name=` — exact, case-sensitive — string
+    match. Typing the same customer's name with different capitalization
+    on two separate occasions (very plausible on a busy counter, with no
+    autocomplete forcing a canonical spelling — see qsRecipientData's own
+    plain `customerName.trim()`) therefore silently created a SECOND
+    Customer row. The Receipt's own "today, same customer" dedup already
+    merges by name__iexact (core/views.py's `_existing_rcpt` lookup), so
+    both sales still show together on one receipt/"Mauzo ya Karibuni" —
+    but each Customer's own debt profile only ever queries
+    Transaction.recipient=<that exact string> (_get_customer_debt_data),
+    so the SECOND item never appears on either individual debt page,
+    matching the reported symptom exactly. Fixed at every affected site in
+    core/views.py, core/keg_views.py (two defaulter-flagging lookups) and
+    core/debt_views.py (write-off defaulter-flagging), plus the same bug
+    class in the three UBA module views (payment_plans/rentals/salon)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Case Debt Biz', has_kitchen=False)
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='casedebt_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item_a = Item.objects.create(
+            business=self.biz, store=self.store, material_no='CDEBT-A',
+            description='Whitecap', unit='Pcs', selling_price=Decimal('250'),
+        )
+        self.item_b = Item.objects.create(
+            business=self.biz, store=self.store, material_no='CDEBT-B',
+            description='Tusker', unit='Pcs', selling_price=Decimal('300'),
+        )
+        for it in (self.item_a, self.item_b):
+            Transaction.objects.create(business=self.biz, item=it, type='Receipt', qty=Decimal('20'))
+        self.client.force_login(self.owner)
+
+    def test_quick_sell_credit_reuses_existing_customer_case_insensitively(self):
+        """A pre-existing Customer('Roy') must be reused, not duplicated,
+        when a credit sale is typed as 'roy' (or 'ROY', or padded)."""
+        Customer.objects.create(business=self.biz, name='Roy', credit_approved=True)
+        resp = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item_a.id, 'qty': 1}]),
+            'payment_method': 'credit', 'recipient': 'roy',
+            'idempotency_token': 'cdebt-1',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            Customer.objects.filter(business=self.biz).count(), 1,
+            'Typing a different case must reuse the existing Customer, never create a second one',
+        )
+
+    def test_quick_sell_two_separate_credit_checkouts_different_case_land_on_one_customer(self):
+        """The literal reported scenario: two SEPARATE credit checkouts for
+        the same real customer, typed with different capitalization, must
+        both land on ONE Customer's debt profile — matching what the
+        merged (name__iexact-deduped) receipt already shows."""
+        resp1 = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item_a.id, 'qty': 1}]),
+            'payment_method': 'credit', 'recipient': 'Roy',
+            'idempotency_token': 'cdebt-2a',
+        })
+        self.assertEqual(resp1.status_code, 200)
+        resp2 = self.client.post('/quick-sell/', {
+            'cart': json.dumps([{'id': self.item_b.id, 'qty': 1}]),
+            'payment_method': 'credit', 'recipient': 'roy',
+            'idempotency_token': 'cdebt-2b',
+        })
+        self.assertEqual(resp2.status_code, 200)
+
+        self.assertEqual(
+            Customer.objects.filter(business=self.biz).count(), 1,
+            'Two differently-capitalized credit checkouts must not split into two Customer rows',
+        )
+        customer = Customer.objects.get(business=self.biz)
+
+        from core.debt_views import _get_customer_debt_data
+        data = _get_customer_debt_data(customer, self.biz, scope='all')
+        item_names = {e['txn'].item.description for e in data['unpaid_transactions']}
+        self.assertEqual(
+            item_names, {'Whitecap', 'Tusker'},
+            'Both items must appear on the SAME customer\'s debt profile, not split across two',
+        )
+        self.assertEqual(data['outstanding'], 550.0)
+
+    def test_add_transaction_new_customer_name_reuses_existing_customer_case_insensitively(self):
+        Customer.objects.create(business=self.biz, name='Mary Wanjiru', credit_approved=True)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item_a.id, 'type': 'Issue', 'quantity': '1',
+            'payment_method': 'credit', 'new_customer_name': 'mary wanjiru',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Customer.objects.filter(business=self.biz).count(), 1)
+
+    def test_add_transaction_credit_gate_reuses_existing_customer_case_insensitively(self):
+        Customer.objects.create(business=self.biz, name='Bosco', credit_approved=True)
+        resp = self.client.post('/add-transaction/', {
+            'item': self.item_a.id, 'type': 'Issue', 'quantity': '1',
+            'payment_method': 'credit', 'recipient': 'BOSCO',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(Customer.objects.filter(business=self.biz).count(), 1)
+
+    def test_void_tab_defaulter_flag_lands_on_existing_customer_despite_case_difference(self):
+        existing = Customer.objects.create(
+            business=self.biz, name='Cynthia Njeri', credit_approved=True,
+        )
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='cynthia njeri', status='OPEN',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item_a, type='Issue', qty=Decimal('-1'),
+            payment_method='credit', recipient='cynthia njeri', sale_amount=Decimal('250'),
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='Whitecap', amount=Decimal('250'))
+
+        resp = self.client.post(f'/bar/tabs/{tab.id}/void/', {'reason': 'test'})
+        self.assertTrue(resp.json().get('ok'), resp.json())
+
+        existing.refresh_from_db()
+        self.assertTrue(
+            existing.is_defaulter,
+            'The defaulter flag must land on the EXISTING Customer row despite the case difference',
+        )
+        self.assertEqual(
+            Customer.objects.filter(business=self.biz).count(), 1,
+            'Flagging must never create a stray duplicate Customer',
+        )
+
+    def test_writeoff_defaulter_flag_lands_on_existing_customer_despite_case_difference(self):
+        existing = Customer.objects.create(
+            business=self.biz, name='Peter Kamau', credit_approved=True,
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item_a, type='Issue', qty=Decimal('-1'),
+            payment_method='credit', recipient='peter kamau', sale_amount=Decimal('250'),
+        )
+        resp = self.client.post(f'/debt/write-off/request/{txn.id}/', {
+            'reason': 'Uncollectable', 'is_mistake': '0',
+        })
+        data = resp.json()
+        self.assertTrue(data.get('ok'), data)
+        self.assertTrue(data.get('executed'))
+
+        existing.refresh_from_db()
+        self.assertTrue(
+            existing.is_defaulter,
+            'A real write-off must flag the EXISTING Customer row despite the case difference',
+        )
+        self.assertEqual(Customer.objects.filter(business=self.biz).count(), 1)

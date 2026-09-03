@@ -31,7 +31,11 @@ def create_payment_plan(request):
     customer_name = (request.POST.get('customer_name') or '').strip()
     if not customer_name:
         return JsonResponse({'ok': False, 'error': 'Jina la mteja linahitajika.'}, status=400)
-    customer = Customer.objects.filter(business=business, name=customer_name).first()
+    # 2026-09-03 — name__iexact, not a bare =. Same fix, same root cause
+    # (a duplicate Customer row from case-drift in typed names) applied
+    # across every credit/debt-sale Customer lookup — see core/views.py's
+    # add_transaction comment for the full explanation.
+    customer = Customer.objects.filter(business=business, name__iexact=customer_name).first()
     if not customer:
         customer = Customer.objects.create(business=business, name=customer_name)
 
