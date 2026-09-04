@@ -30,7 +30,20 @@ class InventorySupplyChainTests(TestCase):
         )
 
         # Create 30 days of issue transactions: 2 units per day -> avg_daily = 2
-        today = timezone.now().date()
+        #
+        # 2026-09-04 timezone audit: this MUST anchor on timezone.localdate(),
+        # matching Item.avg_daily_issues()'s own `since` cutoff (core/models.py)
+        # after that function's timezone.now().date() -> timezone.localdate()
+        # fix. Using the old UTC-date anchor here left a ~3-hour daily window
+        # (00:00-02:59 Nairobi, when the UTC and Nairobi calendar dates
+        # disagree) where the fixture's oldest transaction (dated `today -
+        # 30`, UTC-anchored) fell one day outside avg_daily_issues()'s
+        # correctly Nairobi-anchored 30-day cutoff — dropping it from the sum
+        # and producing 58/30 = 1.9333... instead of the expected 2.0, purely
+        # from real wall-clock timing. Same bug class already documented
+        # elsewhere in this project (PettyCashReviewUndoTest,
+        # BarZReportOverlappingShiftsTest, AdHocExpenseDayReconciliationTest).
+        today = timezone.localdate()
         for d in range(1, 31):
             Transaction.objects.create(
                 item=self.item,
