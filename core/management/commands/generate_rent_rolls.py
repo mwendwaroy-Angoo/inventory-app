@@ -7,18 +7,18 @@ the 1st of each month. Idempotent — see core.rentals.generate_rent_roll's
 own docstring.
 """
 import calendar
-from datetime import date
 
 from accounts.models import Business
 from core.rentals import generate_rent_roll
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 
 class Command(BaseCommand):
     help = "Generate this month's rent roll for every business's active rental agreements."
 
     def handle(self, *args, **options):
-        today = date.today()
+        today = timezone.localdate()
         period_start = today.replace(day=1)
         period_end = today.replace(day=calendar.monthrange(today.year, today.month)[1])
         due_date = today.replace(day=5) if today.day <= 5 else period_end

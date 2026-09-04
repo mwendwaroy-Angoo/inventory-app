@@ -1088,10 +1088,25 @@ class BarZReportOverlappingShiftsTest(TestCase):
         # YESTERDAY's local date, silently excluding the shift from the report
         # and failing this test purely on timing. Same bug class documented in
         # this project's own Known Issues (PettyCashReviewUndoTest, 2026-07-25).
+        #
+        # 2026-09-04 audit: the `today_start` floor (start-of-today +1 minute)
+        # is itself in the FUTURE for the one-minute window between 00:00:00
+        # and 00:01:00 local — `max(today_start, now - Nh)` then picks the
+        # future `today_start` over the real, past `now - Nh`, so started_at
+        # lands ahead of `now`. _detect_overlapping_shift_pairs() computes its
+        # own `a_end = a.ended_at or now` a few moments later — with an OPEN
+        # shift's started_at still ahead of that fresh `now`, `a_end` floors
+        # BEFORE `a.started_at`, and the very next shift's started_at (also
+        # future-clamped, later still) trips the `b.started_at >= a_end` break
+        # immediately: zero pairs found, no overlap banner. Every derived
+        # timestamp below is now also clamped down to `now` (never after it),
+        # closing the same gap `ended_at` needs it for too.
         now = timezone.now()
-        today_start = timezone.localtime().replace(hour=0, minute=1, second=0, microsecond=0)
-        shift1_start = max(today_start, now - timedelta(hours=3))
-        shift2_start = max(today_start + timedelta(minutes=1), now - timedelta(hours=1))
+        today_start = min(
+            timezone.localtime().replace(hour=0, minute=1, second=0, microsecond=0), now
+        )
+        shift1_start = min(max(today_start, now - timedelta(hours=3)), now)
+        shift2_start = min(max(today_start + timedelta(minutes=1), now - timedelta(hours=1)), now)
         # Both shifts OPEN and overlapping — staff1 started earlier, staff2
         # opened before staff1 closed (the exact "forgotten handover" scenario).
         shift1 = Shift.objects.create(
@@ -1110,7 +1125,7 @@ class BarZReportOverlappingShiftsTest(TestCase):
         )
         # Three cash sales inside the overlap window (last hour) — a shared
         # till both "shifts" would independently see as their own.
-        sale_at = max(today_start + timedelta(minutes=2), now - timedelta(minutes=30))
+        sale_at = min(max(today_start + timedelta(minutes=2), now - timedelta(minutes=30)), now)
         for _n in range(3):
             Transaction.objects.create(
                 business=business, item=item, type='Issue',
@@ -1151,14 +1166,19 @@ class BarZReportOverlappingShiftsTest(TestCase):
         UserProfile.objects.create(user=staff1, business=business, role='staff')
 
         # Same start-of-today clamp as _setup() above — avoids crossing back into
-        # yesterday's local date when the suite runs shortly after local midnight.
+        # yesterday's local date when the suite runs shortly after local
+        # midnight, and (2026-09-04) never lands ahead of `now` either — see
+        # the comment in _setup() for why an un-clamped started_at/ended_at
+        # pair breaks overlap detection in that one-minute window.
         now = timezone.now()
-        today_start = timezone.localtime().replace(hour=0, minute=1, second=0, microsecond=0)
+        today_start = min(
+            timezone.localtime().replace(hour=0, minute=1, second=0, microsecond=0), now
+        )
         Shift.objects.create(
             business=business, store=store, staff=staff1,
             opening_float=Decimal('0'),
-            started_at=max(today_start, now - timedelta(hours=2)),
-            ended_at=max(today_start + timedelta(minutes=1), now - timedelta(hours=1)),
+            started_at=min(max(today_start, now - timedelta(hours=2)), now),
+            ended_at=min(max(today_start + timedelta(minutes=1), now - timedelta(hours=1)), now),
             status='CONFIRMED',
         )
 
@@ -41859,8 +41879,16 @@ class NotificationTimeoutTest(TestCase):
     to the underlying SDK call, not just documented in a comment."""
 
     def test_sms_send_passes_shortened_timeout(self):
+        # 2026-09-04 audit: send_sms_notification() now short-circuits under
+        # settings.TESTING so the suite never makes real calls to Africa's
+        # Talking. This test is the one place that must reach the SDK call
+        # itself — it asserts on the timeout tuple handed to it — so it opts
+        # back in explicitly. Safe because africastalking is fully mocked
+        # below: no network call happens here either way.
+        from django.test import override_settings
         from core import notifications
-        with patch('africastalking.initialize'), \
+        with override_settings(TESTING=False), \
+             patch('africastalking.initialize'), \
              patch('africastalking.SMS') as mock_sms:
             mock_sms.send.return_value = {
                 'SMSMessageData': {'Recipients': [{'status': 'Success'}]}

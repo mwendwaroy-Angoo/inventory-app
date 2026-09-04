@@ -269,7 +269,7 @@ class BusinessExpenseForm(forms.ModelForm):
         self.fields['category'].label = _('Category')
         self.fields['date'].label = _('Date')
         self.fields['notes'].label = _('Notes')
-        self.fields['date'].initial = timezone.now().date()
+        self.fields['date'].initial = timezone.localdate()
 
 
 class CapitalInvestmentForm(forms.ModelForm):

@@ -1002,7 +1002,7 @@ class Item(models.Model):
         Without this, reorder recommendations for the sack would never reflect
         how fast it's actually being used.
         """
-        since = timezone.now().date() - datetime.timedelta(days=window_days)
+        since = timezone.localdate() - datetime.timedelta(days=window_days)
         total = self.transactions.filter(type__in=['Issue', 'Draw'], date__gte=since).aggregate(models.Sum('qty'))['qty__sum'] or 0
         total = abs(total)
         try:
@@ -2736,7 +2736,7 @@ class ProcurementRequest(models.Model):
 
     @property
     def is_accepting_bids(self):
-        return self.status == 'open' and self.deadline >= timezone.now().date()
+        return self.status == 'open' and self.deadline >= timezone.localdate()
 
 
 class SupplierBid(models.Model):

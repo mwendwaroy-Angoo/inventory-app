@@ -182,7 +182,7 @@ def _close_expired_procurement():
 
     expired = ProcurementRequest.objects.filter(
         status="open",
-        deadline__lt=timezone.now().date(),
+        deadline__lt=timezone.localdate(),
     )
     count = expired.update(status="closed")
     return count
@@ -273,7 +273,7 @@ def procurement_detail(request, pk):
     profile = getattr(request.user, "userprofile", None)
 
     # Auto-close if expired and still open
-    if procurement.status == "open" and procurement.deadline < timezone.now().date():
+    if procurement.status == "open" and procurement.deadline < timezone.localdate():
         procurement.status = "closed"
         procurement.save(update_fields=["status"])
 
@@ -463,7 +463,7 @@ def award_bid(request, bid_id):
                     days = n * 7
                 else:
                     days = n
-                expected = timezone.now().date() + timedelta(days=days)
+                expected = timezone.localdate() + timedelta(days=days)
 
             po = PurchaseOrder.objects.create(
                 business=profile.business,
@@ -718,7 +718,7 @@ def procurement_browse(request):
     procurements = (
         ProcurementRequest.objects.filter(
             status="open",
-            deadline__gte=timezone.now().date(),
+            deadline__gte=timezone.localdate(),
         )
         .exclude(business=profile.business)
         .select_related(

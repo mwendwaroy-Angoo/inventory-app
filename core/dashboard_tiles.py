@@ -80,9 +80,9 @@ def build_tiles(business, user_profile, capability) -> list[DashboardTile]:
 def _keg_variance_tile(business, user_profile, capability):
     """Bar-only (WEIGH_IN accountability): today's keg variance in KES, via
     core.accountability (M0-7) rather than recomputing keg_metrics math inline."""
-    from datetime import date
+    from django.utils import timezone
     from core import accountability
-    today = date.today()
+    today = timezone.localdate()
     rows = accountability.leaderboard(business, date_from=today, date_to=today)
     if not rows:
         return None

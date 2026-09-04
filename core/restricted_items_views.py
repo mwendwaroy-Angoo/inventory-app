@@ -162,7 +162,7 @@ def pending_approvals(request):
     return render(request, 'core/pending_approvals.html', {
         'pending': pending,
         'history': history,
-        'today': timezone.now().date().strftime('%B %d, %Y'),
+        'today': timezone.localdate().strftime('%B %d, %Y'),
     })
 
 

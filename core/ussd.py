@@ -18,7 +18,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from core.models import Item, Transaction
 from accounts.models import UserProfile, Business
-from datetime import date
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +271,7 @@ def ussd_callback(request):
             try:
                 from core.notifications import notify_transaction
                 daily_count = Transaction.objects.filter(
-                    business=business, date=date.today()
+                    business=business, date=timezone.localdate()
                 ).count()
                 user = profile.user if profile else None
                 notify_transaction(transaction, business, daily_count, user=user)
@@ -360,7 +360,7 @@ def ussd_callback(request):
     # 4. TODAY'S SUMMARY
     # ═══════════════════════════════════════════
     if action == '4':
-        today = date.today()
+        today = timezone.localdate()
         today_transactions = Transaction.objects.filter(
             business=business,
             date=today

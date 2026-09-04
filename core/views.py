@@ -363,7 +363,7 @@ def home(request):
             # Items received in last 7 days with no cost price set (owner dashboard alert)
             try:
                 from datetime import timedelta as _td
-                seven_days_ago = timezone.now().date() - _td(days=7)
+                seven_days_ago = timezone.localdate() - _td(days=7)
                 recent_receipts_no_cost = Transaction.objects.filter(
                     business=business,
                     type='Receipt',
@@ -411,7 +411,7 @@ def home(request):
             # Expiry alerts
             try:
                 from datetime import date as _date, timedelta as _td
-                _today = _date.today()
+                _today = timezone.localdate()
                 _soon  = _today + _td(days=7)
                 _expired_ids  = Transaction.objects.filter(
                     business=business, type='Receipt',
@@ -752,7 +752,7 @@ def home(request):
                     default=_Abs(_F('qty')) * _Coalesce(_F('item__selling_price'), _Value(0)),
                     output_field=_DecimalField(max_digits=12, decimal_places=2),
                 )
-                _today = _date.today()
+                _today = timezone.localdate()
                 _week_start = _today - timedelta(days=_today.weekday())
                 _month_start = _today.replace(day=1)
 
@@ -1027,7 +1027,7 @@ def _batch_stock_metrics(items):
         Transaction.objects.filter(item_id__in=item_ids)
         .values('item_id').annotate(t=Sum('qty')).values_list('item_id', 't')
     )
-    since = timezone.now().date() - timedelta(days=30)
+    since = timezone.localdate() - timedelta(days=30)
     issues_map = dict(
         Transaction.objects.filter(
             item_id__in=item_ids, type__in=['Issue', 'Draw'], date__gte=since,
@@ -1168,7 +1168,7 @@ def stock_list(request):
     # Annotate each item with its earliest expiry date from Receipt batches
     from datetime import date as _date, timedelta as _td
     from django.db.models import Min as _Min
-    today_d = _date.today()
+    today_d = timezone.localdate()
     soon_d  = today_d + _td(days=7)
 
     expiry_qs = (
@@ -1261,7 +1261,7 @@ def expiring_items(request):
         return redirect("home")
 
     business = user_profile.business
-    today_d  = _date.today()
+    today_d  = timezone.localdate()
     soon_d   = today_d + _td(days=7)
 
     # One query: earliest expiry per item, for all items with any expiry set
@@ -1869,7 +1869,7 @@ def add_transaction(request):
 
         # Count today's transactions for SMS/WhatsApp decision
         daily_count = Transaction.objects.filter(
-            business=user_profile.business, date=date.today()
+            business=user_profile.business, date=timezone.localdate()
         ).count()
 
         # Send notifications in a background thread — never block the HTTP response
@@ -2510,7 +2510,7 @@ def receive_goods(request, po_id):
 
     else:
         receipt_form = GoodsReceiptForm(
-            initial={"received_date": timezone.now().date()}
+            initial={"received_date": timezone.localdate()}
         )
         initial_data = [
             {
@@ -3163,7 +3163,7 @@ def ajax_customers(request):
 
 def get_date_range(period, date_from=None, date_to=None):
     """Returns (start_date, end_date) based on period filter."""
-    today = date.today()
+    today = timezone.localdate()
     if period == "today":
         return today, today
     elif period == "week":
@@ -3971,7 +3971,7 @@ def quick_sell(request):
                 from .notifications import notify_transaction_async
 
                 daily_count = Transaction.objects.filter(
-                    business=user_profile.business, date=date.today()
+                    business=user_profile.business, date=timezone.localdate()
                 ).count()
                 notify_transaction_async(
                     last_transaction.id,

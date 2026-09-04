@@ -4691,13 +4691,23 @@ def bar_daily_report(request):
         if _shift_station(shift) == 'kitchen':
             continue
         shift_end = shift.ended_at or timezone.now()
+        # 2026-09-04 bar audit — void exclusion moved UP to the queryset.
+        # The 'revenue' aggregate below already excluded payment_method='void',
+        # but the cups/pints/jugs aggregates beside it did not: they sum
+        # keg_qty, which void_tab() never zeroes (it zeroes txn.qty, a
+        # different field). A voided tab therefore still reported its pours as
+        # served volume while contributing KES 0 revenue — the per-shift row
+        # showed servings that no money ever backed, which is exactly the
+        # signature of staff theft and so sent a false signal on the one
+        # report an owner reads to detect it. Excluding once here keeps all
+        # four aggregates on the same definition of a real sale.
         st = Transaction.objects.filter(
             business=business,
             created_at__gte=shift.started_at,
             created_at__lte=shift_end,
             type='Issue',
             item__store__is_kitchen=False,
-        )
+        ).exclude(payment_method='void')
         delta   = shift_end - shift.started_at
         h, rem  = divmod(int(delta.total_seconds()), 3600)
         m       = rem // 60
@@ -4727,7 +4737,7 @@ def bar_daily_report(request):
             'cups':    st.filter(keg_serving='cup').aggregate(n=Sum('keg_qty'))['n'] or 0,
             'pints':   st.filter(keg_serving='pint').aggregate(n=Sum('keg_qty'))['n'] or 0,
             'jugs':    st.filter(keg_serving='jug').aggregate(n=Sum('keg_qty'))['n'] or 0,
-            'revenue': float(st.exclude(payment_method='void').aggregate(r=Sum(_rev))['r'] or 0),
+            'revenue': float(st.aggregate(r=Sum(_rev))['r'] or 0),
         })
 
     return render(request, 'core/bar/bar_daily_report.html', {

@@ -51,7 +51,7 @@ def analytics_dashboard(request):
     """Rich analytics dashboard with trends, comparisons, and insights."""
     user_profile = request.user.userprofile
     business = user_profile.business
-    today = date.today()
+    today = timezone.localdate()
 
     # ── Period selection ──
     period = request.GET.get('period', '30')
@@ -1264,7 +1264,7 @@ def analytics_api(request):
         return JsonResponse({'error': 'Owner or manager only'}, status=403)
 
     business = user_profile.business
-    today = date.today()
+    today = timezone.localdate()
     days = min(int(request.GET.get('days', 30)), 365)
     start_date = today - timedelta(days=days - 1)
 
@@ -1304,7 +1304,7 @@ def expense_list(request):
     """List all business expenses for the current period."""
     user_profile = request.user.userprofile
     business = user_profile.business
-    today = date.today()
+    today = timezone.localdate()
 
     period = request.GET.get('period', '30')
     try:
@@ -1650,7 +1650,7 @@ def county_heatmap(request):
         'top_counties': sorted_data[:10],
         'total_mapped_revenue': sum(r['total_revenue'] for r in sorted_data),
         'counties_with_sales': len(sorted_data),
-        'today': date.today().strftime('%B %d, %Y'),
+        'today': timezone.localdate().strftime('%B %d, %Y'),
     })
 
 
@@ -1741,7 +1741,7 @@ def revenue_target_settings(request):
             ('monthly', _('Monthly')),
         ],
         'credit_window': business.credit_window_days or 30,
-        'today': date.today().strftime('%B %d, %Y'),
+        'today': timezone.localdate().strftime('%B %d, %Y'),
     }
     return render(request, 'core/revenue_target_settings.html', context)
 
@@ -1757,7 +1757,7 @@ def revenue_target_progress(request):
     """
     user_profile = request.user.userprofile
     business = user_profile.business
-    today = date.today()
+    today = timezone.localdate()
 
     week_start  = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
@@ -1839,7 +1839,7 @@ def revenue_target_progress(request):
 def expense_report(request):
     """12-month expense intelligence — trends, per-line history, revenue impact, flags."""
     business = get_user_profile(request).business
-    today = date.today()
+    today = timezone.localdate()
 
     # Build list of 12 month-start dates, oldest first
     month_start = today.replace(day=1)

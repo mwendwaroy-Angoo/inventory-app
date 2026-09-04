@@ -1505,7 +1505,7 @@ def _kitchen_checkout(request, up, business, is_owner):
             normalized = normalize_ke_phone(credit_phone)
             if normalized:
                 credit_window = business.credit_window_days or 30
-                due_date = (_dt.date.today() + _dt.timedelta(days=credit_window)).strftime('%d %b %Y')
+                due_date = (timezone.localdate() + _dt.timedelta(days=credit_window)).strftime('%d %b %Y')
                 sms_msg = (
                     f"Duka: {business.name}\n"
                     f"Umenunua kwa deni: KES {float(total):,.0f}\n"

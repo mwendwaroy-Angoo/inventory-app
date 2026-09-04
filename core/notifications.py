@@ -143,6 +143,22 @@ def notify_transaction_async(transaction_id, business_id, daily_count=0, user_id
             logger.exception(
                 "Background notification failed for transaction %s", transaction_id
             )
+        finally:
+            # 2026-09-04 audit. This is the ONLY one of this file's three
+            # background workers that touches the ORM (the two SMS/email ones
+            # say so in their own docstrings), so it is the only one that opens
+            # a DB connection. Django closes connections via close_old_
+            # connections(), wired to the request_started/request_finished
+            # signals — neither of which ever fires in a bare thread. With
+            # conn_max_age=600 in settings.py, every sale therefore left a
+            # Postgres connection open until the thread object was garbage
+            # collected, which is not deterministic; on Render's connection
+            # allowance a busy bar night can exhaust the pool and start
+            # refusing connections app-wide. Closing explicitly here is the
+            # documented fix and costs nothing — the connection is finished
+            # with by this point either way.
+            from django.db import connection
+            connection.close()
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
@@ -224,6 +240,18 @@ def send_sms_notification(message, phone_number):
     if not phone_number:
         logger.warning('SMS skipped — could not normalize phone number: %s', original_phone)
         return False, 'invalid_phone'
+    # 2026-09-04 audit: send_sms_notification() was making REAL calls to
+    # api.africastalking.com during `manage.py test` — 30+ per run, each able
+    # to block for the full (3, 5)s timeout above. AT_USERNAME defaults to the
+    # live 'dukamwecheche' account, so any machine with AT_API_KEY set billed
+    # real messages to fixture numbers. settings.TESTING already exists (it
+    # gates SSL/cookie flags below) but was never applied here. Placed AFTER
+    # the phone-number validation above, not before it — several tests depend
+    # on the 'no_phone' / 'invalid_phone' returns, so only the network call
+    # itself is suppressed.
+    if getattr(settings, 'TESTING', False):
+        logger.debug('SMS suppressed under test runner: %s', phone_number)
+        return True, ''
     try:
         import africastalking
 
@@ -582,7 +610,7 @@ def send_daily_summary(business):
     owner_email = owner.email
     owner_phone = owner_profile.phone or business.phone
 
-    today = date.today()
+    today = _tz.localdate()
 
     # 2026-08-19 live report (Roy): this email used to reimplement its own
     # cruder version of the day's numbers — voided sales were never

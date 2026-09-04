@@ -616,6 +616,12 @@ Never use `{% widthratio %}` — unreliable in Django templates.
 ---
 
 ## Known Issues / Watch Points
+- **`Transaction.date` is `DateField(default=timezone.now)`; Django coerces the
+  aware datetime to the NAIROBI date on write.** Reads must therefore use
+  `timezone.localdate()` — NEVER `date.today()` or `timezone.now().date()`, both of
+  which give the UTC date on Render and silently hide the first three hours of
+  every trading day. Swept across 33 sites (2026-09-05) after Sprint 19's
+  `bar_today_revenue` fix failed to propagate.
 - **`Item.cost_price` has exactly ONE designed writer: Add Transaction's Receipt flow
   (`core/views.py:add_transaction`, the "COST PRICE UPDATE (Receipt only)" block).** It
   computes landed cost (unit price + delivery fee ÷ qty), creates a real stock-in
