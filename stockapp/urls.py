@@ -234,6 +234,7 @@ from core.analytics_views import (
     expense_add,
     expense_edit,
     expense_delete,
+    expense_description_merge,
     expense_report,
     capital_investment_list,
     capital_investment_edit,
@@ -827,6 +828,11 @@ urlpatterns = [
         "analytics/expenses/<int:expense_id>/delete/",
         expense_delete,
         name="expense_delete",
+    ),
+    path(
+        "analytics/expenses/descriptions/",
+        expense_description_merge,
+        name="expense_description_merge",
     ),
     # ── Recurring Expenses ──
     path("analytics/recurring/", recurring_expense_list, name="recurring_expense_list"),

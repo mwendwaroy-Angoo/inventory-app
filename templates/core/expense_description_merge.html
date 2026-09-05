@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{% trans 'Fix Expense Descriptions' %} — Duka Mwecheche{% endblock %}
+
+{% block content %}
+
+<nav style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    <a href="{% url 'home' %}" style="color:var(--gold)">{% trans 'Dashboard' %}</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'analytics' %}" style="color:var(--gold)">{% trans 'Analytics' %}</a>
+    <span class="mx-1">›</span>
+    <a href="{% url 'expense_list' %}" style="color:var(--gold)">{% trans 'Expenses' %}</a>
+    <span class="mx-1">›</span>
+    <span>{% trans 'Fix Descriptions' %}</span>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+    <h2 class="page-title">🔤 {% trans 'Fix Expense Descriptions' %}</h2>
+    <a href="{% url 'expense_list' %}" class="btn btn-secondary btn-sm">← {% trans 'Expenses' %}</a>
+</div>
+
+<div class="edm-intro">
+    {% blocktrans %}The same real item is sometimes typed differently across entries — a mistake on one, a shortcut on another. Tick every spelling that means the same thing, type the correct name once, and every matching record is corrected in one go, business-wide. This never changes an amount, category, date, or station — only the description text.{% endblocktrans %}
+    <br>
+    <span style="color:#e0b04a;">⚠️ {% blocktrans %}"Possible matches" are a best-effort hint — a very different spelling of the same thing may not be flagged. The checkbox list below always works regardless; pick any combination yourself if the hint misses one.{% endblocktrans %}</span>
+</div>
+
+<!-- Search -->
+<form method="get" class="d-flex flex-wrap gap-2 mb-3" role="search">
+    <input type="text" name="q" value="{{ q }}" placeholder="{% trans 'Search descriptions…' %}"
+           class="form-control form-control-sm" style="max-width:260px; background:var(--onyx-card); color:var(--pearl); border-color:#333;">
+    <button type="submit" class="btn btn-sm btn-outline-secondary">🔍 {% trans 'Search' %}</button>
+    {% if q %}
+    <a href="{% url 'expense_description_merge' %}" class="btn btn-sm btn-outline-secondary">✕ {% trans 'Clear' %}</a>
+    {% endif %}
+</form>
+
+<div style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
+    {% blocktrans %}Showing{% endblocktrans %} {{ rows|length }} / {{ total_distinct }} {% trans 'distinct descriptions' %}
+</div>
+
+{% if rows %}
+<form method="post" action="{% url 'expense_description_merge' %}{% if q %}?q={{ q|urlencode }}{% endif %}">
+    {% csrf_token %}
+
+    <div class="edm-merge-bar">
+        <input type="text" name="canonical" class="canonical-input form-control form-control-sm"
+               placeholder="{% trans 'Correct name to use for everything checked below' %}" required>
+        <button type="submit" class="btn btn-gold btn-sm">🔀 {% trans 'Merge Selected' %}</button>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>{% trans 'Description' %}</th>
+                    <th>{% trans 'Times' %}</th>
+                    <th>{% trans 'Total (KES)' %}</th>
+                    <th>{% trans 'First → Last' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    <td><input type="checkbox" name="source_descriptions" value="{{ row.description }}" class="form-check-input"></td>
+                    <td>
+                        <strong style="color:var(--pearl)">{{ row.description }}</strong>
+                        {% if row.possible_matches %}
+                        <div class="edm-hint">
+                            ≈ {% trans 'possible match:' %} {{ row.possible_matches|join:", " }}
+                            <button type="button" class="btn btn-sm btn-outline-warning select-match-btn"
+                                    data-desc="{{ row.description }}"
+                                    data-matches="{{ row.possible_matches|join:'|||' }}">
+                                {% trans 'Select these' %}
+                            </button>
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td style="color:var(--muted)">{{ row.count }}×</td>
+                    <td style="color:var(--raspberry)">{{ row.total|floatformat:0 }}</td>
+                    <td style="color:var(--muted); font-size:0.78rem;">{{ row.first_date|date:'d/m/Y' }} → {{ row.last_date|date:'d/m/Y' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="edm-merge-bar">
+        <input type="text" name="canonical" class="canonical-input form-control form-control-sm"
+               placeholder="{% trans 'Correct name to use for everything checked above' %}" required>
+        <button type="submit" class="btn btn-gold btn-sm">🔀 {% trans 'Merge Selected' %}</button>
+    </div>
+</form>
+{% else %}
+<p style="color:var(--muted); text-align:center; padding:2rem 0;">
+    {% trans 'No matching descriptions.' %}
+</p>
+{% endif %}
+
+<style>
+    .edm-intro {
+        font-size: 0.82rem;
+        color: #b0b0b0;
+        background: var(--onyx-card);
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 0.9rem 1.1rem;
+        margin-bottom: 1.2rem;
+        line-height: 1.5;
+    }
+    .edm-merge-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        align-items: center;
+        margin: 1rem 0;
+    }
+    .canonical-input { max-width: 320px; background: var(--onyx-card); color: var(--pearl); border-color: #333; }
+    .edm-hint {
+        font-size: 0.72rem;
+        color: #e0b04a;
+        margin-top: 0.25rem;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem;
+    }
+    .section-title {
+        font-family: 'Playfair Display', serif;
+        color: var(--gold);
+        font-size: 1.2rem;
+        margin: 2rem 0 1rem;
+    }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.select-match-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var desc = btn.getAttribute('data-desc');
+            var raw = btn.getAttribute('data-matches') || '';
+            var matches = raw ? raw.split('|||') : [];
+            var all = [desc].concat(matches);
+            document.querySelectorAll('input[name="source_descriptions"]').forEach(function (cb) {
+                if (all.indexOf(cb.value) !== -1) cb.checked = true;
+            });
+            document.querySelectorAll('.canonical-input').forEach(function (inp) { inp.value = desc; });
+        });
+    });
+});
+</script>
+
+{% endblock %}

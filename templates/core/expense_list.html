@@ -18,22 +18,35 @@
         <a href="{% url 'expense_add' %}" class="btn btn-primary btn-sm">+ {% trans 'Add Expense' %}</a>
         <a href="{% url 'recurring_expense_list' %}" class="btn btn-gold btn-sm">🔁 Recurring</a>
         <a href="{% url 'expense_report' %}" class="btn btn-gold btn-sm">📊 Intelligence</a>
+        <a href="{% url 'expense_description_merge' %}" class="btn btn-gold btn-sm">🔤 {% trans 'Fix Descriptions' %}</a>
         <a href="{% url 'analytics' %}" class="btn btn-secondary btn-sm">← {% trans 'Analytics' %}</a>
     </div>
 </div>
 
+<!-- Search -->
+<form method="get" class="d-flex flex-wrap gap-2 mb-3" role="search">
+    <input type="hidden" name="period" value="{{ period }}">
+    <input type="text" name="q" value="{{ q }}" placeholder="{% trans 'Search description or notes…' %}"
+           class="form-control form-control-sm" style="max-width:260px; background:var(--onyx-card); color:var(--pearl); border-color:#333;">
+    <button type="submit" class="btn btn-sm btn-outline-secondary">🔍 {% trans 'Search' %}</button>
+    {% if q %}
+    <a href="?period={{ period }}" class="btn btn-sm btn-outline-secondary">✕ {% trans 'Clear' %}</a>
+    {% endif %}
+</form>
+
 <!-- Period Filter -->
 <div class="d-flex flex-wrap gap-2 mb-4">
     <span style="font-size:0.8rem; color:var(--muted); text-transform:uppercase; align-self:center;">{% trans 'Period:' %}</span>
-    <a href="?period=7" class="period-btn {% if period == 7 %}active{% endif %}">{% trans '7 Days' %}</a>
-    <a href="?period=14" class="period-btn {% if period == 14 %}active{% endif %}">{% trans '14 Days' %}</a>
-    <a href="?period=30" class="period-btn {% if period == 30 %}active{% endif %}">{% trans '30 Days' %}</a>
-    <a href="?period=90" class="period-btn {% if period == 90 %}active{% endif %}">{% trans '90 Days' %}</a>
-    <a href="?period=365" class="period-btn {% if period == 365 %}active{% endif %}">{% trans '1 Year' %}</a>
+    <a href="?period=7{% if q %}&q={{ q|urlencode }}{% endif %}" class="period-btn {% if period == 7 %}active{% endif %}">{% trans '7 Days' %}</a>
+    <a href="?period=14{% if q %}&q={{ q|urlencode }}{% endif %}" class="period-btn {% if period == 14 %}active{% endif %}">{% trans '14 Days' %}</a>
+    <a href="?period=30{% if q %}&q={{ q|urlencode }}{% endif %}" class="period-btn {% if period == 30 %}active{% endif %}">{% trans '30 Days' %}</a>
+    <a href="?period=90{% if q %}&q={{ q|urlencode }}{% endif %}" class="period-btn {% if period == 90 %}active{% endif %}">{% trans '90 Days' %}</a>
+    <a href="?period=365{% if q %}&q={{ q|urlencode }}{% endif %}" class="period-btn {% if period == 365 %}active{% endif %}">{% trans '1 Year' %}</a>
 </div>
 
 <div style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">
     {% trans 'Showing:' %} <span style="color:var(--gold)">{{ start_date }} → {{ end_date }}</span>
+    {% if q %}· {% trans 'Filtered by' %} "<span style="color:var(--gold)">{{ q }}</span>"{% endif %}
 </div>
 
 <!-- Summary Card -->
@@ -62,6 +75,43 @@
             <tr>
                 <td><strong style="color:var(--pearl)">{{ cat.category }}</strong></td>
                 <td style="color:var(--raspberry)">{{ cat.total|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- By Item Breakdown -->
+{% if item_breakdown %}
+<div class="section-title">🔎 {% trans 'By Item' %}</div>
+<div style="font-size:0.75rem; color:var(--muted); margin:-0.5rem 0 0.8rem;">
+    {% trans 'Grouped by exact match only (case/spacing ignored). A row with more than one spelling still feeding it is flagged — use' %}
+    <a href="{% url 'expense_description_merge' %}" style="color:var(--gold)">🔤 {% trans 'Fix Descriptions' %}</a>
+    {% trans 'to fold those into one.' %}
+</div>
+<div class="table-responsive mb-4">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>{% trans 'Item' %}</th>
+                <th>{% trans 'Amount (KES)' %}</th>
+                <th>{% trans 'Times' %}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in item_breakdown %}
+            <tr>
+                <td>
+                    <strong style="color:var(--pearl)">{{ row.display }}</strong>
+                    {% if row.variants|length > 1 %}
+                    <div style="font-size:0.72rem; color:#e0b04a;">⚠️ {% trans 'also spelled:' %}
+                        {% for v in row.variants %}{% if v != row.display %}{{ v }}{% if not forloop.last %}, {% endif %}{% endif %}{% endfor %}
+                    </div>
+                    {% endif %}
+                </td>
+                <td style="color:var(--raspberry)">{{ row.total|floatformat:0 }}</td>
+                <td style="color:var(--muted)">{{ row.count }}×</td>
             </tr>
             {% endfor %}
         </tbody>

@@ -39033,6 +39033,301 @@ class AdHocExpenseTest(TestCase):
         self.assertTrue(after['anchor_established'])
 
 
+class ExpenseListSearchAndItemBreakdownTest(TestCase):
+    """2026-09-05 live request (Roy, Monsoon Inn, from a real Petty Cash
+    total that looked implausibly high): a search filter on the expense
+    list, plus a way to see the true toll of one real item when staff
+    typed it differently across entries ("tumblers"/"tabler"/"tublar
+    ndogo"). This class covers the search filter and the exact-normalized
+    "By Item" grouping on expense_list() itself; the fuzzy-hint + merge
+    tool lives in ExpenseDescriptionMergeTest below."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Expense Search Biz')
+        self.owner = User.objects.create_user(username='exp_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff = User.objects.create_user(username='exp_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+        self.client.force_login(self.owner)
+
+    def _make(self, description, amount, **overrides):
+        defaults = {
+            'business': self.biz, 'description': description,
+            'amount': Decimal(amount), 'category': 'other',
+            'date': timezone.localdate(),
+        }
+        defaults.update(overrides)
+        return BusinessExpense.objects.create(**defaults)
+
+    def test_search_matches_description(self):
+        self._make('Tumblers for the bar', '500')
+        self._make('Staff salaries', '2000')
+        resp = self.client.get('/analytics/expenses/', {'q': 'tumbler'})
+        descs = [e.description for e in resp.context['expenses']]
+        self.assertEqual(descs, ['Tumblers for the bar'])
+
+    def test_search_matches_notes_too(self):
+        self._make('Sundries', '100', notes='bought tumblers at the market')
+        resp = self.client.get('/analytics/expenses/', {'q': 'tumbler'})
+        self.assertEqual(len(resp.context['expenses']), 1)
+
+    def test_search_is_case_insensitive_and_preserved_in_context(self):
+        self._make('Cleaning Supplies', '50')
+        resp = self.client.get('/analytics/expenses/', {'q': 'CLEANING'})
+        self.assertEqual(len(resp.context['expenses']), 1)
+        self.assertEqual(resp.context['q'], 'CLEANING')
+
+    def test_no_match_returns_empty_but_does_not_error(self):
+        self._make('Rent', '20000')
+        resp = self.client.get('/analytics/expenses/', {'q': 'nonexistent'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context['expenses']), 0)
+
+    def test_item_breakdown_groups_case_and_whitespace_variants(self):
+        # Same real item, three raw spellings that only differ by
+        # case/whitespace — the SAFE, deterministic tier of grouping.
+        self._make('Tumblers', '300')
+        self._make('tumblers', '200')
+        self._make('  Tumblers  ', '100')
+        resp = self.client.get('/analytics/expenses/')
+        breakdown = resp.context['item_breakdown']
+        self.assertEqual(len(breakdown), 1)
+        row = breakdown[0]
+        self.assertEqual(row['total'], 600.0)
+        self.assertEqual(row['count'], 3)
+        self.assertEqual(len(row['variants']), 3)
+
+    def test_item_breakdown_leaves_genuinely_different_items_separate(self):
+        self._make('Tumblers', '300')
+        self._make('Rent', '20000')
+        resp = self.client.get('/analytics/expenses/')
+        breakdown = resp.context['item_breakdown']
+        self.assertEqual(len(breakdown), 2)
+        # Sorted by total descending — Rent (the bigger figure) leads.
+        self.assertEqual(breakdown[0]['display'], 'Rent')
+
+    def test_item_breakdown_strips_petty_cash_boilerplate_before_grouping(self):
+        # The auto-mirror (review_petty_cash()) always prefixes with the
+        # SAME "Petty Cash — <reason>: " text — grouping on the whole
+        # string would never separate two genuinely different items that
+        # both happen to be petty-cash-sourced. Confirms the tail alone
+        # (the actual free-text item name) drives the grouping key.
+        self._make('Petty Cash — Supplies (tissues, serviettes, etc.): tumblers', '300')
+        self._make('Petty Cash — Supplies (tissues, serviettes, etc.): straws', '150')
+        resp = self.client.get('/analytics/expenses/')
+        breakdown = {r['display']: r for r in resp.context['item_breakdown']}
+        # Both rows present, kept SEPARATE — not folded together purely
+        # because they share the same boilerplate prefix.
+        self.assertEqual(len(breakdown), 2)
+        self.assertIn('Petty Cash — Supplies (tissues, serviettes, etc.): tumblers', breakdown)
+        self.assertIn('Petty Cash — Supplies (tissues, serviettes, etc.): straws', breakdown)
+
+    def test_item_breakdown_only_over_currently_filtered_period_and_search(self):
+        old = timezone.localdate() - timedelta(days=60)
+        self._make('Tumblers', '300', date=old)
+        self._make('Tumblers', '200', date=timezone.localdate())
+        resp = self.client.get('/analytics/expenses/', {'period': '30'})
+        breakdown = resp.context['item_breakdown']
+        self.assertEqual(len(breakdown), 1)
+        self.assertEqual(breakdown[0]['total'], 200.0)  # the 60-day-old one is out of window
+
+    def test_plain_staff_blocked_from_expense_list(self):
+        self.client.logout()
+        self.client.force_login(self.staff)
+        resp = self.client.get('/analytics/expenses/')
+        self.assertEqual(resp.status_code, 302)
+
+
+class ExpenseDescriptionMergeTest(TestCase):
+    """2026-09-05 live request (Roy): "I need to be able to correct" a
+    mistyped expense description, business-wide, with a fuzzy hint to help
+    spot near-duplicates. Covers BusinessExpense.merge_descriptions() at
+    the model layer and the /analytics/expenses/descriptions/ view."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Expense Merge Biz')
+        self.other_biz = Business.objects.create(name='Other Biz')
+        self.owner = User.objects.create_user(username='merge_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.manager = User.objects.create_user(username='merge_manager', password='x')
+        UserProfile.objects.create(user=self.manager, business=self.biz, role='manager')
+        self.staff = User.objects.create_user(username='merge_staff', password='x')
+        UserProfile.objects.create(user=self.staff, business=self.biz, role='staff')
+
+    def _make(self, business, description, amount='100', **overrides):
+        defaults = {'business': business, 'description': description,
+                    'amount': Decimal(amount), 'category': 'other',
+                    'date': timezone.localdate()}
+        defaults.update(overrides)
+        return BusinessExpense.objects.create(**defaults)
+
+    # ── model layer ──────────────────────────────────────────────────
+
+    def test_merge_renames_every_matching_row(self):
+        self._make(self.biz, 'tabler', '200')
+        self._make(self.biz, 'tublar ndogo', '150')
+        self._make(self.biz, 'Rent', '20000')  # untouched control
+        n = BusinessExpense.merge_descriptions(
+            self.biz, ['tabler', 'tublar ndogo'], 'Tumblers',
+        )
+        self.assertEqual(n, 2)
+        descs = set(BusinessExpense.objects.filter(business=self.biz).values_list('description', flat=True))
+        self.assertEqual(descs, {'Tumblers', 'Rent'})
+
+    def test_merge_never_touches_amount_category_date_or_station(self):
+        e = self._make(self.biz, 'tabler', '200', category='supplies', station='bar')
+        original_date = e.date
+        BusinessExpense.merge_descriptions(self.biz, ['tabler'], 'Tumblers')
+        e.refresh_from_db()
+        self.assertEqual(e.description, 'Tumblers')
+        self.assertEqual(e.amount, Decimal('200'))
+        self.assertEqual(e.category, 'supplies')
+        self.assertEqual(e.station, 'bar')
+        self.assertEqual(e.date, original_date)
+
+    def test_merge_is_scoped_to_the_given_business(self):
+        self._make(self.biz, 'tabler', '200')
+        self._make(self.other_biz, 'tabler', '999')
+        BusinessExpense.merge_descriptions(self.biz, ['tabler'], 'Tumblers')
+        self.assertEqual(
+            BusinessExpense.objects.get(business=self.other_biz).description, 'tabler',
+        )
+
+    def test_merge_blank_canonical_or_empty_sources_is_a_no_op(self):
+        self._make(self.biz, 'tabler', '200')
+        self.assertEqual(BusinessExpense.merge_descriptions(self.biz, ['tabler'], ''), 0)
+        self.assertEqual(BusinessExpense.merge_descriptions(self.biz, [], 'Tumblers'), 0)
+        self.assertEqual(BusinessExpense.merge_descriptions(self.biz, [], ''), 0)
+        self.assertEqual(BusinessExpense.objects.get(business=self.biz).description, 'tabler')
+
+    def test_merge_of_a_single_description_works_like_a_rename(self):
+        # Selecting just ONE existing row + a new canonical text is a
+        # legitimate "fix this one mistake" action, same as the per-row
+        # ✏️ edit already allows — no minimum-of-two requirement.
+        self._make(self.biz, 'Tumblrs (typo)', '200')
+        n = BusinessExpense.merge_descriptions(self.biz, ['Tumblrs (typo)'], 'Tumblers')
+        self.assertEqual(n, 1)
+        self.assertEqual(BusinessExpense.objects.get(business=self.biz).description, 'Tumblers')
+
+    # ── view: GET (list + fuzzy hint) ───────────────────────────────
+
+    def test_get_lists_distinct_descriptions_with_totals(self):
+        self.client.force_login(self.owner)
+        self._make(self.biz, 'Tumblers', '300')
+        self._make(self.biz, 'Tumblers', '200')
+        self._make(self.biz, 'Rent', '20000')
+        resp = self.client.get('/analytics/expenses/descriptions/')
+        rows = {r['description']: r for r in resp.context['rows']}
+        self.assertEqual(rows['Tumblers']['count'], 2)
+        self.assertEqual(rows['Tumblers']['total'], 500.0)
+        self.assertEqual(rows['Rent']['count'], 1)
+
+    def test_close_spellings_are_hinted_as_possible_matches(self):
+        self.client.force_login(self.owner)
+        self._make(self.biz, 'Tumblers', '300')
+        self._make(self.biz, 'Tabler', '150')
+        resp = self.client.get('/analytics/expenses/descriptions/')
+        rows = {r['description']: r for r in resp.context['rows']}
+        self.assertIn('Tabler', rows['Tumblers']['possible_matches'])
+        self.assertIn('Tumblers', rows['Tabler']['possible_matches'])
+
+    def test_petty_cash_boilerplate_prefix_never_produces_a_false_hint(self):
+        # Two GENUINELY different petty-cash items sharing the long
+        # identical prefix must never be hinted as "similar" purely
+        # because of that boilerplate.
+        self.client.force_login(self.owner)
+        self._make(self.biz, 'Petty Cash — Supplies (tissues, serviettes, etc.): tumblers', '300')
+        self._make(self.biz, 'Petty Cash — Supplies (tissues, serviettes, etc.): candles', '150')
+        resp = self.client.get('/analytics/expenses/descriptions/')
+        rows = {r['description']: r for r in resp.context['rows']}
+        self.assertEqual(
+            rows['Petty Cash — Supplies (tissues, serviettes, etc.): tumblers']['possible_matches'], [],
+        )
+
+    def test_search_filters_the_displayed_list_but_hint_still_reflects_full_set(self):
+        self.client.force_login(self.owner)
+        self._make(self.biz, 'Tumblers', '300')
+        self._make(self.biz, 'Tabler', '150')
+        self._make(self.biz, 'Rent', '20000')
+        resp = self.client.get('/analytics/expenses/descriptions/', {'q': 'tumbl'})
+        rows = {r['description']: r for r in resp.context['rows']}
+        self.assertEqual(set(rows.keys()), {'Tumblers'})
+        # The hint on the one visible row still names its match even
+        # though "Tabler" itself is filtered out of the displayed list.
+        self.assertIn('Tabler', rows['Tumblers']['possible_matches'])
+
+    def test_unrelated_descriptions_carry_no_hint(self):
+        self.client.force_login(self.owner)
+        self._make(self.biz, 'Tumblers', '300')
+        self._make(self.biz, 'Electricity Tokens', '150')
+        resp = self.client.get('/analytics/expenses/descriptions/')
+        rows = {r['description']: r for r in resp.context['rows']}
+        self.assertEqual(rows['Tumblers']['possible_matches'], [])
+        self.assertEqual(rows['Electricity Tokens']['possible_matches'], [])
+
+    # ── view: POST (perform the merge) ──────────────────────────────
+
+    def test_post_merges_and_redirects(self):
+        self.client.force_login(self.owner)
+        self._make(self.biz, 'tabler', '200')
+        self._make(self.biz, 'tublar ndogo', '150')
+        resp = self.client.post('/analytics/expenses/descriptions/', {
+            'source_descriptions': ['tabler', 'tublar ndogo'],
+            'canonical': 'Tumblers',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            BusinessExpense.objects.filter(business=self.biz, description='Tumblers').count(), 2,
+        )
+
+    def test_post_manager_allowed(self):
+        self.client.force_login(self.manager)
+        self._make(self.biz, 'tabler', '200')
+        resp = self.client.post('/analytics/expenses/descriptions/', {
+            'source_descriptions': ['tabler'], 'canonical': 'Tumblers',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(BusinessExpense.objects.get(business=self.biz).description, 'Tumblers')
+
+    def test_post_plain_staff_blocked(self):
+        self.client.force_login(self.staff)
+        self._make(self.biz, 'tabler', '200')
+        resp = self.client.post('/analytics/expenses/descriptions/', {
+            'source_descriptions': ['tabler'], 'canonical': 'Tumblers',
+        })
+        self.assertEqual(resp.status_code, 302)  # redirected away, not executed
+        self.assertEqual(BusinessExpense.objects.get(business=self.biz).description, 'tabler')
+
+    def test_post_with_no_sources_selected_does_nothing(self):
+        self.client.force_login(self.owner)
+        self._make(self.biz, 'tabler', '200')
+        self.client.post('/analytics/expenses/descriptions/', {
+            'source_descriptions': [], 'canonical': 'Tumblers',
+        })
+        self.assertEqual(BusinessExpense.objects.get(business=self.biz).description, 'tabler')
+
+    def test_post_with_blank_canonical_does_nothing(self):
+        self.client.force_login(self.owner)
+        self._make(self.biz, 'tabler', '200')
+        self.client.post('/analytics/expenses/descriptions/', {
+            'source_descriptions': ['tabler'], 'canonical': '',
+        })
+        self.assertEqual(BusinessExpense.objects.get(business=self.biz).description, 'tabler')
+
+    def test_merge_is_business_wide_not_period_scoped(self):
+        # A typo from months ago must still be reachable and fixable —
+        # this tool deliberately never applies a date-range filter.
+        self.client.force_login(self.owner)
+        old_date = timezone.localdate() - timedelta(days=200)
+        self._make(self.biz, 'tabler', '200', date=old_date)
+        resp = self.client.get('/analytics/expenses/descriptions/')
+        self.assertIn('tabler', [r['description'] for r in resp.context['rows']])
+        self.client.post('/analytics/expenses/descriptions/', {
+            'source_descriptions': ['tabler'], 'canonical': 'Tumblers',
+        })
+        self.assertEqual(BusinessExpense.objects.get(business=self.biz).description, 'Tumblers')
+
+
 class AdHocExpenseDayReconciliationTest(TestCase):
     """2026-08-09, same-day follow-up (Roy, explicit confirmation to "both
     shift history and z report"): a same-day ad-hoc expense reconciles

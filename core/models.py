@@ -2370,6 +2370,30 @@ class BusinessExpense(models.Model):
     def __str__(self):
         return f"{self.description} — KES {self.amount:,.0f} ({self.date})"
 
+    @classmethod
+    def merge_descriptions(cls, business, source_descriptions, canonical):
+        """Bulk-rename every matching expense's free-text `description` to
+        `canonical` — 2026-09-05 live request (Roy): staff mistype the same
+        item differently across entries ("tumblers"/"tabler"/"tublar
+        ndogo"), scattering one real cost across several rows with nothing
+        to roll them up. This is a display-only relabel, never touching
+        `amount`/`category`/`date`/`station` — every total keyed on those
+        fields (till reconciliation, Kitchen Viability P&L, Expense
+        Intelligence category totals) is provably unaffected by construction,
+        so this needs no locking beyond the plain bulk UPDATE itself.
+        Matches full raw strings exactly (never the fuzzy comparison key
+        used only to *suggest* groupings) — a caller must name precisely
+        which existing descriptions to fold in. Returns the number of rows
+        updated.
+        """
+        source_descriptions = [s for s in source_descriptions if s and s.strip()]
+        canonical = (canonical or '').strip()
+        if not source_descriptions or not canonical:
+            return 0
+        return cls.objects.filter(
+            business=business, description__in=source_descriptions,
+        ).update(description=canonical, updated_at=timezone.now())
+
 
 # ────────────────────────────────────────────────
 # PETTY CASH / COUNTER DRAWDOWN (Sprint 21)

@@ -11,18 +11,21 @@ Available views:
     /analytics/expenses/<id>/delete/ — Delete a business expense
 """
 
+import difflib
 import json
 import math
+import re
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.db.models import Sum, Count, Q, F, Avg
+from django.db.models import Sum, Count, Q, F, Avg, Min, Max
 from django.db.models.functions import TruncDate, TruncMonth
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import gettext as _
 
@@ -1297,6 +1300,28 @@ def analytics_api(request):
 
 # ── BUSINESS EXPENSES CRUD ────────────────────────────────────────────────────
 
+# 2026-09-05 live request (Roy, Monsoon Inn): "the same expense typed
+# differently across entries" — every reason on PettyCash.REASON_CHOICES
+# except cash_disbursement auto-mirrors into a BusinessExpense on approval
+# (review_petty_cash(), core/petty_cash_views.py) as
+# f"Petty Cash — {reason display}: {entry.description}" — so the ACTUAL
+# item a staffer typed ("tumblers", "tabler", "tublar ndogo") sits after a
+# long, identical boilerplate prefix shared by every petty-cash-derived
+# expense. Fuzzy-matching the WHOLE description would call any two
+# petty-cash rows "similar" purely from that shared prefix, drowning out
+# the one thing worth comparing. Strip it before comparing; a plain
+# manually-typed expense (Add Expense / Matumizi ya Leo, no such prefix)
+# compares on its full text as-is. This key is used ONLY to *suggest*
+# groupings for display/hinting — the actual merge (below) always matches
+# full raw description strings exactly.
+_PETTY_CASH_PREFIX_RE = re.compile(r'^Petty Cash — .+?: (.+)$')
+
+
+def _expense_comparison_key(description):
+    m = _PETTY_CASH_PREFIX_RE.match(description or '')
+    tail = m.group(1) if m else (description or '')
+    return re.sub(r'\s+', ' ', tail).strip().lower()
+
 
 @login_required
 @owner_or_manager_required
@@ -1314,11 +1339,15 @@ def expense_list(request):
     days = min(days, 365)
     start_date = today - timedelta(days=days - 1)
 
+    q = (request.GET.get('q') or '').strip()
+
     expenses = BusinessExpense.objects.filter(
         business=business,
         date__gte=start_date,
         date__lte=today,
     ).order_by('-date', '-created_at')
+    if q:
+        expenses = expenses.filter(Q(description__icontains=q) | Q(notes__icontains=q))
 
     total_expenses = expenses.aggregate(total=Sum('amount'))['total'] or 0
 
@@ -1334,11 +1363,39 @@ def expense_list(request):
         for c in category_totals
     ]
 
+    # 2026-09-05: "By Item" breakdown — exact-normalized-match grouping only
+    # (case/whitespace-insensitive), over the already period+search-filtered
+    # queryset above. This is the SAFE tier: no fuzzy guessing, so it can
+    # never wrongly fold two genuinely different items together. A raw
+    # description with more than one distinct spelling still feeding it
+    # (i.e. differs only by case/spacing) is flagged with `variants` so the
+    # owner sees the toll AND knows there's cleanup available via the
+    # description-correction tool below.
+    item_groups = {}
+    for e in expenses:
+        key = _expense_comparison_key(e.description)
+        grp = item_groups.setdefault(key, {'variants': {}, 'total': Decimal('0'), 'count': 0})
+        grp['variants'][e.description] = grp['variants'].get(e.description, 0) + 1
+        grp['total'] += e.amount
+        grp['count'] += 1
+    item_breakdown = []
+    for grp in item_groups.values():
+        display = max(grp['variants'], key=grp['variants'].get)
+        item_breakdown.append({
+            'display': display,
+            'total': float(grp['total']),
+            'count': grp['count'],
+            'variants': sorted(grp['variants']),
+        })
+    item_breakdown.sort(key=lambda r: r['total'], reverse=True)
+
     return render(request, 'core/expense_list.html', {
         'expenses': expenses,
         'total_expenses': float(total_expenses),
         'category_breakdown': category_breakdown,
+        'item_breakdown': item_breakdown,
         'period': days,
+        'q': q,
         'start_date': start_date,
         'end_date': today,
     })
@@ -1406,6 +1463,95 @@ def expense_delete(request, expense_id):
 
     return render(request, 'core/expense_confirm_delete.html', {
         'expense': expense,
+    })
+
+
+@login_required
+@owner_or_manager_required
+def expense_description_merge(request):
+    """2026-09-05 live request (Roy): "I need to be able to correct" a
+    mistyped item name so its real toll shows as one figure instead of
+    scattered across several near-identical descriptions. Deliberately
+    business-wide, not period-scoped — a typo should be fixed wherever it
+    occurred, not just within whatever window happens to be selected on
+    the list page. Same permission tier as expense_edit/expense_delete:
+    this is a financial-record correction, same tier as Rekebisha/petty
+    cash review elsewhere in this app.
+
+    Fuzzy matching (difflib, stdlib — no new dependency) is a best-effort
+    HINT only, shown per row as "possible matches" so an owner scanning a
+    long list doesn't have to eyeball every entry — it never decides what
+    actually gets merged. A genuinely divergent spelling ("tublar ndogo"
+    vs "tumblers") may well score below the cutoff and never get hinted;
+    the flat, searchable checkbox list beneath still lets the owner select
+    any combination by hand regardless of what the algorithm noticed.
+    Capped at 500 distinct descriptions to keep this occasional-use
+    maintenance page from ever doing an O(n^2) scan against years of
+    history — past that, the hint is dropped but the list/search/merge
+    itself keeps working.
+    """
+    business = request.user.userprofile.business
+    q = (request.GET.get('q') or '').strip()
+
+    if request.method == 'POST':
+        sources = request.POST.getlist('source_descriptions')
+        canonical = (request.POST.get('canonical') or '').strip()
+        if not sources:
+            messages.error(request, _('Chagua angalau maelezo moja ya kuunganisha.'))
+        elif not canonical:
+            messages.error(request, _('Andika jina sahihi la kutumia.'))
+        else:
+            n = BusinessExpense.merge_descriptions(business, sources, canonical)
+            messages.success(
+                request,
+                _('Imesahihisha rekodi %(n)d kuwa "%(canonical)s".') % {'n': n, 'canonical': canonical},
+            )
+        redirect_url = reverse('expense_description_merge')
+        if q:
+            redirect_url += f'?q={q}'
+        return redirect(redirect_url)
+
+    rows_qs = BusinessExpense.objects.filter(business=business).values('description').annotate(
+        count=Count('id'), total=Sum('amount'),
+        first_date=Min('date'), last_date=Max('date'),
+    ).order_by('-total')
+
+    all_rows = [
+        {
+            'description': r['description'],
+            'count': r['count'],
+            'total': float(r['total']),
+            'first_date': r['first_date'],
+            'last_date': r['last_date'],
+            'key': _expense_comparison_key(r['description']),
+        }
+        for r in rows_qs
+    ]
+
+    # Fuzzy hint, computed over the FULL unfiltered set so it reflects the
+    # true global picture even when `q` narrows what's actually displayed.
+    if len(all_rows) <= 500:
+        all_keys = [r['key'] for r in all_rows]
+        for i, row in enumerate(all_rows):
+            others = all_keys[:i] + all_keys[i + 1:]
+            close_keys = set(difflib.get_close_matches(row['key'], others, n=4, cutoff=0.6))
+            row['possible_matches'] = sorted({
+                r['description'] for j, r in enumerate(all_rows)
+                if j != i and r['key'] in close_keys
+            })
+    else:
+        for row in all_rows:
+            row['possible_matches'] = []
+
+    rows = all_rows
+    if q:
+        ql = q.lower()
+        rows = [r for r in all_rows if ql in r['description'].lower()]
+
+    return render(request, 'core/expense_description_merge.html', {
+        'rows': rows,
+        'q': q,
+        'total_distinct': len(all_rows),
     })
 
 
