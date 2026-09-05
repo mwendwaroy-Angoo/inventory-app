@@ -735,12 +735,17 @@ def my_orders_api(request):
     now = timezone.now()
     result = []
     for order in qs:
+        # len(order.items.all()) (not .count()) reuses the prefetch cache
+        # above instead of firing a fresh COUNT query per order — this
+        # endpoint is polled every 20s from the Waitress Order Desk
+        # (2026-09-05 nav-speed audit).
+        _order_items = list(order.items.all())
         result.append({
             'id':          order.id,
             'table_label': order.table_label,
             'status':      order.status,
             'total':       float(order.total_amount()),
-            'item_count':  order.items.count(),
+            'item_count':  len(_order_items),
             'summary':     order.item_summary(),
             'created_at':  timezone.localtime(order.created_at).strftime('%H:%M'),
             'elapsed_mins': int((now - order.created_at).total_seconds() // 60),

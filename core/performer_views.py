@@ -13,7 +13,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Q, Sum as SumF
+from django.db.models import Count, Q, Sum as SumF
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -175,17 +175,51 @@ def performer_list(request):
         return redirect('home')
     business = up.business
     performers_qs = list(Performer.objects.filter(business=business).order_by('name'))
+
+    # 2026-09-05 system-wide navigation-speed audit — this loop used to run
+    # 5 separate queries PER PERFORMER (session_count/avg_staff_rating/
+    # avg_customer_rating model methods, plus two PAID-fee aggregates) —
+    # scales with how many distinct performers a business has booked over
+    # its lifetime, not with today's activity. Five grouped-by-performer
+    # bulk queries replace up to 5 * len(performers_qs) with a fixed 5.
+    from django.db.models import Avg as _Avg
+    performer_ids = [p.id for p in performers_qs]
+    session_count_map = dict(
+        PerformerSession.objects.filter(performer_id__in=performer_ids)
+        .exclude(status='CANCELLED')
+        .values('performer_id').annotate(n=Count('id')).values_list('performer_id', 'n')
+    )
+    staff_rating_map = dict(
+        PerformerSession.objects.filter(
+            performer_id__in=performer_ids, staff_rating__isnull=False,
+        ).values('performer_id').annotate(avg=_Avg('staff_rating')).values_list('performer_id', 'avg')
+    )
+    customer_rating_map = dict(
+        PerformerFeedback.objects.filter(session__performer_id__in=performer_ids)
+        .values('session__performer_id').annotate(avg=_Avg('rating'))
+        .values_list('session__performer_id', 'avg')
+    )
+    primary_paid_map = dict(
+        PerformerSession.objects.filter(
+            performer_id__in=performer_ids, business=business, payment_status='PAID',
+        ).values('performer_id').annotate(t=SumF('agreed_fee')).values_list('performer_id', 't')
+    )
+    second_paid_map = dict(
+        PerformerSession.objects.filter(
+            second_performer_id__in=performer_ids, business=business, payment_status='PAID',
+        ).values('second_performer_id').annotate(t=SumF('second_performer_fee'))
+        .values_list('second_performer_id', 't')
+    )
+
     for p in performers_qs:
-        p.stat_count    = p.session_count()
-        p.stat_staff    = p.avg_staff_rating()
-        p.stat_customer = p.avg_customer_rating()
+        p.stat_count    = session_count_map.get(p.id, 0)
+        _staff_avg      = staff_rating_map.get(p.id)
+        p.stat_staff    = round(_staff_avg, 1) if _staff_avg else None
+        _cust_avg       = customer_rating_map.get(p.id)
+        p.stat_customer = round(_cust_avg, 1) if _cust_avg else None
         # Total fees paid (primary role + secondary role)
-        total_primary = PerformerSession.objects.filter(
-            performer=p, business=business, payment_status='PAID'
-        ).aggregate(t=SumF('agreed_fee'))['t'] or Decimal('0')
-        total_second = PerformerSession.objects.filter(
-            second_performer=p, business=business, payment_status='PAID'
-        ).aggregate(t=SumF('second_performer_fee'))['t'] or Decimal('0')
+        total_primary = primary_paid_map.get(p.id) or Decimal('0')
+        total_second = second_paid_map.get(p.id) or Decimal('0')
         p.stat_total_paid = float(total_primary + total_second)
         # Booking insight badge derived from ratings
         if p.stat_count < 2:

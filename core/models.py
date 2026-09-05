@@ -7169,9 +7169,14 @@ class TableOrder(models.Model):
         return sum(i.line_total() for i in self.items.all())
 
     def item_summary(self):
+        # Bare .all() (not .select_related('item')) so a caller that already
+        # prefetched `items__item` (my_orders_api() — polled every 20s from
+        # the Waitress Order Desk) reuses that cache instead of this call
+        # cloning a fresh queryset and re-hitting the DB once per order on
+        # every poll (2026-09-05 nav-speed audit).
         return ', '.join(
             f"{i.preset_label or i.item.description} ×{int(i.quantity) if i.quantity == int(i.quantity) else i.quantity}"
-            for i in self.items.select_related('item')
+            for i in self.items.all()
         )
 
 
@@ -7772,7 +7777,15 @@ class KitchenStockReceipt(models.Model):
         from datetime import datetime, time as _time
         from django.db.models import Sum, Case, When, F, Value, DecimalField as _DF
         from django.db.models.functions import Abs, Coalesce
-        item_ids = list(self.lines.values_list('item_id', flat=True))
+        # Bare .all() (not .values_list()) so a caller that already
+        # prefetched `lines` (both kitchen_stock_receipts_list()'s polled
+        # endpoint and kitchen_viability.kitchen_receipt_history()'s report
+        # prefetch `lines__item`) reuses that cache instead of this call
+        # cloning a fresh, unprefetched queryset and re-hitting the DB once
+        # per receipt (2026-09-05 nav-speed audit — the same "any .filter()/
+        # .values_list()/.select_related() on a prefetched manager defeats
+        # the prefetch" trap already fixed elsewhere this session).
+        item_ids = [l.item_id for l in self.lines.all()]
         if not item_ids:
             return Decimal('0')
         start = timezone.make_aware(
@@ -7832,8 +7845,14 @@ class KitchenStockReceipt(models.Model):
         nothing left" signal — a sale can never push a balance negative, it
         gets floored at 0 and flagged as a shortfall exception instead — so
         0 here can't be confused with "still selling past what's on paper"
-        the way it could have been before that design existed."""
-        lines = list(self.lines.select_related('item'))
+        the way it could have been before that design existed.
+
+        Bare .all() (not .select_related()) so maybe_auto_close()'s caller
+        — kitchen_stock_receipts_list()'s polled endpoint, which prefetches
+        `lines` with select_related baked in — reuses that cache instead of
+        this call cloning a fresh queryset and re-hitting the DB once per
+        open receipt on every poll (2026-09-05 nav-speed audit)."""
+        lines = list(self.lines.all())
         if not lines:
             return False
         return all(l.item.current_balance() <= 0 for l in lines)

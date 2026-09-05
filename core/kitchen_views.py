@@ -247,11 +247,26 @@ def kitchen_board(request):
     kitchen_batches = []  # chips/stew — KitchenBatch P&L envelope
 
     if kitchen_store:
+        # 2026-09-05 system-wide navigation-speed audit — the ordering was
+        # ORIGINALLY applied further down as `item.portion_presets.all()
+        # .order_by(...)`, chained straight onto the manager: a bare
+        # `.all()` on a prefetched relation reuses the prefetch cache, but
+        # ANY further `.filter()`/`.order_by()` chained onto it bypasses
+        # that cache and re-queries the database — once per item iterated,
+        # the exact same "prefetch-defeating" pattern already found and
+        # fixed in bar_board_api()'s own portion_presets/keg_barrels
+        # prefetches this same session. Baking the ordering into the
+        # Prefetch queryset itself means a bare `.all()` at the read site
+        # (below) stays cache-safe.
+        from django.db.models import Prefetch
         items_qs = (
             Item.objects
             .filter(store=kitchen_store)
             .select_related('raw_material_source')
-            .prefetch_related('portion_presets')
+            .prefetch_related(Prefetch(
+                'portion_presets',
+                queryset=ItemPortionPreset.objects.order_by('display_order', 'price'),
+            ))
             .order_by('description')
         )
 
@@ -407,8 +422,29 @@ def kitchen_board(request):
         from .views import _batch_stock_metrics
         _batch_stock_metrics(_balance_targets)
 
+        # 2026-09-05 system-wide navigation-speed audit — Kitchen Board is
+        # (per the 2026-08-21 comment above) one of the most-visited pages
+        # in the app, and this used to run a SEPARATE KitchenBatch/
+        # ProduceBunch query per kitchen-batch/BUNCH-mode item on every load
+        # — genuinely scales with how many distinct batch/grill items a
+        # kitchen sells (Chipo, stew, nyama choma, mutura...), not with
+        # ordinary transaction volume. Two bulk fetches, grouped by item_id,
+        # replace up to 2 queries per such item with 2 queries total.
+        _open_batches_by_item_id = {}
+        for _ob in KitchenBatch.objects.filter(
+            item__store=kitchen_store, business=business, status='OPEN',
+        ).order_by('received_on'):
+            _open_batches_by_item_id.setdefault(_ob.item_id, []).append(_ob)
+        _open_bunches_by_item_id = {}
+        for _obu in ProduceBunch.objects.filter(
+            item__store=kitchen_store, business=business, status='OPEN',
+        ).order_by('received_on'):
+            _open_bunches_by_item_id.setdefault(_obu.item_id, []).append(_obu)
+
         for item in items_qs:
-            _all_item_presets = list(item.portion_presets.all().order_by('display_order', 'price'))
+            # Bare .all() — the ordering is already baked into the
+            # Prefetch queryset above, so this stays cache-safe.
+            _all_item_presets = list(item.portion_presets.all())
 
             def _preset_dict(p):
                 d = {
@@ -498,11 +534,7 @@ def kitchen_board(request):
                     })
             if item.is_kitchen_batch:
                 # Kitchen batch item (chips, stew, ugali) — KitchenBatch P&L
-                open_batches = list(
-                    KitchenBatch.objects.filter(
-                        item=item, business=business, status='OPEN'
-                    ).order_by('received_on')
-                )
+                open_batches = _open_batches_by_item_id.get(item.id, [])
                 raw_src = item.raw_material_source
                 kitchen_batches.append({
                     'id': item.id,
@@ -523,11 +555,7 @@ def kitchen_board(request):
                 })
             elif item.is_produce and item.produce_mode == 'BUNCH':
                 # Grill batch item (nyama choma, mutura) — ProduceBunch envelope
-                open_bunches = list(
-                    ProduceBunch.objects.filter(
-                        item=item, business=business, status='OPEN'
-                    ).order_by('received_on')
-                )
+                open_bunches = _open_bunches_by_item_id.get(item.id, [])
                 batch_items.append({
                     'id': item.id,
                     'name': item.description,
@@ -1773,7 +1801,16 @@ def kitchen_receive(request):
 # this header only exists to answer "was this whole delivery profitable".
 
 def _kitchen_stock_receipt_to_dict(receipt):
-    lines = list(receipt.lines.select_related('item', 'preset'))
+    # Bare .all() (not .select_related()) so a caller that prefetched
+    # `lines` (e.g. kitchen_stock_receipts_list()'s polled endpoint, via a
+    # Prefetch with select_related baked in) reuses that cache instead of
+    # this call cloning a fresh, unprefetched queryset and re-hitting the
+    # DB once per receipt — the exact "any .filter()/.select_related() on a
+    # prefetched manager defeats the prefetch" trap already found and fixed
+    # for bar_board_api()/kitchen_board()'s own portion_presets (2026-09-05
+    # nav-speed audit). A single-receipt caller with no prefetch still gets
+    # correct results, just via the ordinary per-line item/preset lookup.
+    lines = list(receipt.lines.all())
     # 2026-08-12 live report (Roy): a receipt for a RAW MATERIAL (e.g. Raw
     # Potatoes, feeding Chipo's batch draws) always shows "Mapato: KES 0" —
     # correctly, since the raw item itself is never sold directly, only
@@ -1806,8 +1843,20 @@ def _kitchen_stock_receipt_to_dict(receipt):
     # already does for a portion item's sales.
     raw_material_for = []
     seen_batch_items = set()
+    # Batched once for this receipt's own (small) line set, instead of one
+    # `derived_batch_items.all()` query per line — the overwhelming majority
+    # of receipt lines aren't a raw-material source for anything, so this
+    # single bulk lookup (keyed by raw_material_source_id, the FK
+    # `derived_batch_items` is the related_name for) replaces what would
+    # otherwise be N per-line queries that almost always come back empty
+    # (2026-09-05 nav-speed audit — this function runs once per receipt on
+    # kitchen_stock_receipts_list()'s POLLED endpoint, so the per-line cost
+    # compounds across every open/recently-closed receipt on every poll).
+    _batch_items_by_source_id = {}
+    for _bi in Item.objects.filter(raw_material_source_id__in=[l.item_id for l in lines]):
+        _batch_items_by_source_id.setdefault(_bi.raw_material_source_id, []).append(_bi)
     for l in lines:
-        for batch_item in l.item.derived_batch_items.all():
+        for batch_item in _batch_items_by_source_id.get(l.item_id, []):
             if batch_item.id in seen_batch_items:
                 continue
             seen_batch_items.add(batch_item.id)
@@ -1835,6 +1884,17 @@ def _kitchen_stock_receipt_to_dict(receipt):
                 'revenue': float(revenue),
                 'profit': float(revenue - cost),
             })
+    # Computed once and reused below instead of reading the `.profit`/
+    # `.profit_pct` properties, both of which independently call
+    # `total_revenue()` again internally — three separate calls (direct,
+    # via .profit, via .profit_pct -> .profit) each running the same real
+    # Transaction aggregate query, tripling this one genuinely-needed cost
+    # per receipt for no reason (2026-09-05 nav-speed audit). Same formula
+    # as those properties, just computed from one shared value.
+    _total_cost = receipt.total_cost
+    _total_revenue = receipt.total_revenue()
+    _profit = _total_revenue - _total_cost
+    _profit_pct = round(float(_profit) / float(_total_cost) * 100, 1) if _total_cost and _total_cost > 0 else None
     return {
         'id':            receipt.id,
         'supplier':      receipt.supplier,
@@ -1842,10 +1902,10 @@ def _kitchen_stock_receipt_to_dict(receipt):
         'received_on':   receipt.received_on.isoformat(),
         'status':        receipt.status,
         'note':          receipt.note,
-        'total_cost':    float(receipt.total_cost),
-        'total_revenue': float(receipt.total_revenue()),
-        'profit':        float(receipt.profit),
-        'profit_pct':    receipt.profit_pct,
+        'total_cost':    float(_total_cost),
+        'total_revenue': float(_total_revenue),
+        'profit':        float(_profit),
+        'profit_pct':    _profit_pct,
         'raw_material_for': raw_material_for,
         'lines': [
             {
@@ -1877,7 +1937,9 @@ def _kitchen_stock_receipt_to_dict(receipt):
                 # "never conflate two different figures as one" discipline
                 # (see raw_material_for's docstring above).
                 'current_balance': float(l.item.current_balance()) if receipt.status == 'OPEN' else None,
-                'is_raw_material_source': l.item.derived_batch_items.exists(),
+                # Reuses the same batch dict built above instead of a second,
+                # redundant per-line .exists() query for the identical fact.
+                'is_raw_material_source': bool(_batch_items_by_source_id.get(l.item_id)),
             }
             for l in lines
         ],
@@ -1891,7 +1953,9 @@ def _kitchen_stock_receipt_to_dict(receipt):
         # picture (raw_material_for, above) may be strongly profitable.
         # The frontend uses this flag to hide that misleading line
         # entirely for such a receipt, relying on raw_material_for instead.
-        'is_all_raw_material': bool(lines) and all(l.item.derived_batch_items.exists() for l in lines),
+        'is_all_raw_material': bool(lines) and all(
+            bool(_batch_items_by_source_id.get(l.item_id)) for l in lines
+        ),
     }
 
 
@@ -2171,9 +2235,23 @@ def kitchen_stock_receipts_list(request):
         return err
 
     kitchen_store = _ensure_kitchen_store(business)
+    # Prefetch bakes select_related('item', 'preset') into the SAME
+    # prefetch a receipt's own `lines` manager will serve — matching
+    # _kitchen_stock_receipt_to_dict()'s now-bare `receipt.lines.all()`
+    # call exactly, so this polled endpoint's per-receipt dict-building
+    # reuses the cache instead of re-querying lines (with a fresh
+    # item/preset lookup each time) once per receipt on every poll
+    # (2026-09-05 nav-speed audit).
+    _lines_prefetch = Prefetch(
+        'lines', queryset=KitchenStockReceiptLine.objects.select_related('item', 'preset'),
+    )
     open_receipts = list(
         KitchenStockReceipt.objects.filter(business=business, store=kitchen_store, status='OPEN')
-        .prefetch_related('lines__item')
+        # select_related('business') — total_revenue() reads self.business
+        # for its Transaction filter; without this every receipt re-fetches
+        # its own Business row fresh (it's always the SAME business here).
+        .select_related('business')
+        .prefetch_related(_lines_prefetch)
         .order_by('-received_on', '-id')
     )
     still_open = []
@@ -2187,7 +2265,8 @@ def kitchen_stock_receipts_list(request):
 
     recent_closed = list(
         KitchenStockReceipt.objects.filter(business=business, store=kitchen_store, status='DONE')
-        .prefetch_related('lines__item')
+        .select_related('business')
+        .prefetch_related(_lines_prefetch)
         .order_by('-closed_at')[:10]
     )
     if newly_closed:
@@ -2593,15 +2672,25 @@ def kitchen_tabs_list(request):
             entries__transaction__item__store__is_kitchen=True,
         )
         .select_related('served_by')
+        # Prefetched (with a bare .all() reused below) so `tab.entries.filter(...)`
+        # doesn't re-query once per bar tab in this list — a real, if usually
+        # small, N+1 (2026-09-05 nav-speed audit): this endpoint is fetched on
+        # every tabs-drawer refresh, not just on page load.
+        .prefetch_related(
+            Prefetch('entries',
+                     queryset=BarTabEntry.objects.select_related('transaction__item__store'))
+        )
         .distinct()
         .order_by('-opened_at')
     )
     for tab in bar_tabs:
-        kitchen_entries = list(
-            tab.entries
-            .filter(transaction__item__store__is_kitchen=True)
-            .values('id', 'description', 'amount', 'amount_paid', 'is_paid')
-        )
+        kitchen_entries = [
+            {'id': e.id, 'description': e.description, 'amount': e.amount,
+             'amount_paid': e.amount_paid, 'is_paid': e.is_paid}
+            for e in tab.entries.all()
+            if e.transaction_id and e.transaction.item_id and e.transaction.item.store_id
+            and e.transaction.item.store.is_kitchen
+        ]
         # 2026-08-24 — remaining_amount(), not full amount, for an unpaid
         # entry (see keg_views.py's _entry_dict() for the full reasoning).
         kitchen_entries = [

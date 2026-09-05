@@ -10810,3 +10810,215 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   every one a scaling-delta regression lock, not an absolute-threshold
   guess. Full pre-existing suite (2783 tests) re-run clean. No migrations
   (pure query-shape changes — no schema touched).
+- Navigation-speed audit, exhaustive continuation (2026-09-05), same day.
+  Roy's own correction after the 6-view audit above: "has this audit been
+  assessed through all sections, sub sections, mini sections, pane
+  navigations in the system not only the ones I mention... I just want to
+  sort these system wide slow responsiveness during user interactions once
+  and for all." Built a small AST-based static scanner (walks every `for`
+  loop in every `.py` file under `core`/`accounts`, flagging any loop body
+  containing an ORM-shaped call, two confidence tiers) and worked through
+  its findings systematically rather than picking a handful of named
+  examples again — bucketed into HTML page views, other routed JSON/action
+  views, and helper/model functions, each finding individually read and
+  triaged against one heuristic: a loop bounded by cart/form/formset size,
+  owner-or-manager count, or one customer's/one receipt's own small line
+  set is safe (matches this app's own established checkout-latency
+  pattern, e.g. Quick Sell's `for entry in cart:`); a loop scaling with a
+  business's LIFETIME stored data — items, transactions, receipts,
+  customers — is a real bug. Confirmed the Tier-1 (`.objects.`-containing)
+  HTML-page-view bucket at **zero remaining findings** after this pass —
+  every one of the 16 flagged functions individually read and classified
+  (`compliance_checklist`/`revenue_target_settings`/`catalog_bulk_add`
+  /`award_bid`/`recurring_expense_confirm`/`add_item`/`edit_item`
+  /`add_transaction`/`purchase_order_create`/`purchase_order_edit`
+  /`quick_sell`/`receive_goods`/`bar_board` all confirmed safe —
+  form/cart/formset-bounded one-time actions, several already correctness-
+  critical `select_for_update()` locking that must not be touched for
+  performance; `run_payroll`/`kitchen_board` already fixed in this
+  session's earlier phase). Also worked through the majority of the
+  "other routed" bucket (30+ functions individually read via a batch
+  for-loop-iterable extraction) and confirmed the dominant pattern is
+  owner/manager notification fan-out (bounded to a handful of profiles,
+  fired on a rare action) or a form-submitted small collection (write-off
+  batch, bulk-convert tab ids, receive-goods lines) — none of which scale
+  with a business's own historical data volume. **Ten additional real,
+  evidenced fixes found and fixed in this continuation, each with a
+  scaling-delta (or, where noted, a correctness) regression-lock test:**
+  **(1) `kitchen_stock_receipts_list()`** (`/kitchen/stock-receipt/list/`)
+  — the endpoint Kitchen Board POLLS. `_kitchen_stock_receipt_to_dict()`
+  cost ~11 queries PER RECEIPT on every poll: `receipt.lines.select_
+  related('item','preset')` re-querying instead of reusing the caller's
+  own prefetch (the "any `.filter()`/`.select_related()`/`.values_list()`
+  on a prefetched manager clones a fresh, uncached queryset" trap, same
+  class already found 3× in the earlier phase — now a 6th+7th instance,
+  in `KitchenStockReceipt.total_revenue()`'s internal `.values_list(
+  'item_id', ...)` and `is_fully_depleted()`'s `.select_related('item')`,
+  both called from `maybe_auto_close()`'s pre-dict-building loop);
+  `item.derived_batch_items.all()`/`.exists()` fired once PER LINE instead
+  of once per receipt (batched into one bulk `Item.objects.filter(
+  raw_material_source_id__in=...)` query, keyed by source id, reused for
+  all three of that field's own call sites in the dict builder); the
+  `total_revenue`/`profit`/`profit_pct` dict keys each independently
+  re-ran `total_revenue()`'s own real Transaction aggregate — THREE times
+  per receipt for the exact same number — computed once and reused;
+  `receipt.business` re-fetched fresh per receipt with no `select_
+  related('business')` at all on either queryset. Down to ~4 queries per
+  receipt (one `current_balance()` check in `is_fully_depleted()`, one
+  batched `derived_batch_items` lookup, one real `total_revenue()`
+  aggregate, one more `current_balance()` read in the dict builder itself)
+  — the last, small redundancy deliberately NOT chased further: closing
+  it means threading a precomputed balance map through the actual
+  auto-close DECISION logic, real risk for a fragile, heavily-live-bug-
+  reported function (see this file's own extensive Kitchen Stock Receipt/
+  Kuku/Chipo history above) for a small further win. **(2)
+  `kitchen_viability.kitchen_receipt_history()`** (the Kitchen Viability
+  report, up to a year's worth of receipts, no result cap) — the identical
+  triple-`total_revenue()`-call and per-line `derived_batch_items.exists()`
+  N+1, fixed the same way (this report's own `line_items = list(r.lines.
+  all())` was already correctly cache-safe — only the redundant revenue
+  calls and the per-line batch-item check needed fixing). **(3)
+  `kitchen_tabs_list()`'s `bar_tabs` section** (`/kitchen/tabs/`, fetched
+  on every tabs-drawer refresh) — a bar-sourced tab with a cross-counter-
+  merged kitchen item is shown read-only here; `tab.entries.filter(
+  transaction__item__store__is_kitchen=True)` re-queried once per such
+  tab with zero prefetch on that queryset at all (unlike the SAME
+  function's own `food_tabs` queryset right above it, already correctly
+  prefetched — this second queryset was simply missed when that pattern
+  was first built). Fixed with the identical `Prefetch('entries',
+  queryset=BarTabEntry.objects.select_related('transaction__item__
+  store'))` + Python-side filtering already used elsewhere in this same
+  function. Zero prior test coverage existed for this display path at all
+  — added correctness tests (kitchen-items-only, paid-vs-unpaid totals,
+  pure-bar-tabs correctly excluded) alongside the query-count lock. **(4)
+  `my_orders_api()`** (`/bar/orders/mine/`, POLLED every 20s from the
+  Waitress Order Desk — `waitress_screen.html`'s own `setInterval(
+  loadMyOrders, 20000)`, zero prior test coverage) — `order.items.count()`
+  and `TableOrder.item_summary()`'s internal `self.items.select_related(
+  'item')` both independently defeated the view's own `.prefetch_related(
+  'items__item', 'tab')`, firing 2 extra queries per order on every single
+  poll; `item_summary()` (confirmed via grep to have exactly one caller)
+  fixed to a bare `.all()`, `.count()` replaced with `len(list(order.
+  items.all()))` reusing the same cache. Confirmed via the same "does this
+  page really poll" check that `table_order_queue_api()` (Bar Board's own
+  order-queue poll, explicitly commented "Bar Board polls this") was
+  ALREADY correctly cache-safe throughout — not every polled endpoint in
+  this app has this bug, this is a targeted, evidenced fix list, not a
+  blanket rewrite. **(5) `bar_daily_report()`** (`core/keg_views.py`) —
+  the per-barrel breakdown ran 4 separate `.aggregate()` queries PER
+  BARREL (cups/jugs/pints/revenue), and the "Staff / shift performance"
+  section ran the identical shape PER SHIFT that Analytics' own Staff
+  Pouring League was already fixed for in the earlier phase — same bug,
+  a sibling report nobody had swept yet. Per-barrel: one `.values(
+  'keg_barrel_id').annotate(...)` grouped query replaces up to 4 per
+  barrel. Per-shift: one bulk `Transaction` fetch across the whole day's
+  span (not per-shift), bucketed into each shift's own `[started_at,
+  ended_at-or-now]` window via `bisect_left`/`bisect_right` over a
+  `created_at`-sorted list — the exact bisect technique the Staff Pouring
+  League fix already established, reused rather than reinvented; the
+  void-exclusion nuance that fix's own docstring documents (cups/pints/
+  jugs must exclude a voided pour too, not just revenue — `void_tab()`
+  zeroes `qty`, never `keg_qty`) is preserved unchanged in the bulk
+  version. The waitress-performance section's own per-waitress revenue
+  aggregate had the same per-row shape, fixed the same way — one grouped
+  `TableOrderItem` query instead of one per waitress row. Correctness
+  locked in (not just query count) by `BarDailyReportBatchedAggregation
+  CorrectnessTest` — the batched per-barrel/per-waitress/per-shift figures
+  proven to match a manual, un-batched per-row computation exactly, plus a
+  dedicated test that each shift's own window stays correctly isolated
+  (a sale from shift A never leaks into shift B's bucket) and that kitchen
+  shifts stay excluded from the bar report's staff data. **(6) `run_
+  payroll()` and `staff_contribution_report()`** (`core/haki_views.py`) —
+  both ran 2 separate queries PER STAFF MEMBER on every GET load (a
+  `RecurringExpense.filter(...).first()` + a `SalaryPayment` aggregate in
+  `run_payroll`; a `SalaryDeduction` list + a `SalaryPayment` list in
+  `staff_contribution_report`) — real N+1s scaling with staff count, not
+  activity, on two pages an owner opens routinely. Both batched into one
+  query each before their per-staff loop, built into a dict keyed by
+  `staff_id`. Deliberately did NOT touch `_staff_contribution()` itself —
+  same caution already applied to `_get_customer_debt_data()` elsewhere in
+  this app: a complex, correctness-sensitive per-staff engine, and staff
+  count is inherently small/bounded per business anyway, unlike the
+  unbounded lifetime-customer-count case that made `debt_dashboard()`'s
+  equivalent loop genuinely severe. `HakiPayrollAndContributionBatched
+  QueryCorrectnessTest` proves the batched figures match what the page
+  showed before. **(7) `kitchen_board()`'s batch/bunch tiles**
+  (`core/kitchen_views.py`) — a separate `KitchenBatch`/`ProduceBunch`
+  query per kitchen-batch/BUNCH-mode item on every load of the single
+  most-visited kitchen page, scaling with how many distinct batch/grill
+  items a kitchen sells (Chipo, stew, nyama choma, mutura...), not with
+  transaction volume; two bulk fetches grouped by `item_id` replace it.
+  Separately, `item.portion_presets.all().order_by(...)` chained an
+  `.order_by()` onto an already-prefetched relation manager — the exact
+  "any further call on a prefetched manager clones a fresh, uncached
+  queryset" trap already found and fixed for `bar_board_api()` in the
+  earlier phase, now found here too — fixed by baking the ordering into
+  the `Prefetch` queryset itself so the read site's bare `.all()` stays
+  cache-safe. `KitchenBoardBulkFetchedBatchesAndBunchesCorrectnessTest`
+  proves the grouping is correct (each item's own batches/bunches, never
+  cross-contaminated) alongside the query-count lock. **(8) `performer_
+  list()`** (`core/performer_views.py`) — ran 5 separate queries PER
+  PERFORMER (`session_count()`, `avg_staff_rating()`, `avg_customer_
+  rating()`, plus two PAID-fee aggregates for primary/secondary role),
+  scaling with how many distinct performers a business has ever booked,
+  not with today's activity. Five grouped-by-performer bulk queries
+  replace up to `5 × len(performers)`. `PerformerListBatchedAggregation
+  CorrectnessTest` proves the batched stats match calling the real,
+  un-batched model methods directly, including the zero-sessions case
+  (`None`, not a crash). **(9) `expiring_items()`** (`core/views.py`) —
+  re-fetched the `Item` AND called `current_balance()` (its own query)
+  PER ROW, scaling with how many distinct items have ever had an
+  expiry-dated Receipt over the business's whole lifetime — reached
+  directly from Stock List. Reused the already-proven `_batch_stock_
+  metrics()` helper (the same one behind the `stock_list()`/`home()`/
+  `kitchen_board()` fixes) instead of inventing a fourth separate
+  optimization. `ExpiringItemsBatchedBalanceCorrectnessTest` confirms the
+  batched balance matches `current_balance()` exactly. **(10) `revenue_
+  target_progress()`** (`core/analytics_views.py`, the JSON endpoint the
+  home/analytics revenue-target widget polls on nearly every page load)
+  — `period_revenue()` pulled every matching Transaction into Python just
+  to sum `.revenue()` one row at a time, and the per-store breakdown ran a
+  SEPARATE Transaction query plus a SEPARATE RevenueTarget query PER
+  STORE — a real N+1 scaling with store count on every load. Both
+  rewritten to a single `.aggregate()`/grouped-`.annotate()` call using
+  the same `_rev` Case/When formula already proven elsewhere in this file
+  (Staff Pouring League) as a DB-side stand-in for `Transaction.revenue()`
+  — safe here because every one of these querysets is already filtered
+  `type='Issue'`, the one precondition `revenue()` itself checks before
+  falling through to the same `abs(qty) × selling_price` arithmetic.
+  `RevenueTargetProgressBatchedQueryCorrectnessTest` proves both the daily
+  actual and the per-store breakdown match a manual, un-batched revenue
+  sum. **Spot-checked and confirmed already well-optimized,
+  no fix needed** (a genuinely useful negative result — these are the
+  SAME class of hot, tabs-drawer-adjacent endpoint as the four fixed
+  above, and came back clean): `tabs_list()`/`kitchen_tabs_list()`'s own
+  main `food_tabs` section (both already batch-fetch receipt-token maps
+  and pending-transfer dicts via a handful of bulk queries before their
+  per-tab loop, reading everything else from precomputed dicts or an
+  already-prefetched `entries` cache — the one remaining per-entry cost,
+  `BarTabEntry.transfer_reason_note()`, is a small, already-reasoned-about,
+  documented tradeoff from an earlier session, not an oversight);
+  `recent_settled_tabs_api()` (single `select_related()`-joined query,
+  zero further per-row access); `bar_board_api()`'s two lines flagged by
+  the scanner (already fixed in this session's own earlier phase — Tier-2's
+  weaker "relation-manager-shaped call" signal re-flagging code that reads
+  from an already-cached prefetch, a recurring false-positive shape for
+  that tier); `customer_lookup_api()`/`find_tab_search()` (both capped at
+  a small fixed constant — 8 and 10 results respectively — matching the
+  same "bounded, not scaling with lifetime data" standard applied
+  throughout this audit); `/mpesa/status/<id>/` STK polling (dominated by
+  a genuine external Safaricom API call, not a DB N+1, and self-limiting —
+  the expensive query-Safaricom branch only runs while `payment.status ==
+  'pending'`). 26 new tests across 9 test classes (`KitchenStockReceipt
+  RawMaterialForTest` +1, `KitchenViabilityTest` +1, `TabServedByLabelTest`
+  +4, `MyOrdersApiTest` — 3, `BarDailyReportBatchedAggregationCorrectness
+  Test` — 4, `HakiPayrollAndContributionBatchedQueryCorrectnessTest` — 2,
+  `KitchenBoardBulkFetchedBatchesAndBunchesCorrectnessTest` — 3,
+  `PerformerListBatchedAggregationCorrectnessTest` — 3,
+  `ExpiringItemsBatchedBalanceCorrectnessTest` — 2, `RevenueTargetProgress
+  BatchedQueryCorrectnessTest` — 3), every one either a scaling-delta
+  regression lock or a correctness test proving the batched figure matches
+  the original un-batched computation exactly. Full suite (2809 tests)
+  re-run clean; `manage.py check`/`makemigrations --check` both clean. No
+  migrations (pure query-shape and model-method-internals changes — no
+  schema touched).

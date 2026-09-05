@@ -4684,21 +4684,51 @@ def bar_daily_report(request):
     total_revenue = float(txns.aggregate(r=Sum('sale_amount'))['r'] or 0)
 
     # Per-barrel breakdown (only barrels that had sales that day)
+    # 2026-09-05 system-wide navigation-speed audit ("has this audit been
+    # assessed through all sections... surely I don't want to name all of
+    # them" — an exhaustive sweep, following the same 4-aggregate-per-row
+    # shape already found and fixed in analytics_dashboard()'s Staff
+    # Pouring League): this used to run 4 separate .aggregate() queries
+    # PER BARREL. One grouped-by-barrel query replaces all of them.
+    from django.db.models import Case, F as _F, DecimalField as _DF, When
+    barrel_ids = list(txns.values_list('keg_barrel_id', flat=True).distinct())
+    _barrel_stats_raw = (
+        txns.values('keg_barrel_id')
+        .annotate(
+            cups=Sum(Case(When(keg_serving='cup', then='keg_qty'), default=0)),
+            jugs=Sum(Case(When(keg_serving='jug', then='keg_qty'), default=0)),
+            pints=Sum(Case(When(keg_serving='pint', then='keg_qty'), default=0)),
+            revenue=Sum('sale_amount'),
+        )
+    )
+    _barrel_stats_by_id = {row['keg_barrel_id']: row for row in _barrel_stats_raw}
     per_barrel = []
-    barrel_ids = txns.values_list('keg_barrel_id', flat=True).distinct()
     for barrel in KegBarrel.objects.filter(id__in=barrel_ids).select_related('item'):
-        bt = txns.filter(keg_barrel=barrel)
+        stats = _barrel_stats_by_id.get(barrel.id, {})
         per_barrel.append({
             'barrel': barrel,
-            'cups':    bt.filter(keg_serving='cup').aggregate(n=Sum('keg_qty'))['n'] or 0,
-            'jugs':    bt.filter(keg_serving='jug').aggregate(n=Sum('keg_qty'))['n'] or 0,
-            'pints':   bt.filter(keg_serving='pint').aggregate(n=Sum('keg_qty'))['n'] or 0,
-            'revenue': float(bt.aggregate(r=Sum('sale_amount'))['r'] or 0),
+            'cups':    stats.get('cups') or 0,
+            'jugs':    stats.get('jugs') or 0,
+            'pints':   stats.get('pints') or 0,
+            'revenue': float(stats.get('revenue') or 0),
         })
 
     # ── Waitress performance ───────────────────────────────────────────────────
     from .models import TableOrder, TableOrderItem
-    from django.db.models import F as _F, DecimalField as _DF
+
+    # Same fix as per_barrel above — the per-waitress revenue figure used
+    # to be its own separate TableOrderItem query PER WAITRESS ROW.
+    _waitress_rev_by_id = {
+        row['order__waitress_id']: row['r'] or 0
+        for row in (
+            TableOrderItem.objects.filter(
+                order__business=business, order__status='SERVED',
+                order__created_at__date=report_date,
+            )
+            .values('order__waitress_id')
+            .annotate(r=Sum(_F('unit_price') * _F('quantity'), output_field=_DF()))
+        )
+    }
 
     waitress_data = []
     for row in (
@@ -4707,14 +4737,7 @@ def bar_daily_report(request):
         .annotate(order_count=Count('id'))
         .order_by('waitress__first_name', 'waitress__last_name')
     ):
-        rev = TableOrderItem.objects.filter(
-            order__business=business,
-            order__status='SERVED',
-            order__created_at__date=report_date,
-            order__waitress_id=row['waitress_id'],
-        ).aggregate(
-            r=Sum(_F('unit_price') * _F('quantity'), output_field=_DF())
-        )['r'] or 0
+        rev = _waitress_rev_by_id.get(row['waitress_id'], 0)
         fname = row['waitress__first_name'] or ''
         lname = row['waitress__last_name'] or ''
         name  = (fname + ' ' + lname).strip() or row['waitress__username']
@@ -4727,65 +4750,86 @@ def bar_daily_report(request):
     # ── Staff / shift performance ──────────────────────────────────────────────
     from .models import Shift
     from .shift_views import _shift_station
+    bar_shifts_today = list(
+        Shift.objects.filter(business=business, started_at__date=report_date)
+        .select_related('staff').order_by('started_at')
+    )
+    # Skip kitchen shifts — they belong in the kitchen board report.
+    # 2026-07-28: uses _shift_station() (explicit field + role fallback),
+    # not bare role — a manager's or cross-access staffer's kitchen shift
+    # was previously slipping into the BAR report under plain role check.
+    bar_shifts_today = [s for s in bar_shifts_today if _shift_station(s) != 'kitchen']
+
+    # 2026-09-05 system-wide navigation-speed audit — this is the exact same
+    # "Staff Pouring League" N+1 shape already fixed in analytics_dashboard()
+    # (one Transaction query + 4 aggregates PER SHIFT), recurring here in a
+    # sibling report. One bulk fetch across the whole day's span, bucketed
+    # per shift via bisect, replaces up to 4 * len(shifts) queries with 1.
+    from django.db.models import Case, DecimalField as _DF2, F as _F2, Value as _V2, When
+    from django.db.models.functions import Abs as _Abs2, Coalesce as _Coalesce2
+    _rev = Case(
+        When(sale_amount__isnull=False, then=_F2('sale_amount')),
+        default=_Abs2(_F2('qty')) * _Coalesce2(_F2('item__selling_price'), _V2(0)),
+        output_field=_DF2(max_digits=12, decimal_places=2),
+    )
     staff_data = []
-    for shift in Shift.objects.filter(
-        business=business, started_at__date=report_date
-    ).select_related('staff').order_by('started_at'):
-        # Skip kitchen shifts — they belong in the kitchen board report.
-        # 2026-07-28: uses _shift_station() (explicit field + role fallback),
-        # not bare role — a manager's or cross-access staffer's kitchen shift
-        # was previously slipping into the BAR report under plain role check.
-        if _shift_station(shift) == 'kitchen':
-            continue
-        shift_end = shift.ended_at or timezone.now()
-        # 2026-09-04 bar audit — void exclusion moved UP to the queryset.
-        # The 'revenue' aggregate below already excluded payment_method='void',
-        # but the cups/pints/jugs aggregates beside it did not: they sum
-        # keg_qty, which void_tab() never zeroes (it zeroes txn.qty, a
-        # different field). A voided tab therefore still reported its pours as
-        # served volume while contributing KES 0 revenue — the per-shift row
-        # showed servings that no money ever backed, which is exactly the
-        # signature of staff theft and so sent a false signal on the one
-        # report an owner reads to detect it. Excluding once here keeps all
-        # four aggregates on the same definition of a real sale.
-        st = Transaction.objects.filter(
-            business=business,
-            created_at__gte=shift.started_at,
-            created_at__lte=shift_end,
-            type='Issue',
-            item__store__is_kitchen=False,
-        ).exclude(payment_method='void')
-        delta   = shift_end - shift.started_at
-        h, rem  = divmod(int(delta.total_seconds()), 3600)
-        m       = rem // 60
-        dur_str = f"{h}h {m:02d}m{' (ongoing)' if not shift.ended_at else ''}"
-        # 2026-07-31 live report (Roy: "small variances unaccounted for...
-        # all along the app") — this "revenue" figure is documented as
-        # covering ALL bar Issue transactions during the shift window (tab
-        # AND walk-up cash/mpesa — see the 2026-07-08 owner-reporting-audit
-        # entry in CLAUDE.md), not keg pours alone, but summed raw
-        # sale_amount with no fallback. Any plain (non-preset) item sale —
-        # Quick Sell's own checkout leaves sale_amount=None for those,
-        # relying entirely on Transaction.revenue()'s abs(qty)*selling_price
-        # fallback — silently contributed KES 0 here instead of its real
-        # amount. Same _rev pattern shift_views._reconcile() already uses.
-        from django.db.models import Case, DecimalField as _DF2, F as _F2, Value as _V2, When
-        from django.db.models.functions import Abs as _Abs2, Coalesce as _Coalesce2
-        _rev = Case(
-            When(sale_amount__isnull=False, then=_F2('sale_amount')),
-            default=_Abs2(_F2('qty')) * _Coalesce2(_F2('item__selling_price'), _V2(0)),
-            output_field=_DF2(max_digits=12, decimal_places=2),
+    if bar_shifts_today:
+        from bisect import bisect_left, bisect_right
+        _now_snapshot = timezone.now()
+        _shift_ends = {s.id: (s.ended_at or _now_snapshot) for s in bar_shifts_today}
+        _span_start = min(s.started_at for s in bar_shifts_today)
+        _span_end = max(_shift_ends.values())
+        # 2026-09-04 bar audit — void exclusion applies to ALL four metrics
+        # (cups/pints/jugs/revenue), not just revenue: void_tab() zeroes
+        # txn.qty, never keg_qty, so a voided pour would otherwise still
+        # count as served volume with zero money behind it — exactly the
+        # signature of staff theft, on the one report built to catch it.
+        _staff_txn_rows = list(
+            Transaction.objects.filter(
+                business=business, type='Issue',
+                created_at__gte=_span_start, created_at__lte=_span_end,
+                item__store__is_kitchen=False,
+            ).exclude(payment_method='void')
+            .annotate(_r=_rev)
+            .order_by('created_at')
+            .values_list('created_at', 'keg_serving', 'keg_qty', '_r')
         )
-        staff_data.append({
-            'name':    shift.staff.get_full_name() or shift.staff.username,
-            'started': shift.started_at,
-            'ended':   shift.ended_at,
-            'duration': dur_str,
-            'cups':    st.filter(keg_serving='cup').aggregate(n=Sum('keg_qty'))['n'] or 0,
-            'pints':   st.filter(keg_serving='pint').aggregate(n=Sum('keg_qty'))['n'] or 0,
-            'jugs':    st.filter(keg_serving='jug').aggregate(n=Sum('keg_qty'))['n'] or 0,
-            'revenue': float(st.aggregate(r=Sum(_rev))['r'] or 0),
-        })
+        _staff_txn_times = [row[0] for row in _staff_txn_rows]
+
+        for shift in bar_shifts_today:
+            shift_end = _shift_ends[shift.id]
+            lo = bisect_left(_staff_txn_times, shift.started_at)
+            hi = bisect_right(_staff_txn_times, shift_end)
+            # Deliberately NOT named cups/pints/jugs — those names already
+            # hold the day-total figures computed earlier in this view and
+            # are read again by the render() call below; shadowing them here
+            # would silently overwrite the day totals with this shift's own
+            # (usually smaller) numbers by the time render() runs.
+            _shift_cups = _shift_pints = _shift_jugs = 0
+            _shift_revenue = 0.0
+            for _row_created_at, serving, qty, r in _staff_txn_rows[lo:hi]:
+                qty = qty or 0
+                if serving == 'cup':
+                    _shift_cups += qty
+                elif serving == 'pint':
+                    _shift_pints += qty
+                elif serving == 'jug':
+                    _shift_jugs += qty
+                _shift_revenue += float(r or 0)
+            delta = shift_end - shift.started_at
+            h, rem = divmod(int(delta.total_seconds()), 3600)
+            m = rem // 60
+            dur_str = f"{h}h {m:02d}m{' (ongoing)' if not shift.ended_at else ''}"
+            staff_data.append({
+                'name':    shift.staff.get_full_name() or shift.staff.username,
+                'started': shift.started_at,
+                'ended':   shift.ended_at,
+                'duration': dur_str,
+                'cups':    _shift_cups,
+                'pints':   _shift_pints,
+                'jugs':    _shift_jugs,
+                'revenue': _shift_revenue,
+            })
 
     return render(request, 'core/bar/bar_daily_report.html', {
         'report_date':    report_date,

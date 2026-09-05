@@ -526,13 +526,32 @@ def staff_contribution_report(request):
         date_from = today - timedelta(days=29)
         date_to   = today
 
-    staff_profiles = UserProfile.objects.filter(
+    staff_profiles = list(UserProfile.objects.filter(
         business=business, user__is_active=True,
-    ).exclude(role='owner').select_related('user').order_by('user__first_name')
+    ).exclude(role='owner').select_related('user').order_by('user__first_name'))
 
     current_period = today.strftime('%Y-%m')
 
     period_date_from, period_date_to = _period_date_range(current_period)
+
+    # 2026-09-05 system-wide navigation-speed audit: these two were each a
+    # separate query PER STAFF MEMBER on every load of this page. Batched
+    # up front — _staff_contribution() itself is left untouched (same
+    # caution already applied to _get_customer_debt_data() elsewhere: it's
+    # a complex, correctness-sensitive per-staff engine not worth a risky
+    # bulk rewrite, and staff count is inherently small/bounded per
+    # business, unlike the unbounded lifetime-customer-count case that
+    # made debt_dashboard()'s equivalent loop genuinely severe).
+    deductions_by_staff_id = {}
+    for d in SalaryDeduction.objects.filter(
+        business=business, staff__in=staff_profiles, period=current_period,
+    ).order_by('-created_at'):
+        deductions_by_staff_id.setdefault(d.staff_id, []).append(d)
+    pay_rows_by_staff_id = {}
+    for p in SalaryPayment.objects.filter(
+        business=business, staff__in=staff_profiles, period=current_period, paid=True,
+    ).order_by('paid_at'):
+        pay_rows_by_staff_id.setdefault(p.staff_id, []).append(p)
 
     rows = []
     for sp in staff_profiles:
@@ -565,16 +584,12 @@ def staff_contribution_report(request):
             contrib['suggested_salary'] = None
 
         # Deductions this period (from rejected write-off requests)
-        deductions = list(SalaryDeduction.objects.filter(
-            business=business, staff=sp, period=current_period,
-        ).order_by('-created_at'))
+        deductions = deductions_by_staff_id.get(sp.id, [])
         contrib['deductions'] = deductions
         contrib['deduction_total'] = sum(d.amount for d in deductions)
 
         # Salary payments this period (support multiple partial payments)
-        pay_rows = list(SalaryPayment.objects.filter(
-            business=business, staff=sp, period=current_period, paid=True,
-        ).order_by('paid_at'))
+        pay_rows = pay_rows_by_staff_id.get(sp.id, [])
         contrib['pay_rows'] = pay_rows
         contrib['paid_total'] = sum(p.amount for p in pay_rows)
 
@@ -932,22 +947,36 @@ def run_payroll(request):
         messages.success(request, _(f'Mishahara {paid_count} imerekodiwa.'))
         return redirect('staff_contribution_report')
 
-    staff_profiles = UserProfile.objects.filter(
+    staff_profiles = list(UserProfile.objects.filter(
         business=business, role__in=STAFF_PAY_ROLES, user__is_active=True,
-    ).select_related('user')
+    ).select_related('user'))
+
+    # 2026-09-05 system-wide navigation-speed audit ("has this audit been
+    # assessed through all sections... surely I don't want to name all of
+    # them" — an exhaustive sweep, not the earlier spot-check): this used
+    # to run 2 separate queries PER STAFF MEMBER on every GET load of this
+    # page — a real N+1 scaling with staff count, not activity. Both are
+    # batched into one query each before the loop instead.
+    configured_by_staff_id = {
+        rec.staff_profile_id: rec
+        for rec in RecurringExpense.objects.filter(
+            business=business, staff_profile__in=staff_profiles, is_active=True,
+        )
+    }
+    paid_by_staff_id = {
+        row['staff_id']: row['t']
+        for row in SalaryPayment.objects.filter(
+            business=business, staff__in=staff_profiles, period=current_period,
+        ).values('staff_id').annotate(t=Sum('amount'))
+    }
 
     rows = []
     for sp in staff_profiles:
-        configured = RecurringExpense.objects.filter(
-            business=business, staff_profile=sp, is_active=True,
-        ).first()
-        already_paid = SalaryPayment.objects.filter(
-            business=business, staff=sp, period=current_period,
-        ).aggregate(t=Sum('amount'))['t'] or 0
+        configured = configured_by_staff_id.get(sp.id)
         rows.append({
             'profile': sp,
             'suggested_amount': configured.amount if configured else None,
-            'already_paid': already_paid,
+            'already_paid': paid_by_staff_id.get(sp.id, 0),
         })
 
     return render(request, 'core/haki_payroll_run.html', {

@@ -1948,14 +1948,33 @@ def revenue_target_progress(request):
     week_start  = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
 
+    # 2026-09-05 system-wide navigation-speed audit ("used by the dashboard
+    # widget" — this JSON endpoint fires on nearly every home/analytics
+    # page load): period_revenue() used to pull every matching Transaction
+    # row into Python just to sum .revenue() one by one, and the per-store
+    # breakdown ran a SEPARATE Transaction + RevenueTarget query PER STORE
+    # — genuinely scales with store count on every load. Reuses the exact
+    # _rev Case/When formula already proven elsewhere in this file (Staff
+    # Pouring League) as a DB-side stand-in for Transaction.revenue() —
+    # safe here because these querysets are already filtered type='Issue',
+    # the one precondition revenue() itself checks before falling through
+    # to the same abs(qty)*selling_price arithmetic.
+    from django.db.models import Case, DecimalField as _RTPDecF, Value as _RTPValue, When as _RTPWhen
+    from django.db.models.functions import Abs as _RTPAbs, Coalesce as _RTPCoal
+    _rtp_rev_expr = Case(
+        _RTPWhen(sale_amount__isnull=False, then=F('sale_amount')),
+        default=_RTPAbs(F('qty')) * _RTPCoal(F('item__selling_price'), _RTPValue(0)),
+        output_field=_RTPDecF(max_digits=12, decimal_places=2),
+    )
+
     def period_revenue(start, end):
-        sales = Transaction.objects.filter(
+        result = Transaction.objects.filter(
             business=business,
             type='Issue',
             date__gte=start,
             date__lte=end,
-        ).exclude(payment_method='void').select_related('item')
-        return sum(t.revenue() for t in sales)
+        ).exclude(payment_method='void').aggregate(t=Sum(_rtp_rev_expr))['t']
+        return float(result or 0)
 
     actual_daily   = period_revenue(today, today)
     actual_weekly  = period_revenue(week_start, today)
@@ -1976,20 +1995,23 @@ def revenue_target_progress(request):
             return None
         return min(100, round(actual / target * 100, 1))
 
-    stores = Store.objects.filter(business=business)
+    stores = list(Store.objects.filter(business=business))
+    _store_actual_map = dict(
+        Transaction.objects.filter(
+            business=business, type='Issue', date=today, item__store__in=stores,
+        ).exclude(payment_method='void')
+        .values('item__store_id').annotate(t=Sum(_rtp_rev_expr))
+        .values_list('item__store_id', 't')
+    )
+    _store_target_map = dict(
+        RevenueTarget.objects.filter(
+            business=business, target_type='daily', store__in=stores,
+        ).values_list('store_id', 'amount')
+    )
     store_breakdown = []
     for store in stores:
-        store_sales = Transaction.objects.filter(
-            business=business,
-            type='Issue',
-            date=today,
-            item__store=store,
-        ).exclude(payment_method='void').select_related('item')
-        store_actual = sum(t.revenue() for t in store_sales)
-        store_target_obj = RevenueTarget.objects.filter(
-            business=business, target_type='daily', store=store
-        ).first()
-        store_target = float(store_target_obj.amount) if store_target_obj else 0
+        store_actual = float(_store_actual_map.get(store.id) or 0)
+        store_target = float(_store_target_map.get(store.id) or 0)
 
         store_breakdown.append({
             'store': store.name,

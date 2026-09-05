@@ -132,11 +132,21 @@ def kitchen_receipt_history(business, start_date, end_date):
     profit. Local import of the model to avoid a circular import between
     this module and kitchen_views.py (same lazy-import convention already
     used elsewhere in this app, e.g. petty_cash_views.py)."""
-    from .models import KitchenStockReceipt
+    from .models import Item, KitchenStockReceipt
     receipts = list(
         KitchenStockReceipt.objects.filter(
             business=business, received_on__gte=start_date, received_on__lte=end_date,
-        ).prefetch_related('lines__item').order_by('-received_on', '-id')
+        ).select_related('business').prefetch_related('lines__item').order_by('-received_on', '-id')
+    )
+    # Batched once across EVERY receipt's lines in this whole date-range
+    # report, instead of a `derived_batch_items.exists()` query per line
+    # per receipt — a real N+1 over a period that can span up to a year of
+    # receipts (2026-09-05 nav-speed audit, mirroring the identical fix in
+    # kitchen_views.py's polled receipts-list endpoint).
+    _all_item_ids = {l.item_id for r in receipts for l in r.lines.all()}
+    _has_batch_items = set(
+        Item.objects.filter(raw_material_source_id__in=_all_item_ids)
+        .values_list('raw_material_source_id', flat=True).distinct()
     )
     result = []
     for r in receipts:
@@ -150,17 +160,26 @@ def kitchen_receipt_history(business, start_date, end_date):
         # the template can avoid showing a hard -100% that reads as a loss
         # when the real batches drawn from it may be strongly profitable.
         is_raw_material = bool(line_items) and all(
-            l.item.derived_batch_items.exists() for l in line_items
+            l.item_id in _has_batch_items for l in line_items
         )
+        # total_revenue() computed once and reused for profit/profit_pct
+        # instead of reading the `.profit`/`.profit_pct` properties, each
+        # of which independently re-runs the same Transaction aggregate
+        # internally — tripling this genuinely-needed query per receipt
+        # for no reason (2026-09-05 nav-speed audit).
+        _cost = r.total_cost
+        _revenue = r.total_revenue()
+        _profit = _revenue - _cost
+        _profit_pct = round(float(_profit) / float(_cost) * 100, 1) if _cost and _cost > 0 else None
         result.append({
             'id':            r.id,
             'supplier':      r.supplier,
             'invoice_no':    r.invoice_no,
             'items':         ', '.join(sorted({l.item.description for l in line_items})),
-            'cost_total':    float(r.total_cost),
-            'revenue':       float(r.total_revenue()),
-            'profit':        float(r.profit),
-            'profit_pct':    r.profit_pct,
+            'cost_total':    float(_cost),
+            'revenue':       float(_revenue),
+            'profit':        float(_profit),
+            'profit_pct':    _profit_pct,
             'status':        r.status,
             'received_on':   r.received_on.isoformat(),
             'is_raw_material': is_raw_material,

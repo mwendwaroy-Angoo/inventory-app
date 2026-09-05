@@ -1273,6 +1273,21 @@ def expiring_items(request):
         .order_by('earliest')
     )
 
+    # 2026-09-05 system-wide navigation-speed audit — this loop used to
+    # re-fetch the Item AND recompute current_balance() (its own query)
+    # PER ROW, scaling with how many distinct items have ever had an
+    # expiry-dated Receipt over the business's whole lifetime, not with
+    # today's activity — a real, growing N+1 on a page reached directly
+    # from Stock List. Reuses the same _batch_stock_metrics() helper
+    # already proven for the identical stock_list()/home()/kitchen_board()
+    # fix, instead of a fourth separate optimization.
+    from .models import Item as _Item
+    _expiry_item_ids = [row['item_id'] for row in expiry_rows]
+    _expiry_items_by_id = {
+        it.id: it for it in _Item.objects.filter(id__in=_expiry_item_ids)
+    }
+    _batch_stock_metrics(list(_expiry_items_by_id.values()))
+
     items_data = []
     for row in expiry_rows:
         exp = row['earliest']
@@ -1289,12 +1304,8 @@ def expiring_items(request):
             days   = (exp - today_d).days
             days_label = f"Expires in {days} days"
 
-        try:
-            from .models import Item as _Item
-            item_obj = _Item.objects.get(id=row['item_id'])
-            balance = item_obj.current_balance()
-        except Exception:
-            balance = '—'
+        item_obj = _expiry_items_by_id.get(row['item_id'])
+        balance = item_obj.stock_balance if item_obj is not None else '—'
 
         items_data.append({
             'item_id':   row['item_id'],

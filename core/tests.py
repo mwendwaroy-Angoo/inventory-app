@@ -4024,6 +4024,106 @@ class TabServedByLabelTest(TestCase):
         self.assertEqual(len(data['tabs']), 1)
         self.assertEqual(data['tabs'][0]['server_name'], 'Susan Namayan')
 
+    def _cross_merged_bar_tab(self, name, bar_amount=Decimal('100'), kitchen_amount=Decimal('80'),
+                               kitchen_paid=False):
+        """A bar-sourced tab with BOTH a bar item and a cross-counter-merged
+        kitchen item on it — kitchen_tabs_list()'s `bar_tabs` section shows
+        these read-only, kitchen-items-only, so kitchen staff can track food
+        they added without seeing the bar/alcohol portion."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name=name, status='OPEN', source='bar',
+        )
+        bar_txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=bar_amount, payment_method='credit', recipient=name,
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=bar_txn, description='Beer', amount=bar_amount)
+        kitchen_txn = Transaction.objects.create(
+            business=self.biz, item=self.kitchen_item, type='Issue', qty=Decimal('-1'),
+            sale_amount=kitchen_amount, payment_method='credit', recipient=name,
+        )
+        BarTabEntry.objects.create(
+            tab=tab, transaction=kitchen_txn, description='Chipo', amount=kitchen_amount,
+            is_paid=kitchen_paid,
+        )
+        return tab
+
+    def test_kitchen_tabs_list_cross_merged_bar_tab_shows_kitchen_items_only(self):
+        """2026-09-05 nav-speed audit — this exact display path
+        (kitchen_tabs_list()'s read-only `bar_tabs` section) had no test
+        coverage at all before this fix. The bar entry must never appear;
+        the kitchen entry, its amount, and the unpaid total must be exactly
+        right."""
+        self._cross_merged_bar_tab('Cross Merged Customer')
+        self.client.force_login(self.owner)
+        resp = self.client.get('/kitchen/tabs/')
+        data = resp.json()
+        row = next(t for t in data['tabs'] if t['customer_name'] == 'Cross Merged Customer')
+        self.assertTrue(row['is_bar_tab'])
+        self.assertEqual(len(row['entries']), 1)
+        self.assertEqual(row['entries'][0]['description'], 'Chipo')
+        self.assertEqual(row['entries'][0]['amount'], 80.0)
+        self.assertEqual(row['unpaid_total'], 80.0)
+        self.assertEqual(row['total'], 80.0)
+
+    def test_kitchen_tabs_list_cross_merged_bar_tab_paid_kitchen_entry_excluded_from_unpaid(self):
+        self._cross_merged_bar_tab('Paid Chipo Customer', kitchen_paid=True)
+        self.client.force_login(self.owner)
+        resp = self.client.get('/kitchen/tabs/')
+        data = resp.json()
+        row = next(t for t in data['tabs'] if t['customer_name'] == 'Paid Chipo Customer')
+        self.assertTrue(row['entries'][0]['is_paid'])
+        self.assertEqual(row['unpaid_total'], 0.0)
+        self.assertEqual(row['total'], 80.0)  # still counted in the total, just not unpaid
+
+    def test_kitchen_tabs_list_pure_bar_tab_never_appears_in_bar_tabs_section(self):
+        """A bar tab with no kitchen entry at all must never show up as a
+        read-only card — kitchen_tabs_list() is entirely food-tab-focused
+        otherwise."""
+        tab = BarTab.objects.create(
+            business=self.biz, customer_name='Pure Bar Customer', status='OPEN', source='bar',
+        )
+        txn = Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('100'), payment_method='credit', recipient='Pure Bar Customer',
+        )
+        BarTabEntry.objects.create(tab=tab, transaction=txn, description='Beer', amount=Decimal('100'))
+        self.client.force_login(self.owner)
+        resp = self.client.get('/kitchen/tabs/')
+        names = [t['customer_name'] for t in resp.json()['tabs']]
+        self.assertNotIn('Pure Bar Customer', names)
+
+    def test_kitchen_tabs_list_bar_tabs_section_query_count_does_not_scale(self):
+        """2026-09-05 nav-speed audit: `tab.entries.filter(...)` re-queried
+        once per cross-merged bar tab in this list (no prefetch on `bar_tabs`
+        at all) — a real N+1, fetched on every tabs-drawer refresh, not just
+        page load. Now prefetched with a bare `.all()` reused in Python."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self._cross_merged_bar_tab('Scale Customer 1')
+        self.client.force_login(self.owner)
+        with CaptureQueriesContext(connection) as ctx1:
+            resp1 = self.client.get('/kitchen/tabs/')
+        self.assertEqual(resp1.status_code, 200)
+        count1 = len(ctx1.captured_queries)
+
+        for n in range(2, 9):
+            self._cross_merged_bar_tab(f'Scale Customer {n}')
+        with CaptureQueriesContext(connection) as ctx2:
+            resp2 = self.client.get('/kitchen/tabs/')
+        self.assertEqual(resp2.status_code, 200)
+        count2 = len(ctx2.captured_queries)
+
+        bar_tab_rows = [t for t in resp2.json()['tabs'] if t['is_bar_tab']]
+        self.assertEqual(len(bar_tab_rows), 8)
+        self.assertLess(
+            count2 - count1, 8,
+            f"Query count grew with cross-merged bar tab count ({count1} -> "
+            f"{count2} for 1 -> 8) — the per-tab N+1 on bar_tabs' entries "
+            f"was not actually fixed."
+        )
+
 
 class WallTabQrVisibilityTest(TestCase):
     """The Wall Tab QR card in Payment Settings was gated on
@@ -18412,6 +18512,86 @@ class TableOrderCancelReasonTest(TestCase):
         self.assertNotIn('cannot be cancelled', resp2.json().get('error', ''))
 
 
+class MyOrdersApiTest(TestCase):
+    """2026-09-05 nav-speed audit: /bar/orders/mine/ is polled every 20s from
+    the Waitress Order Desk (waitress_screen.html's loadMyOrders/setInterval)
+    with zero prior test coverage. TableOrder.item_summary() called
+    `self.items.select_related('item')` — a fresh queryset that bypassed the
+    view's own `.prefetch_related('items__item', ...)` — and the view itself
+    called `order.items.count()`, a second, separate prefetch-defeating
+    query, both firing once PER ORDER on every single poll."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='My Orders Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='myorders_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.waitress = User.objects.create_user(username='myorders_waitress', password='x')
+        UserProfile.objects.create(user=self.waitress, business=self.biz, role='waitress')
+        self.beer = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='MYORD-01', unit='Pcs', selling_price=Decimal('200'),
+        )
+        self.client.force_login(self.waitress)
+
+    def _place_order(self, n, qty=Decimal('2')):
+        from core.models import TableOrder, TableOrderItem
+        order = TableOrder.objects.create(
+            business=self.biz, table_label=f'T{n}', waitress=self.waitress, status='PENDING',
+        )
+        TableOrderItem.objects.create(
+            order=order, item=self.beer, quantity=qty, unit_price=Decimal('200'),
+        )
+        return order
+
+    def test_correctness_total_count_and_summary(self):
+        self._place_order(1, qty=Decimal('3'))
+        resp = self.client.get('/bar/orders/mine/')
+        data = resp.json()
+        self.assertEqual(len(data['orders']), 1)
+        row = data['orders'][0]
+        self.assertEqual(row['total'], 600.0)  # 3 x 200
+        self.assertEqual(row['item_count'], 1)
+        self.assertIn('Tusker', row['summary'])
+        self.assertIn('×3', row['summary'])
+
+    def test_only_own_orders_for_a_waitress(self):
+        other_waitress = User.objects.create_user(username='myorders_other', password='x')
+        UserProfile.objects.create(user=other_waitress, business=self.biz, role='waitress')
+        from core.models import TableOrder
+        TableOrder.objects.create(
+            business=self.biz, table_label='T9', waitress=other_waitress, status='PENDING',
+        )
+        self._place_order(1)
+        resp = self.client.get('/bar/orders/mine/')
+        self.assertEqual(len(resp.json()['orders']), 1)
+
+    def test_query_count_does_not_scale_with_order_count(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self._place_order(1)
+        with CaptureQueriesContext(connection) as ctx1:
+            resp1 = self.client.get('/bar/orders/mine/')
+        self.assertEqual(resp1.status_code, 200)
+        count1 = len(ctx1.captured_queries)
+
+        for n in range(2, 9):
+            self._place_order(n)
+        with CaptureQueriesContext(connection) as ctx2:
+            resp2 = self.client.get('/bar/orders/mine/')
+        self.assertEqual(resp2.status_code, 200)
+        count2 = len(ctx2.captured_queries)
+
+        self.assertEqual(len(resp2.json()['orders']), 8)
+        self.assertLess(
+            count2 - count1, 8,
+            f"Query count grew with order count ({count1} -> {count2} for "
+            f"1 -> 8 orders) — the per-order N+1 on items.count()/"
+            f"item_summary() was not actually fixed."
+        )
+
+
 class TableOrderTwoWayAcknowledgmentTest(TestCase):
     """2026-08-06 live redesign request (Monsoon Inn) — Roy: the order flow
     between waitress and bartender should work like real non-verbal
@@ -23775,6 +23955,57 @@ class KitchenViabilityTest(TestCase):
         )
         rows = kitchen_receipt_history(self.biz, self.today - timedelta(days=7), self.today)
         self.assertEqual(rows, [])
+
+    def test_receipt_history_query_count_does_not_scale_with_receipt_count(self):
+        """2026-09-05 nav-speed audit: this report has no result cap and can
+        span up to a year (kitchen_viability()'s own `days` clamp) — before
+        this fix, each receipt cost a `derived_batch_items.exists()` query
+        PER LINE plus 3 separate `total_revenue()` calls (once each for the
+        `revenue`/`profit`/`profit_pct` dict keys, each independently
+        re-running the same Transaction aggregate) plus a fresh Business
+        re-fetch per receipt with no select_related. Batched/deduped the
+        same way as kitchen_views.py's identical fix. Adding more plain
+        receipts must not grow the query count proportionally."""
+        from core.kitchen_viability import kitchen_receipt_history
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def _make_plain_receipt(n):
+            item = Item.objects.create(
+                business=self.biz, store=self.store, description=f'Plain {n}',
+                material_no=f'VIAB-PLAIN-{n}', unit='Pcs', selling_price=Decimal('30'),
+            )
+            receipt = KitchenStockReceipt.objects.create(
+                business=self.biz, store=self.store, supplier='Market', received_on=self.today,
+            )
+            KitchenStockReceiptLine.objects.create(
+                receipt=receipt, item=item, qty_received=Decimal('5'), line_cost=Decimal('100'),
+            )
+            Transaction.objects.create(
+                business=self.biz, item=item, type='Issue', qty=Decimal('-2'),
+                sale_amount=Decimal('60'), payment_method='cash', date=self.today,
+            )
+
+        _make_plain_receipt(1)
+        with CaptureQueriesContext(connection) as ctx1:
+            rows1 = kitchen_receipt_history(self.biz, self.today, self.today)
+        count1 = len(ctx1.captured_queries)
+
+        for n in range(2, 9):
+            _make_plain_receipt(n)
+        with CaptureQueriesContext(connection) as ctx2:
+            rows2 = kitchen_receipt_history(self.biz, self.today, self.today)
+        count2 = len(ctx2.captured_queries)
+
+        self.assertEqual(len(rows1), 1)
+        self.assertEqual(len(rows2), 8)
+        self.assertEqual(rows2[0]['revenue'], 60.0)  # correctness untouched by the batching
+        self.assertLess(
+            count2 - count1, 24,
+            f"Query count grew with receipt count ({count1} -> {count2} for "
+            f"1 -> 8 receipts, {(count2 - count1) / 7:.1f}/receipt) — a "
+            f"per-receipt N+1 has regressed in kitchen_receipt_history()."
+        )
 
     # ── kitchen_staff_cost_context() ───────────────────────────────────
 
@@ -40601,6 +40832,75 @@ class KitchenStockReceiptRawMaterialForTest(TestCase):
         self.assertEqual(len(second['raw_material_for']), 1)
         self.assertEqual(second['raw_material_for'][0]['batch_count'], 1)
 
+    def test_list_endpoint_query_count_does_not_scale_with_receipt_count(self):
+        """2026-09-05 nav-speed audit: kitchen_stock_receipts_list() is the
+        endpoint Kitchen Board POLLS. Before this fix, each receipt cost
+        roughly 11 queries on every poll: `receipt.lines.select_related(...)`
+        re-querying instead of reusing the caller's own prefetch (fixed —
+        bare `.all()`, matching a Prefetch with select_related baked in),
+        `item.derived_batch_items.all()`/`.exists()` fired PER LINE instead
+        of once per receipt (fixed — one bulk lookup per receipt),
+        `total_revenue()` called 3 separate times per receipt via the
+        `total_revenue`/`profit`/`profit_pct` dict keys each independently
+        re-running the same Transaction aggregate (fixed — computed once,
+        reused for all three), `total_revenue()`'s own internal
+        `.values_list('item_id', ...)` defeating the same prefetch (fixed —
+        bare `.all()`), `is_fully_depleted()`'s `.select_related('item')`
+        defeating it too (fixed), and `receipt.business` re-fetching fresh
+        per receipt with no select_related at all (fixed). Down to ~4
+        queries per receipt now — one `current_balance()` check in
+        maybe_auto_close()'s is_fully_depleted(), one batched derived_
+        batch_items lookup, one total_revenue() aggregate, and one more
+        current_balance() read in the dict builder itself (a real, still-
+        present, small redundancy with is_fully_depleted()'s own check —
+        deliberately NOT chased further: eliminating it means threading a
+        precomputed balance map through the actual auto-close DECISION
+        logic, real risk for a fragile, heavily-live-bug-reported function,
+        for a small further win). Adding more plain, non-raw-material
+        receipts (the overwhelming common case) must not regress back
+        toward that original ~11-per-receipt cost."""
+        import json
+        import uuid
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def _make_plain_receipt(n):
+            plain_item = Item.objects.create(
+                business=self.biz, store=self.store, description=f'Plain Item {n}',
+                material_no=f'KSRRAW-PLAIN-{n}', unit='Pcs', selling_price=Decimal('30'),
+            )
+            self.client.post('/kitchen/stock-receipt/create/', {
+                'supplier': 'Market', 'invoice_no': '',
+                'lines': json.dumps([{'item_id': plain_item.id, 'qty': '5', 'cost': '100'}]),
+                'idempotency_token': str(uuid.uuid4()),
+            })
+
+        _make_plain_receipt(1)
+        with CaptureQueriesContext(connection) as ctx1:
+            resp1 = self.client.get('/kitchen/stock-receipt/list/')
+        self.assertEqual(resp1.status_code, 200)
+        count1 = len(ctx1.captured_queries)
+
+        for n in range(2, 9):
+            _make_plain_receipt(n)
+        with CaptureQueriesContext(connection) as ctx2:
+            resp2 = self.client.get('/kitchen/stock-receipt/list/')
+        self.assertEqual(resp2.status_code, 200)
+        count2 = len(ctx2.captured_queries)
+
+        self.assertEqual(len(resp2.json()['open']), 8)
+        # ~4 queries/receipt now (see the docstring above for the full
+        # breakdown) — bound at 6/receipt (42 for 7 more) to allow real
+        # margin without permitting a regression back toward the original
+        # ~11/receipt (which would show up here as ~77).
+        self.assertLess(
+            count2 - count1, 42,
+            f"Query count grew with receipt count ({count1} -> {count2} for "
+            f"1 -> 8 receipts, {(count2 - count1) / 7:.1f}/receipt) — a "
+            f"per-receipt N+1 has regressed (or a new one was introduced) "
+            f"in kitchen_stock_receipts_list()/_kitchen_stock_receipt_to_dict()."
+        )
+
 
 class KitchenStockReceiptDeleteTest(TestCase):
     """2026-08-09 live report (Roy): "you have made the previous receipt
@@ -51117,3 +51417,675 @@ class ReceiptDeleteLineTest(TestCase):
         resp = self.client.post(f'/business/staff/{staff_up_id}/permissions/', {})
         staff_profile.refresh_from_db()
         self.assertFalse(staff_profile.can_delete_receipt_items)
+
+
+# ── System-wide navigation-speed audit (2026-09-05), continued ──────────────
+# "has this audit been assessed through all sections, sub sections, mini
+# sections... I just used a few as examples... I just want to sort these
+# system wide slow responsiveness during user interactions once and for all"
+# — Roy's explicit correction that the original 6-view audit was too narrow.
+# bar_daily_report() had the exact same N-queries-per-row shape in THREE
+# separate places (per_barrel, waitress_data, staff_data) — all batched into
+# single grouped-aggregate/bulk-fetch queries. These tests lock in that the
+# batching produces IDENTICAL figures to what N separate per-row queries
+# would have computed — not just that the page loads.
+
+class BarDailyReportBatchedAggregationCorrectnessTest(TestCase):
+    def setUp(self):
+        self.biz = Business.objects.create(name='Bar Daily Batch Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='bdrb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff1 = User.objects.create_user(username='bdrb_staff1', password='x')
+        UserProfile.objects.create(user=self.staff1, business=self.biz, role='staff')
+        self.staff2 = User.objects.create_user(username='bdrb_staff2', password='x')
+        UserProfile.objects.create(user=self.staff2, business=self.biz, role='staff')
+        self.waitress1 = User.objects.create_user(username='bdrb_wait1', password='x')
+        UserProfile.objects.create(user=self.waitress1, business=self.biz, role='waitress')
+        self.waitress2 = User.objects.create_user(username='bdrb_wait2', password='x')
+        UserProfile.objects.create(user=self.waitress2, business=self.biz, role='waitress')
+
+        self.item1 = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker Keg',
+            material_no='BDRB-01', unit='Litre', selling_price=Decimal('50'),
+            is_keg=True,
+        )
+        self.item2 = Item.objects.create(
+            business=self.biz, store=self.store, description='White Cap Keg',
+            material_no='BDRB-02', unit='Litre', selling_price=Decimal('60'),
+            is_keg=True,
+        )
+        self.today = timezone.localdate()
+
+        self.barrel1 = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.item1,
+            cost_price=Decimal('8000'), target_revenue=Decimal('14000'),
+            received_on=self.today,
+        )
+        self.barrel2 = KegBarrel.objects.create(
+            business=self.biz, store=self.store, item=self.item2,
+            cost_price=Decimal('9000'), target_revenue=Decimal('15000'),
+            received_on=self.today,
+        )
+        self.client.force_login(self.owner)
+
+    def _txn(self, item, keg_barrel, serving, qty, amount, created_at, recorded_by=None):
+        return Transaction.objects.create(
+            business=self.biz, item=item, type='Issue',
+            qty=Decimal(str(-qty)), keg_barrel=keg_barrel,
+            keg_serving=serving, keg_qty=qty,
+            sale_amount=Decimal(str(amount)), payment_method='cash',
+            created_at=created_at, date=timezone.localtime(created_at).date(),
+            recorded_by=recorded_by,
+        )
+
+    def test_per_barrel_breakdown_matches_manual_per_row_computation(self):
+        now = timezone.now()
+        self._txn(self.item1, self.barrel1, 'cup', 3, 150, now)
+        self._txn(self.item1, self.barrel1, 'pint', 2, 200, now)
+        self._txn(self.item2, self.barrel2, 'jug', 1, 400, now)
+        # A voided sale must never contribute to any barrel's totals.
+        void_txn = self._txn(self.item1, self.barrel1, 'cup', 5, 250, now)
+        void_txn.payment_method = 'void'
+        void_txn.save(update_fields=['payment_method'])
+
+        resp = self.client.get(f'/bar/daily-report/?date={self.today.isoformat()}')
+        self.assertEqual(resp.status_code, 200)
+        per_barrel = {row['barrel'].id: row for row in resp.context['per_barrel']}
+
+        self.assertEqual(per_barrel[self.barrel1.id]['cups'], 3)
+        self.assertEqual(per_barrel[self.barrel1.id]['pints'], 2)
+        self.assertEqual(per_barrel[self.barrel1.id]['jugs'], 0)
+        self.assertEqual(per_barrel[self.barrel1.id]['revenue'], 350.0)
+
+        self.assertEqual(per_barrel[self.barrel2.id]['cups'], 0)
+        self.assertEqual(per_barrel[self.barrel2.id]['jugs'], 1)
+        self.assertEqual(per_barrel[self.barrel2.id]['revenue'], 400.0)
+
+    def test_waitress_data_matches_manual_per_row_computation(self):
+        from core.models import TableOrder, TableOrderItem
+        order1 = TableOrder.objects.create(
+            business=self.biz, table_label='T1', waitress=self.waitress1,
+            status='SERVED',
+        )
+        TableOrder.objects.filter(pk=order1.pk).update(created_at=timezone.now())
+        order1.refresh_from_db()
+        TableOrderItem.objects.create(
+            order=order1, item=self.item1, quantity=Decimal('2'),
+            unit_price=Decimal('100'),
+        )
+        order2 = TableOrder.objects.create(
+            business=self.biz, table_label='T2', waitress=self.waitress1,
+            status='SERVED',
+        )
+        TableOrderItem.objects.create(
+            order=order2, item=self.item2, quantity=Decimal('1'),
+            unit_price=Decimal('60'),
+        )
+        order3 = TableOrder.objects.create(
+            business=self.biz, table_label='T3', waitress=self.waitress2,
+            status='SERVED',
+        )
+        TableOrderItem.objects.create(
+            order=order3, item=self.item1, quantity=Decimal('3'),
+            unit_price=Decimal('50'),
+        )
+        # A PENDING order for waitress2 must never count.
+        TableOrder.objects.create(
+            business=self.biz, table_label='T4', waitress=self.waitress2,
+            status='PENDING',
+        )
+
+        resp = self.client.get(f'/bar/daily-report/?date={self.today.isoformat()}')
+        by_name = {row['name']: row for row in resp.context['waitress_data']}
+
+        self.assertEqual(by_name['bdrb_wait1']['order_count'], 2)
+        self.assertEqual(by_name['bdrb_wait1']['revenue'], 260.0)  # 2*100 + 1*60
+        self.assertEqual(by_name['bdrb_wait2']['order_count'], 1)
+        self.assertEqual(by_name['bdrb_wait2']['revenue'], 150.0)  # 3*50
+
+    def test_staff_data_isolates_each_shift_to_its_own_window(self):
+        """The core regression lock for the bisect-bucketing fix: two
+        overlapping-in-day-but-non-overlapping-in-time shifts on the SAME
+        item/barrel must each see only their OWN transactions, and the
+        day-total cups/jugs/pints/total_revenue context vars (computed
+        BEFORE this loop runs) must survive it untouched — this is exactly
+        the shadowing bug caught and fixed while writing this fix: the
+        loop's own per-shift accumulators were briefly named the same as
+        the outer day-total variables the final render() reads."""
+        base = timezone.now().replace(hour=8, minute=0, second=0, microsecond=0)
+        shift1 = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff1,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+        )
+        Shift.objects.filter(pk=shift1.pk).update(
+            started_at=base, ended_at=base + timezone.timedelta(hours=4),
+        )
+        shift1.refresh_from_db()
+
+        shift2 = Shift.objects.create(
+            business=self.biz, store=self.store, staff=self.staff2,
+            status='CLOSED', station='bar', opening_float=Decimal('0'),
+        )
+        Shift.objects.filter(pk=shift2.pk).update(
+            started_at=base + timezone.timedelta(hours=5),
+            ended_at=base + timezone.timedelta(hours=9),
+        )
+        shift2.refresh_from_db()
+
+        # Shift 1's own sales: 2 cups + 1 pint.
+        self._txn(self.item1, self.barrel1, 'cup', 2, 100, shift1.started_at + timezone.timedelta(minutes=30))
+        self._txn(self.item1, self.barrel1, 'pint', 1, 100, shift1.started_at + timezone.timedelta(minutes=45))
+        # Shift 2's own sales: 3 jugs, priced via the qty*selling_price
+        # fallback (sale_amount left blank) to also exercise that branch.
+        Transaction.objects.create(
+            business=self.biz, item=self.item2, type='Issue',
+            qty=Decimal('-3'), keg_barrel=self.barrel2,
+            keg_serving='jug', keg_qty=3, sale_amount=None,
+            payment_method='mpesa',
+            created_at=shift2.started_at + timezone.timedelta(minutes=15),
+            date=timezone.localtime(shift2.started_at).date(),
+        )
+        # A voided sale during shift2's window must not count anywhere.
+        void_txn = self._txn(
+            self.item1, self.barrel1, 'cup', 10, 500,
+            shift2.started_at + timezone.timedelta(minutes=20),
+        )
+        void_txn.payment_method = 'void'
+        void_txn.save(update_fields=['payment_method'])
+
+        resp = self.client.get(f'/bar/daily-report/?date={self.today.isoformat()}')
+        by_name = {row['name']: row for row in resp.context['staff_data']}
+
+        self.assertEqual(by_name['bdrb_staff1']['cups'], 2)
+        self.assertEqual(by_name['bdrb_staff1']['pints'], 1)
+        self.assertEqual(by_name['bdrb_staff1']['jugs'], 0)
+        self.assertEqual(by_name['bdrb_staff1']['revenue'], 200.0)
+
+        self.assertEqual(by_name['bdrb_staff2']['cups'], 0)
+        self.assertEqual(by_name['bdrb_staff2']['jugs'], 3)
+        self.assertEqual(by_name['bdrb_staff2']['revenue'], 180.0)  # 3 * item2.selling_price(60)
+
+        # The regression lock: the day-total context vars, computed BEFORE
+        # the staff_data loop runs, must be the TRUE day totals — never
+        # silently overwritten by the last shift iterated in that loop.
+        self.assertEqual(resp.context['cups'], 2)
+        self.assertEqual(resp.context['pints'], 1)
+        self.assertEqual(resp.context['jugs'], 3)
+        self.assertEqual(resp.context['total_revenue'], 200.0)  # sale_amount-only sum; the mpesa jug sale left sale_amount blank
+
+    def test_kitchen_shifts_excluded_from_staff_data(self):
+        kitchen_store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        kitchen_shift = Shift.objects.create(
+            business=self.biz, store=kitchen_store, staff=self.staff1,
+            status='CLOSED', station='kitchen', opening_float=Decimal('0'),
+        )
+        resp = self.client.get(f'/bar/daily-report/?date={self.today.isoformat()}')
+        names = [row['name'] for row in resp.context['staff_data']]
+        self.assertNotIn('bdrb_staff1', names)
+
+
+class HakiPayrollAndContributionBatchedQueryCorrectnessTest(TestCase):
+    """run_payroll()/staff_contribution_report() both used to run 2+ extra
+    per-staff queries (RecurringExpense/SalaryDeduction/SalaryPayment) inside
+    a Python loop instead of one batched query each — same system-wide sweep
+    as bar_daily_report() above. Locks in the batched figures match what the
+    original per-staff queries would have returned."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Haki Batch Biz', haki_enabled=True)
+        self.owner = User.objects.create_user(username='hpb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.staff1 = User.objects.create_user(username='hpb_staff1', password='x')
+        self.staff1_up = UserProfile.objects.create(user=self.staff1, business=self.biz, role='staff')
+        self.staff2 = User.objects.create_user(username='hpb_staff2', password='x')
+        self.staff2_up = UserProfile.objects.create(user=self.staff2, business=self.biz, role='staff')
+        self.period = timezone.localdate().strftime('%Y-%m')
+        self.client.force_login(self.owner)
+
+    def test_run_payroll_get_shows_correct_configured_and_paid_amounts(self):
+        RecurringExpense.objects.create(
+            business=self.biz, category='salary', staff_profile=self.staff1_up,
+            amount=Decimal('20000'), period='MONTHLY', is_active=True,
+            description='Staff1 salary',
+        )
+        SalaryPayment.objects.create(
+            business=self.biz, staff=self.staff1_up, period=self.period,
+            amount=Decimal('5000'), paid=True, paid_at=timezone.now(),
+            due_date=timezone.localdate(),
+        )
+        SalaryPayment.objects.create(
+            business=self.biz, staff=self.staff1_up, period=self.period,
+            amount=Decimal('3000'), paid=True, paid_at=timezone.now(),
+            due_date=timezone.localdate(),
+        )
+        # staff2 has no RecurringExpense configured and no payments yet.
+        resp = self.client.get(f'/staff/payroll-run/?period={self.period}')
+        self.assertEqual(resp.status_code, 200)
+        rows_by_up_id = {r['profile'].id: r for r in resp.context['rows']}
+        self.assertEqual(rows_by_up_id[self.staff1_up.id]['suggested_amount'], Decimal('20000'))
+        self.assertEqual(rows_by_up_id[self.staff1_up.id]['already_paid'], Decimal('8000'))
+        self.assertIsNone(rows_by_up_id[self.staff2_up.id]['suggested_amount'])
+        self.assertEqual(rows_by_up_id[self.staff2_up.id]['already_paid'], 0)
+
+    def test_staff_contribution_report_deductions_and_pay_rows_batched_correctly(self):
+        from core.models import SalaryDeduction
+        SalaryDeduction.objects.create(
+            business=self.biz, staff=self.staff1_up, period=self.period,
+            amount=Decimal('500'), reason='Late arrival',
+        )
+        SalaryDeduction.objects.create(
+            business=self.biz, staff=self.staff1_up, period=self.period,
+            amount=Decimal('200'), reason='Damaged stock',
+        )
+        SalaryPayment.objects.create(
+            business=self.biz, staff=self.staff2_up, period=self.period,
+            amount=Decimal('15000'), paid=True, paid_at=timezone.now(),
+            due_date=timezone.localdate(),
+        )
+        resp = self.client.get(f'/staff/contribution/?period={self.period}')
+        self.assertEqual(resp.status_code, 200)
+        rows_by_up_id = {r['profile'].id: r for r in resp.context['rows']}
+
+        staff1_row = rows_by_up_id[self.staff1_up.id]
+        self.assertEqual(len(staff1_row['deductions']), 2)
+        self.assertEqual(staff1_row['deduction_total'], Decimal('700'))
+        self.assertEqual(staff1_row['paid_total'], 0)
+
+        staff2_row = rows_by_up_id[self.staff2_up.id]
+        self.assertEqual(staff2_row['deduction_total'], 0)
+        self.assertEqual(len(staff2_row['pay_rows']), 1)
+        self.assertEqual(staff2_row['paid_total'], Decimal('15000'))
+
+
+class KitchenBoardBulkFetchedBatchesAndBunchesCorrectnessTest(TestCase):
+    """kitchen_board() used to run a separate KitchenBatch/ProduceBunch
+    query PER item inside its main items loop — genuine N+1 scaling with
+    how many distinct batch/BUNCH-mode items a kitchen sells, part of the
+    2026-09-05 system-wide navigation-speed audit sweep. Both are now bulk-
+    fetched and grouped by item_id before the loop; this locks in that the
+    grouping never leaks one item's open batches/bunches onto another's."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='KB Bulk Fetch Biz', has_kitchen=True)
+        self.store = Store.objects.create(business=self.biz, name='Kitchen', is_kitchen=True)
+        self.owner = User.objects.create_user(username='kbbf_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+        self.chipo = Item.objects.create(
+            business=self.biz, store=self.store, description='Chipo',
+            material_no='KBBF-01', unit='Batch', selling_price=Decimal('100'),
+            is_kitchen_batch=True,
+        )
+        self.stew = Item.objects.create(
+            business=self.biz, store=self.store, description='Stew',
+            material_no='KBBF-02', unit='Batch', selling_price=Decimal('150'),
+            is_kitchen_batch=True,
+        )
+        self.nyama = Item.objects.create(
+            business=self.biz, store=self.store, description='Nyama Choma',
+            material_no='KBBF-03', unit='Kg', selling_price=Decimal('600'),
+            is_produce=True, produce_mode='BUNCH',
+        )
+        self.client.force_login(self.owner)
+
+    def test_open_batches_grouped_correctly_per_item(self):
+        chipo_batch = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            cost_total=Decimal('1500'),
+        )
+        stew_batch1 = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.stew,
+            cost_total=Decimal('800'),
+        )
+        stew_batch2 = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.stew,
+            cost_total=Decimal('900'),
+        )
+        # A DEPLETED batch must never appear as "open" for any item.
+        depleted = KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            cost_total=Decimal('500'), status='DEPLETED',
+        )
+
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.status_code, 200)
+        by_id = {row['id']: row for row in json.loads(resp.context['kitchen_batches'])}
+
+        chipo_ids = {b['id'] for b in by_id[self.chipo.id]['open_batches']}
+        self.assertEqual(chipo_ids, {chipo_batch.id})
+        self.assertNotIn(depleted.id, chipo_ids)
+
+        stew_ids = {b['id'] for b in by_id[self.stew.id]['open_batches']}
+        self.assertEqual(stew_ids, {stew_batch1.id, stew_batch2.id})
+
+    def test_open_bunches_grouped_correctly_and_isolated_from_batches(self):
+        bunch1 = ProduceBunch.objects.create(
+            business=self.biz, item=self.nyama, size='MEDIUM',
+            cost_price=Decimal('200'), target_revenue=Decimal('350'),
+            status='OPEN',
+        )
+        # A DISCARDED bunch must never show as open.
+        ProduceBunch.objects.create(
+            business=self.biz, item=self.nyama, size='SMALL',
+            cost_price=Decimal('100'), target_revenue=Decimal('180'),
+            status='DISCARDED',
+        )
+        KitchenBatch.objects.create(
+            business=self.biz, store=self.store, item=self.chipo,
+            cost_total=Decimal('1500'),
+        )
+
+        resp = self.client.get('/kitchen/')
+        self.assertEqual(resp.status_code, 200)
+        batch_row = next(
+            r for r in json.loads(resp.context['kitchen_batches']) if r['id'] == self.chipo.id
+        )
+        self.assertEqual(len(batch_row['open_batches']), 1)
+
+        bunch_row = next(
+            r for r in json.loads(resp.context['batch_items']) if r['id'] == self.nyama.id
+        )
+        self.assertEqual([b['id'] for b in bunch_row['open_bunches']], [bunch1.id])
+
+    def test_query_count_does_not_scale_with_number_of_batch_items(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def _add_items_and_batches(n, prefix):
+            for i in range(n):
+                item = Item.objects.create(
+                    business=self.biz, store=self.store, description=f'{prefix} {i}',
+                    material_no=f'{prefix}-{i}', unit='Batch',
+                    selling_price=Decimal('100'), is_kitchen_batch=True,
+                )
+                KitchenBatch.objects.create(
+                    business=self.biz, store=self.store, item=item,
+                    cost_total=Decimal('500'),
+                )
+
+        _add_items_and_batches(2, 'Small')
+        with CaptureQueriesContext(connection) as ctx_small:
+            resp = self.client.get('/kitchen/')
+            self.assertEqual(resp.status_code, 200)
+        small_count = len(ctx_small.captured_queries)
+
+        _add_items_and_batches(15, 'Large')
+        with CaptureQueriesContext(connection) as ctx_large:
+            resp = self.client.get('/kitchen/')
+            self.assertEqual(resp.status_code, 200)
+        large_count = len(ctx_large.captured_queries)
+
+        # 13 more batch items must not add anywhere near 13 more queries.
+        self.assertLess(large_count - small_count, 6)
+
+
+class PerformerListBatchedAggregationCorrectnessTest(TestCase):
+    """performer_list() used to run 5 separate queries PER PERFORMER
+    (session_count/avg_staff_rating/avg_customer_rating model methods, plus
+    two PAID-fee sum aggregates) — part of the 2026-09-05 system-wide
+    navigation-speed audit sweep. Locks in the batched figures match what
+    each Performer's own individual model methods would compute."""
+
+    def setUp(self):
+        from core.models import Performer, PerformerFeedback, PerformerSession
+        self.Performer = Performer
+        self.PerformerFeedback = PerformerFeedback
+        self.PerformerSession = PerformerSession
+
+        self.biz = Business.objects.create(name='Performer Batch Biz')
+        self.owner = User.objects.create_user(username='plb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.dj = Performer.objects.create(business=self.biz, name='DJ Batch', performer_type='DJ')
+        self.mc = Performer.objects.create(business=self.biz, name='MC Batch', performer_type='MC')
+        self.client.force_login(self.owner)
+
+    def _session(self, performer=None, second_performer=None, status='COMPLETED',
+                 staff_rating=None, agreed_fee=Decimal('0'), second_performer_fee=Decimal('0'),
+                 payment_status='PENDING'):
+        return self.PerformerSession.objects.create(
+            business=self.biz, performer=performer, second_performer=second_performer,
+            date=timezone.localdate(), status=status, staff_rating=staff_rating,
+            agreed_fee=agreed_fee, second_performer_fee=second_performer_fee,
+            payment_status=payment_status,
+        )
+
+    def test_stats_match_individual_model_methods(self):
+        s1 = self._session(performer=self.dj, staff_rating=4, agreed_fee=Decimal('3000'), payment_status='PAID')
+        self._session(performer=self.dj, staff_rating=5, agreed_fee=Decimal('2000'), payment_status='PAID')
+        # A CANCELLED session must never count toward session_count.
+        self._session(performer=self.dj, status='CANCELLED', agreed_fee=Decimal('9999'), payment_status='PAID')
+        # DJ also plays second_performer role on an MC-primary session.
+        self._session(performer=self.mc, second_performer=self.dj, second_performer_fee=Decimal('500'), payment_status='PAID')
+        self.PerformerFeedback.objects.create(session=s1, rating=5)
+        self.PerformerFeedback.objects.create(session=s1, rating=3)
+
+        resp = self.client.get('/bar/performers/')
+        self.assertEqual(resp.status_code, 200)
+        by_name = {p.name: p for p in resp.context['performers']}
+
+        dj_row = by_name['DJ Batch']
+        # Compare against the ORIGINAL, un-batched model methods directly —
+        # proves the batched view figure is byte-identical to what calling
+        # each method per-instance would have produced.
+        fresh_dj = self.Performer.objects.get(pk=self.dj.pk)
+        self.assertEqual(dj_row.stat_count, fresh_dj.session_count())
+        self.assertEqual(dj_row.stat_staff, fresh_dj.avg_staff_rating())
+        self.assertEqual(dj_row.stat_customer, fresh_dj.avg_customer_rating())
+        self.assertEqual(dj_row.stat_count, 2)
+        self.assertEqual(dj_row.stat_staff, 4.5)
+        self.assertEqual(dj_row.stat_customer, 4.0)
+        # 3000 + 2000 (primary, PAID) + 9999 (primary, CANCELLED-but-PAID) +
+        # 500 (second-role, PAID) = 15499. The PAID-fee total only ever
+        # filters on payment_status — pre-existing behaviour, both before
+        # and after batching — so a cancelled-but-marked-paid session's fee
+        # is (already, unrelated to this fix) counted here even though
+        # session_count() itself correctly excludes that same session.
+        self.assertEqual(dj_row.stat_total_paid, 15499.0)
+
+        mc_row = by_name['MC Batch']
+        self.assertEqual(mc_row.stat_count, 1)
+        self.assertIsNone(mc_row.stat_staff)
+        self.assertIsNone(mc_row.stat_customer)
+        self.assertEqual(mc_row.stat_total_paid, 0.0)
+
+    def test_performer_with_zero_sessions_has_none_stats(self):
+        resp = self.client.get('/bar/performers/')
+        by_name = {p.name: p for p in resp.context['performers']}
+        self.assertEqual(by_name['DJ Batch'].stat_count, 0)
+        self.assertIsNone(by_name['DJ Batch'].stat_staff)
+        self.assertEqual(by_name['DJ Batch'].stat_total_paid, 0.0)
+
+    def test_query_count_does_not_scale_with_performer_count(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as ctx_small:
+            resp = self.client.get('/bar/performers/')
+            self.assertEqual(resp.status_code, 200)
+        small_count = len(ctx_small.captured_queries)
+
+        for i in range(15):
+            p = self.Performer.objects.create(business=self.biz, name=f'Extra DJ {i}')
+            self._session(performer=p, staff_rating=4, agreed_fee=Decimal('100'), payment_status='PAID')
+
+        with CaptureQueriesContext(connection) as ctx_large:
+            resp = self.client.get('/bar/performers/')
+            self.assertEqual(resp.status_code, 200)
+        large_count = len(ctx_large.captured_queries)
+
+        self.assertLess(large_count - small_count, 6)
+
+
+class ExpiringItemsBatchedBalanceCorrectnessTest(TestCase):
+    """expiring_items() used to re-fetch each Item and recompute
+    current_balance() (its own query) PER ROW, scaling with how many
+    distinct items have ever had an expiry-dated Receipt over the
+    business's lifetime — part of the 2026-09-05 system-wide navigation-
+    speed audit sweep. Locks in the batched balance matches
+    current_balance() exactly."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Expiring Items Batch Biz')
+        self.store = Store.objects.create(business=self.biz, name='Main')
+        self.owner = User.objects.create_user(username='eib_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.client.force_login(self.owner)
+
+    def _item_with_expiry(self, name, qty_received, qty_issued, expiry_date):
+        item = Item.objects.create(
+            business=self.biz, store=self.store, description=name,
+            material_no=f'EIB-{name}', unit='Pcs', selling_price=Decimal('50'),
+        )
+        Transaction.objects.create(
+            business=self.biz, item=item, type='Receipt',
+            qty=Decimal(str(qty_received)), expiry_date=expiry_date,
+        )
+        if qty_issued:
+            Transaction.objects.create(
+                business=self.biz, item=item, type='Issue',
+                qty=Decimal(str(-qty_issued)),
+            )
+        return item
+
+    def test_balance_matches_current_balance_exactly(self):
+        today = timezone.localdate()
+        item1 = self._item_with_expiry('Yoghurt', 20, 5, today - timezone.timedelta(days=1))
+        item2 = self._item_with_expiry('Milk', 30, 10, today + timezone.timedelta(days=3))
+
+        resp = self.client.get('/stock/expiring/')
+        self.assertEqual(resp.status_code, 200)
+        by_id = {row['item_id']: row for row in resp.context['items_data']}
+
+        self.assertEqual(by_id[item1.id]['balance'], item1.current_balance())
+        self.assertEqual(by_id[item1.id]['balance'], Decimal('15'))
+        self.assertEqual(by_id[item1.id]['status'], 'EXPIRED')
+
+        self.assertEqual(by_id[item2.id]['balance'], item2.current_balance())
+        self.assertEqual(by_id[item2.id]['balance'], Decimal('20'))
+        self.assertEqual(by_id[item2.id]['status'], 'EXPIRING')
+
+    def test_query_count_does_not_scale_with_expiring_item_count(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        today = timezone.localdate()
+        self._item_with_expiry('Base1', 10, 0, today + timezone.timedelta(days=5))
+        self._item_with_expiry('Base2', 10, 0, today + timezone.timedelta(days=5))
+
+        with CaptureQueriesContext(connection) as ctx_small:
+            resp = self.client.get('/stock/expiring/')
+            self.assertEqual(resp.status_code, 200)
+        small_count = len(ctx_small.captured_queries)
+
+        for i in range(15):
+            self._item_with_expiry(f'Extra{i}', 10, 0, today + timezone.timedelta(days=5))
+
+        with CaptureQueriesContext(connection) as ctx_large:
+            resp = self.client.get('/stock/expiring/')
+            self.assertEqual(resp.status_code, 200)
+        large_count = len(ctx_large.captured_queries)
+
+        self.assertLess(large_count - small_count, 6)
+
+
+class RevenueTargetProgressBatchedQueryCorrectnessTest(TestCase):
+    """revenue_target_progress() (the JSON widget behind the home/analytics
+    dashboard's revenue-target progress bars, hit on nearly every load) used
+    to pull every matching Transaction into Python to sum .revenue() one by
+    one, AND ran a separate Transaction + RevenueTarget query PER STORE —
+    part of the 2026-09-05 system-wide navigation-speed audit sweep. Locks
+    in the batched daily/weekly/monthly and per-store figures match what
+    Transaction.revenue() summed per-instance would have produced."""
+
+    def setUp(self):
+        from core.models import RevenueTarget
+        self.RevenueTarget = RevenueTarget
+        self.biz = Business.objects.create(name='Revenue Target Batch Biz')
+        self.store1 = Store.objects.create(business=self.biz, name='Store A')
+        self.store2 = Store.objects.create(business=self.biz, name='Store B')
+        self.owner = User.objects.create_user(username='rtb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item1 = Item.objects.create(
+            business=self.biz, store=self.store1, description='Item A',
+            material_no='RTB-01', selling_price=Decimal('100'),
+        )
+        self.item2 = Item.objects.create(
+            business=self.biz, store=self.store2, description='Item B',
+            material_no='RTB-02', selling_price=Decimal('50'),
+        )
+        RevenueTarget.objects.create(
+            business=self.biz, target_type='daily', amount=Decimal('1000'),
+        )
+        RevenueTarget.objects.create(
+            business=self.biz, target_type='daily', store=self.store1, amount=Decimal('300'),
+        )
+        self.client.force_login(self.owner)
+
+    def test_daily_actual_matches_manual_revenue_sum(self):
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.item1, type='Issue',
+            qty=Decimal('-2'), sale_amount=Decimal('180'),
+            date=today, payment_method='cash',
+        )
+        # sale_amount blank — must fall back to abs(qty)*selling_price (50*1=50).
+        Transaction.objects.create(
+            business=self.biz, item=self.item2, type='Issue',
+            qty=Decimal('-1'), sale_amount=None,
+            date=today, payment_method='mpesa',
+        )
+        # Voided sale must never count.
+        Transaction.objects.create(
+            business=self.biz, item=self.item1, type='Issue',
+            qty=Decimal('-5'), sale_amount=Decimal('500'),
+            date=today, payment_method='void',
+        )
+
+        resp = self.client.get('/analytics/targets/progress/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['daily']['actual'], 230.0)  # 180 + 50
+        self.assertEqual(data['daily']['target'], 1000.0)
+
+    def test_per_store_breakdown_matches_manual_sum(self):
+        today = timezone.localdate()
+        Transaction.objects.create(
+            business=self.biz, item=self.item1, type='Issue',
+            qty=Decimal('-3'), sale_amount=Decimal('150'),
+            date=today, payment_method='cash',
+        )
+        Transaction.objects.create(
+            business=self.biz, item=self.item2, type='Issue',
+            qty=Decimal('-2'), sale_amount=Decimal('80'),
+            date=today, payment_method='cash',
+        )
+
+        resp = self.client.get('/analytics/targets/progress/')
+        data = resp.json()
+        by_store = {row['store']: row for row in data['daily']['store_breakdown']}
+
+        self.assertEqual(by_store['Store A']['actual'], 150.0)
+        self.assertEqual(by_store['Store A']['target'], 300.0)
+        self.assertEqual(by_store['Store B']['actual'], 80.0)
+        self.assertEqual(by_store['Store B']['target'], 0.0)
+        self.assertIsNone(by_store['Store B']['pct'])  # no target set
+
+    def test_query_count_does_not_scale_with_store_count(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as ctx_small:
+            resp = self.client.get('/analytics/targets/progress/')
+            self.assertEqual(resp.status_code, 200)
+        small_count = len(ctx_small.captured_queries)
+
+        for i in range(15):
+            Store.objects.create(business=self.biz, name=f'Extra Store {i}')
+
+        with CaptureQueriesContext(connection) as ctx_large:
+            resp = self.client.get('/analytics/targets/progress/')
+            self.assertEqual(resp.status_code, 200)
+        large_count = len(ctx_large.captured_queries)
+
+        self.assertLess(large_count - small_count, 6)
