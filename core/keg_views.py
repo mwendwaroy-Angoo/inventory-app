@@ -275,10 +275,35 @@ def bar_board_api(request):
         Item.objects
         .filter(store__business=business, is_keg=True)
         .prefetch_related(
-            'portion_presets',
+            # 2026-09-05 navigation-speed audit: 'portion_presets' used to be
+            # prefetched as a bare string (ItemPortionPreset has no default
+            # Meta.ordering), then re-fetched per item below via
+            # `.all().order_by(...)` — a SECOND instance of the exact same
+            # prefetch-defeating pattern fixed for keg_barrels just below.
+            # Baking the ordering into the Prefetch queryset itself means
+            # `.all()` (no further chaining) can reuse the cache for free.
+            Prefetch(
+                'portion_presets',
+                queryset=ItemPortionPreset.objects.order_by('display_order', 'id'),
+            ),
             Prefetch(
                 'keg_barrels',
-                queryset=KegBarrel.objects.select_related('tapped_by', 'closed_by'),
+                # Nested prefetch of weight_readings (newest first) so
+                # primary.weight_readings.all().first() below can reuse this
+                # cache instead of primary.latest_weight()'s own internal
+                # .order_by().first(), which — being a fresh queryset built
+                # from scratch — would re-query per tapped barrel (2026-09-05
+                # navigation-speed audit: the third prefetch-defeating query
+                # found in this same loop, after keg_barrels' own .filter()
+                # and portion_presets' own re-ordering, both fixed above).
+                queryset=KegBarrel.objects.select_related(
+                    'tapped_by', 'closed_by',
+                ).prefetch_related(
+                    Prefetch(
+                        'weight_readings',
+                        queryset=KegWeightReading.objects.order_by('-recorded_at'),
+                    ),
+                ),
             ),
         )
         .order_by('description')
@@ -286,7 +311,18 @@ def bar_board_api(request):
 
     kegs = []
     for it in keg_items:
-        all_barrels = list(it.keg_barrels.filter(business=business))
+        # 2026-09-05 navigation-speed audit: `.filter(business=business)`
+        # here is a REDUNDANT condition (every KegBarrel.item already
+        # belongs to `business`, since keg_items itself is scoped to
+        # store__business=business) — but any .filter() call on a
+        # prefetched related manager bypasses Django's prefetch cache and
+        # issues a brand-new query, defeating the Prefetch('keg_barrels',
+        # ...) set up above entirely. That's one extra DB round trip PER
+        # keg item type, on the single most-polled endpoint on this board
+        # (see the 2026-08-21 waitress-aggregation fix comment above —
+        # this exact same "N extra queries on a polled endpoint" shape).
+        # .all() on a prefetched manager IS cache-aware and costs nothing.
+        all_barrels = list(it.keg_barrels.all())
         tapped = [b for b in all_barrels if b.status == 'TAPPED']
         sealed = [b for b in all_barrels if b.status == 'SEALED']
 
@@ -307,6 +343,17 @@ def bar_board_api(request):
         def _who(user):
             return (user.get_full_name() or user.username) if user else ''
 
+        # Mirrors KegBarrel.latest_weight()'s own logic exactly, but reads
+        # from the prefetched, already-newest-first weight_readings cache
+        # (see the Prefetch above) instead of calling that method directly
+        # — its own internal .order_by('-recorded_at').first() builds a
+        # fresh queryset that bypasses the cache and re-queries per barrel.
+        if primary:
+            _reading = primary.weight_readings.all().first()
+            latest_weight_kg = float(_reading.weight_kg) if _reading else float(primary.gross_weight_kg)
+        else:
+            latest_weight_kg = 0.0
+
         presets = [
             {
                 'id': p.id,
@@ -314,7 +361,7 @@ def bar_board_api(request):
                 'price': float(p.price),
                 'quantity_consumed': float(p.quantity_consumed),
             }
-            for p in it.portion_presets.all().order_by('display_order', 'id')
+            for p in it.portion_presets.all()
         ]
 
         kegs.append({
@@ -330,7 +377,7 @@ def bar_board_api(request):
             'remaining': float(primary.remaining_envelope()) if primary else 0.0,
             'target_open': float(primary.target_revenue) if primary else 0.0,
             'revenue_collected': float(primary.revenue_collected) if primary else 0.0,
-            'latest_weight_kg': round(primary.latest_weight(), 2) if primary else 0.0,
+            'latest_weight_kg': round(latest_weight_kg, 2),
             'days_tapped': primary.age_days() if primary else 0,
             'stale': primary.is_stale() if primary else False,
             'has_history': bool(all_barrels),

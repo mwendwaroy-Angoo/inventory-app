@@ -10705,3 +10705,108 @@ run python manage.py check and makemigrations --check, commit as 'Sprint N: summ
   business `txn_id` rejection, template button visibility for every viewer
   type, and the Staff Permissions toggle save round-trip. Full pre-existing
   suite (2747 tests) re-run clean. One migration (accounts 0070, additive).
+- Navigation-speed audit (2026-09-05), live request: "scrutinize each and
+  every flow... every navigation should be instant" (stock list ↔ bar
+  orders, debt tracker ↔ analytics, supply chain ↔ home, plus device-kick
+  login speed). Measured with `CaptureQueriesContext` scaling-delta tests
+  (small-N vs large-N page loads — this app's own established methodology,
+  see `HomeDashboardRevenueWindowQueryEfficiencyTest`) rather than guessed
+  absolute thresholds, after two of the first such tests written for this
+  audit came back with real numbers contradicting the initial guess and
+  surfaced genuine SECOND-order N+1s hiding behind the first fix. Six real,
+  evidenced query patterns found and fixed, all with regression-lock tests
+  proving the count no longer scales with data volume:
+  **(1) `payables.total_receivables()`** (feeds `cash_position()` on
+  `/analytics/`) — looped `_get_customer_debt_data()` once per EVERY
+  Customer row a business has ever recorded, unconditionally, scaling with
+  lifetime customer count. Independently, it was ALSO already wrong on its
+  own terms: summing every row with zero dedup meant two Customer rows
+  sharing a name double-counted one real debt into "the most honest number
+  in the app." Fixed by extracting `debtors_list_api()`'s own bulk, deduped
+  aggregation (built 2026-08-27 for a different caller) into a shared
+  `debt_views._bulk_outstanding_by_customer()` and reusing it here — same
+  already-tested formula, a handful of queries total instead of one per
+  customer, closing both the performance AND the correctness gap at once.
+  **(2) `debt_dashboard()`** (`/debt/`) — the identical per-customer N+1,
+  already flagged but deliberately not fixed on 2026-08-18 out of caution
+  around `_get_customer_debt_data()`'s own correctness-sensitive edit
+  history. Respected that same caution — did NOT rewrite the per-row
+  score/aged-bucket computation itself — and instead pre-filtered to only
+  customers whose exact name matches at least one real credit Transaction
+  ever (the identical exact-string condition that function's own credit_qs
+  already uses), which provably changes nothing about the output since a
+  customer failing that test would have computed to zero anyway. **(3)
+  Analytics "Staff Pouring League"** — ran one separate `.aggregate()`
+  query PER SHIFT in the selected period, a genuine N+1 scaling with shift
+  count (a busy combo business easily has 60-200+ bar shifts in a 30-90
+  day window). Fixed by fetching every candidate transaction for the whole
+  span ONCE with the existing `_rev_expr` SQL Case/When formula, then
+  bucketing into shifts via `bisect_left`/`bisect_right` over a
+  created_at-sorted list — O(log n + k) per shift instead of a fresh query
+  per shift, deliberately preserving the exact original semantics
+  including the deliberate overlap-double-attribution quirk (two
+  overlapping shifts — a real handover/manager-joining scenario — must
+  each still independently count whatever falls in THEIR OWN window).
+  **(4) Analytics revenue query** — `current_sales`/`prev_sales` had
+  `select_related('item', ...)` but not `item__store`; the Store
+  Performance section's `t.item.store.name` therefore re-queried Store
+  once per TRANSACTION, not once per distinct item, since `select_related`
+  builds a fresh `Item` instance per row rather than deduping same-PK
+  related objects across a queryset. One relation added to an
+  already-existing select_related closed it. This is what turned out to be
+  the REAL cause behind the Staff Pouring League test's own remaining
+  query growth after fix (3) alone — traced with a standalone script
+  dumping normalized SQL text before/after, not guessed. **(5)
+  `bar_board_api()`** (the single most-polled endpoint on Bar Board) — a
+  THIRD prefetch-defeating pattern, found by the same query-text-diffing
+  method: `it.keg_barrels.filter(business=business)` (a redundant
+  tautological filter — every barrel's `item` already belongs to that
+  business) and `it.portion_presets.all().order_by(...)` both bypassed
+  their own `Prefetch()` setup, since ANY `.filter()`/`.order_by()` call
+  on a prefetched related manager clones into a new, uncached queryset —
+  only a bare `.all()` reuses the cache. Fixed by dropping the redundant
+  filter (`.all()` alone is correct) and baking the ordering into the
+  `Prefetch` queryset itself instead of re-ordering downstream. A THIRD
+  instance surfaced once those two were fixed: `primary.latest_weight()`'s
+  own internal `self.weight_readings.order_by('-recorded_at').first()`
+  builds a fresh queryset too — added a nested nested `Prefetch(
+  'weight_readings', ...)` inside the `keg_barrels` Prefetch and read
+  `primary.weight_readings.all().first()` directly in the loop instead of
+  calling the model method, reusing the cache (confirmed via Django's own
+  `QuerySet.first()`/`__getitem__` behavior: slicing an already-evaluated,
+  already-ordered queryset never re-queries). **(6)
+  `_close_expired_procurement()`** — had no `business=` filter at all,
+  violating this app's own core "always scope by business" rule: any
+  owner merely visiting their own Supply Chain page bulk-closed every
+  OTHER business's expired-but-open procurement requests too, on every
+  single page view. Scoped the bulk `.update()` to the current business.
+  **Checked and confirmed already solid, no change needed**: `stock_list()`
+  (already using `_batch_stock_metrics()` correctly, per the 2026-08-09/10
+  sprint), `home()` (its one deep relation chain — `stale_open_tabs`'s
+  `entries__transaction__item__store` — is already correctly prefetched
+  and capped at `[:40]`), and the login/device-kick boot path
+  (`SingleSessionMiddleware`'s per-request `UserProfile` lookup is a
+  single query Django caches on the `request.user` instance for the rest
+  of the request; `accounts.signals`'s login-audit notification already
+  routes through `route_notification()`, which has used
+  `send_sms_notification_async`/`send_email_notification_async`
+  exclusively since the 2026-08-12 async-dispatch sprint — login itself
+  was never blocked on a network call). `ShiftEnforcementMiddleware`'s
+  per-request `has_keg` existence check (a single cheap indexed query,
+  paid only by non-owner staff on a bar business, since owners exit early)
+  and the all-time Break-Even Analysis scan (`analytics_dashboard()`,
+  genuinely re-scans the business's ENTIRE transaction history on every
+  page load regardless of selected period, gated behind `if total_capital
+  > 0`) were both found and are both real, but deliberately NOT touched —
+  the first is a small, bounded cost not worth a caching layer's staleness
+  risk; the second would need either a materialized monthly-snapshot table
+  or a time-based cache, both real feature-sized changes this app's own
+  established aversion to caching anything financial argues should be a
+  separate, deliberate, Roy-approved sprint rather than bolted on here.
+  35 new tests across 5 test classes
+  (`DebtDashboardCreditPrefilterTest`, `TotalReceivablesBulkAggregationTest`,
+  `AnalyticsStaffPouringLeagueQueryEfficiencyTest`,
+  `BarBoardApiKegQueryEfficiencyTest`, `CloseExpiredProcurementScopingTest`),
+  every one a scaling-delta regression lock, not an absolute-threshold
+  guess. Full pre-existing suite (2783 tests) re-run clean. No migrations
+  (pure query-shape changes — no schema touched).

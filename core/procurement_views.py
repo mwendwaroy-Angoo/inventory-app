@@ -176,11 +176,23 @@ def score_all_bids(procurement):
 # ── OWNER: PROCUREMENT REQUESTS ──────────────────────────────────────────────
 
 
-def _close_expired_procurement():
-    """Auto-close any open procurement requests past their deadline."""
+def _close_expired_procurement(business):
+    """Auto-close any open procurement requests past their deadline.
+
+    2026-09-05 navigation-speed audit: this had NO business filter at
+    all — every load of procurement_list_owner(), for ANY business on the
+    platform, ran an UPDATE scanning/touching every OTHER business's
+    expired-but-still-open requests too, violating this app's own core
+    multi-tenancy rule ("Every queryset scoped to
+    request.user.userprofile.business — never query without a business
+    filter") and doing unbounded, unnecessary write work on someone
+    else's data on every single page view. Scoped now — same one-shot
+    bulk .update(), just to the current business's own rows.
+    """
     from django.utils import timezone
 
     expired = ProcurementRequest.objects.filter(
+        business=business,
         status="open",
         deadline__lt=timezone.localdate(),
     )
@@ -196,7 +208,7 @@ def procurement_list_owner(request):
         return redirect("home")
 
     # Auto-close expired ones
-    _close_expired_procurement()
+    _close_expired_procurement(profile.business)
 
     requests = ProcurementRequest.objects.filter(business=profile.business)
 

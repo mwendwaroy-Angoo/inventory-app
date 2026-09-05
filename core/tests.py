@@ -42421,6 +42421,410 @@ class DebtDashboardDuplicateComputationTest(TestCase):
         self.assertEqual(outstandings, [500.0, 500.0])
 
 
+class DebtDashboardCreditPrefilterTest(TestCase):
+    """2026-09-05 navigation-speed audit (live report: "debt tracker to
+    analytics... is not instant... scrutinize each and every flow").
+    debt_dashboard() used to call _get_customer_debt_data() once per EVERY
+    Customer row a business has ever recorded — most of them deterministically
+    return outstanding=0 (never had credit, or long since paid off) and get
+    excluded from the output anyway. Pre-filtering to only customers whose
+    name matches at least one real credit Transaction cuts that work down
+    without changing what's shown."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Prefilter Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='pf_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='PF-01', unit='Pcs', selling_price=Decimal('250'),
+        )
+
+    def test_query_count_does_not_scale_with_customers_with_no_credit_history(self):
+        # 40 named customers who never carried any credit at all.
+        for i in range(40):
+            Customer.objects.create(business=self.biz, name=f'Never Owed {i}')
+        # One real debtor — must still show up (checked separately below).
+        real = Customer.objects.create(business=self.biz, name='Real Debtor')
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('250'), payment_method='credit', recipient=real.name,
+        )
+        self.client.force_login(self.owner)
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get('/debt/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertLess(
+            len(ctx.captured_queries), 40,
+            f"debt_dashboard() issued {len(ctx.captured_queries)} queries with 40 "
+            "customers who never had any credit history — the pre-filter must skip "
+            "them, not call _get_customer_debt_data() for each anyway.",
+        )
+        names = [r['customer'].name for r in resp.context['rows']]
+        self.assertEqual(names, ['Real Debtor'])
+
+    def test_customer_marked_via_was_credit_only_still_included(self):
+        # A transaction whose payment_method has since moved off 'credit'
+        # (settled via a non-CustomerDebtPayment path) but is permanently
+        # marked was_credit=True — the pre-filter's own query must use the
+        # identical Q(payment_method='credit') | Q(was_credit=True) test
+        # _get_customer_debt_data's real credit_qs uses, or a genuinely
+        # still-owed customer could be silently skipped.
+        cust = Customer.objects.create(business=self.biz, name='Was Credit Customer')
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('300'), payment_method='cash', was_credit=True,
+            recipient=cust.name,
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/debt/')
+        names = [r['customer'].name for r in resp.context['rows']]
+        self.assertEqual(names, ['Was Credit Customer'])
+        self.assertEqual(resp.context['rows'][0]['outstanding'], 300.0)
+
+
+class TotalReceivablesBulkAggregationTest(TestCase):
+    """2026-09-05 navigation-speed audit: payables.total_receivables() (fed
+    into analytics_dashboard() via cash_position()) used to loop
+    _get_customer_debt_data() once per Customer row, unconditionally — the
+    single heaviest query pattern found on the analytics page, AND,
+    independently, already wrong: summing every row with no dedup meant two
+    Customer rows sharing a name double-counted one real debt. Now reuses
+    the same bulk, deduped aggregation debtors_list_api() already
+    established (2026-08-27)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Receivables Bulk Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar')
+        self.owner = User.objects.create_user(username='trb_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='TRB-01', unit='Pcs', selling_price=Decimal('250'),
+        )
+
+    def test_query_count_does_not_scale_with_customer_count(self):
+        from .payables import total_receivables
+        for i in range(60):
+            cust = Customer.objects.create(business=self.biz, name=f'Customer {i}')
+            if i % 3 == 0:
+                Transaction.objects.create(
+                    business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+                    sale_amount=Decimal('100'), payment_method='credit', recipient=cust.name,
+                )
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            total = total_receivables(self.biz)
+        self.assertGreater(total, 0)
+        self.assertLess(
+            len(ctx.captured_queries), 10,
+            f"total_receivables() issued {len(ctx.captured_queries)} queries for 60 "
+            "customers — it must aggregate in bulk, not once per customer.",
+        )
+
+    def test_duplicate_named_customers_are_not_double_counted(self):
+        from .payables import total_receivables
+        # Two DIFFERENT Customer rows sharing the exact same name — the
+        # same real-world scenario DebtDashboardDuplicateComputationTest
+        # already covers for debt_dashboard(): _get_customer_debt_data()
+        # matches by NAME STRING, not the Customer FK, so BOTH rows'
+        # independent per-customer computations would sum the SAME
+        # KES 500 — looping and summing both (the old code) gives 1000,
+        # double the real 500.
+        cust_a = Customer.objects.create(business=self.biz, name='Peter')
+        cust_b = Customer.objects.create(business=self.biz, name='Peter')
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('500'), payment_method='credit', recipient='Peter',
+        )
+        total = total_receivables(self.biz)
+        self.assertEqual(total, 500.0)
+
+    def test_cash_position_on_analytics_page_reflects_the_dedup(self):
+        cust_a = Customer.objects.create(business=self.biz, name='Peter')
+        cust_b = Customer.objects.create(business=self.biz, name='Peter')
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-2'),
+            sale_amount=Decimal('500'), payment_method='credit', recipient='Peter',
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/analytics/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.context['financial_health']['receivables_outstanding'], 500.0,
+        )
+
+
+class AnalyticsStaffPouringLeagueQueryEfficiencyTest(TestCase):
+    """2026-09-05 navigation-speed audit: the Staff Pouring League section
+    of analytics_dashboard() used to run one separate .aggregate() query
+    PER SHIFT in the period — a real N+1, scaling with shift count, not
+    just redundant Python work. Fixed via a single bulk fetch + bisect
+    bucketing, preserving exact semantics (including the deliberate
+    overlap-double-attribution quirk already documented on that section)."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Pouring League Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='pl_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+        self.item = Item.objects.create(
+            business=self.biz, store=self.store, description='Tusker',
+            material_no='PL-01', unit='Pcs', selling_price=Decimal('200'),
+            cost_price=Decimal('100'),
+        )
+
+    def _make_staff(self, username):
+        u = User.objects.create_user(username=username, password='x')
+        UserProfile.objects.create(user=u, business=self.biz, role='staff')
+        return u
+
+    def _make_shifts_and_sales(self, n, base):
+        from core.models import Shift
+        for i in range(n):
+            staff = self._make_staff(f'pl_staff_{base.isoformat()}_{i}')
+            start = base + timedelta(hours=i)
+            end = start + timedelta(minutes=30)
+            Shift.objects.create(
+                business=self.biz, staff=staff, status='CONFIRMED',
+                started_at=start, ended_at=end, station='bar',
+                opening_float=Decimal('0'),
+            )
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+                sale_amount=Decimal('200'), payment_method='cash',
+                created_at=start + timedelta(minutes=5),
+                date=start.date(),
+            )
+
+    def test_query_count_does_not_scale_with_shift_count(self):
+        # Scaling-delta methodology (this app's own established pattern —
+        # see HomeDashboardRevenueWindowQueryEfficiencyTest): the page's
+        # OWN baseline query count (every other analytics section) can't be
+        # guessed at reliably, so compare a SMALL vs LARGE shift count and
+        # assert the query count barely moves, rather than asserting an
+        # absolute ceiling.
+        self.client.force_login(self.owner)
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self._make_shifts_and_sales(3, timezone.now() - timedelta(days=20))
+        with CaptureQueriesContext(connection) as ctx_small:
+            resp_small = self.client.get('/analytics/?period=30')
+        self.assertEqual(resp_small.status_code, 200)
+
+        self._make_shifts_and_sales(40, timezone.now() - timedelta(days=10))
+        with CaptureQueriesContext(connection) as ctx_large:
+            resp_large = self.client.get('/analytics/?period=30')
+        self.assertEqual(resp_large.status_code, 200)
+
+        delta = len(ctx_large.captured_queries) - len(ctx_small.captured_queries)
+        self.assertLess(
+            delta, 15,
+            f"query count grew by {delta} after adding 40 more bar shifts "
+            f"({len(ctx_small.captured_queries)} -> {len(ctx_large.captured_queries)}) — "
+            "the Staff Pouring League section must fetch the whole span once and "
+            "bucket in Python, not query per shift.",
+        )
+        rows = {r['name']: r for r in resp_large.context['staff_keg_rows']}
+        self.assertEqual(len(rows), 43)
+
+    def test_revenue_and_servings_correctly_attributed_per_shift(self):
+        from core.models import Shift
+        staff_a = self._make_staff('pl_staff_a')
+        staff_b = self._make_staff('pl_staff_b')
+        base = timezone.now() - timedelta(days=2)
+
+        shift_a = Shift.objects.create(
+            business=self.biz, staff=staff_a, status='CONFIRMED',
+            started_at=base, ended_at=base + timedelta(hours=2), station='bar',
+            opening_float=Decimal('0'),
+        )
+        shift_b = Shift.objects.create(
+            business=self.biz, staff=staff_b, status='CONFIRMED',
+            started_at=base + timedelta(hours=3), ended_at=base + timedelta(hours=5),
+            station='bar', opening_float=Decimal('0'),
+        )
+        # 2 sales inside shift_a's window.
+        for _ in range(2):
+            Transaction.objects.create(
+                business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+                sale_amount=Decimal('200'), payment_method='cash',
+                created_at=base + timedelta(minutes=30), date=base.date(),
+            )
+        # 1 sale inside shift_b's window.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('300'), payment_method='cash',
+            created_at=base + timedelta(hours=4), date=base.date(),
+        )
+        # 1 sale OUTSIDE either window — must not be attributed to anyone.
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('999'), payment_method='cash',
+            created_at=base + timedelta(hours=10), date=base.date(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/analytics/?period=30')
+        rows = {r['name']: r for r in resp.context['staff_keg_rows']}
+        self.assertEqual(rows['pl_staff_a']['revenue'], 400.0)
+        self.assertEqual(rows['pl_staff_a']['servings'], 2)
+        self.assertEqual(rows['pl_staff_b']['revenue'], 300.0)
+        self.assertEqual(rows['pl_staff_b']['servings'], 1)
+
+    def test_overlapping_shifts_each_independently_count_their_own_window(self):
+        # Preserves the ORIGINAL per-shift-independent-query semantics: two
+        # shifts whose windows overlap (a real, allowed scenario — a
+        # handover, a manager joining) each still get credited for
+        # whatever falls in THEIR OWN window, even if that means the same
+        # sale counts toward both — exactly what N separate independent
+        # .aggregate() calls already did before this fix.
+        from core.models import Shift
+        staff_a = self._make_staff('pl_overlap_a')
+        staff_b = self._make_staff('pl_overlap_b')
+        base = timezone.now() - timedelta(days=2)
+
+        Shift.objects.create(
+            business=self.biz, staff=staff_a, status='CONFIRMED',
+            started_at=base, ended_at=base + timedelta(hours=2), station='bar',
+            opening_float=Decimal('0'),
+        )
+        Shift.objects.create(
+            business=self.biz, staff=staff_b, status='CONFIRMED',
+            started_at=base + timedelta(hours=1), ended_at=base + timedelta(hours=3),
+            station='bar', opening_float=Decimal('0'),
+        )
+        # This sale falls inside BOTH windows (base+1h30 is within
+        # [base, base+2h] AND [base+1h, base+3h]).
+        Transaction.objects.create(
+            business=self.biz, item=self.item, type='Issue', qty=Decimal('-1'),
+            sale_amount=Decimal('200'), payment_method='cash',
+            created_at=base + timedelta(hours=1, minutes=30), date=base.date(),
+        )
+        self.client.force_login(self.owner)
+        resp = self.client.get('/analytics/?period=30')
+        rows = {r['name']: r for r in resp.context['staff_keg_rows']}
+        self.assertEqual(rows['pl_overlap_a']['revenue'], 200.0)
+        self.assertEqual(rows['pl_overlap_b']['revenue'], 200.0)
+
+
+class BarBoardApiKegQueryEfficiencyTest(TestCase):
+    """2026-09-05 navigation-speed audit: bar_board_api() (the single
+    most-polled endpoint on Bar Board) prefetches keg_barrels via
+    Prefetch(), then immediately called .filter(business=business) on the
+    prefetched related manager per keg item — a redundant filter (every
+    KegBarrel.item already belongs to this business) that bypasses
+    Django's prefetch cache and re-queries the database anyway, one extra
+    round trip PER keg item type, on every single poll."""
+
+    def setUp(self):
+        self.biz = Business.objects.create(name='Keg Query Biz')
+        self.store = Store.objects.create(business=self.biz, name='Bar', is_kitchen=False)
+        self.owner = User.objects.create_user(username='kq_owner', password='x')
+        UserProfile.objects.create(user=self.owner, business=self.biz, role='owner')
+
+    def _make_keg_items(self, n, prefix):
+        from core.models import KegBarrel
+        for i in range(n):
+            item = Item.objects.create(
+                business=self.biz, store=self.store, description=f'{prefix} Keg {i}',
+                material_no=f'{prefix}-{i}', unit='Ml', is_keg=True,
+                selling_price=Decimal('0'), cost_price=Decimal('5000'),
+            )
+            KegBarrel.objects.create(
+                business=self.biz, store=self.store, item=item,
+                cost_price=Decimal('5000'), target_revenue=Decimal('8000'),
+                status='TAPPED',
+            )
+            KegBarrel.objects.create(
+                business=self.biz, store=self.store, item=item,
+                cost_price=Decimal('5000'), target_revenue=Decimal('8000'),
+                status='SEALED',
+            )
+
+    def test_query_count_does_not_scale_with_keg_item_count(self):
+        # Scaling-delta methodology (see AnalyticsStaffPouringLeagueQuery
+        # EfficiencyTest's own comment) — a per-item baseline (serializer
+        # overhead, presets, etc.) is expected and fine; what must NOT
+        # happen is one EXTRA database round trip per keg item type.
+        self.client.force_login(self.owner)
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self._make_keg_items(2, 'Small')
+        with CaptureQueriesContext(connection) as ctx_small:
+            resp_small = self.client.get('/stock/bar/board/')
+        self.assertEqual(resp_small.status_code, 200)
+
+        self._make_keg_items(20, 'Large')
+        with CaptureQueriesContext(connection) as ctx_large:
+            resp_large = self.client.get('/stock/bar/board/')
+        self.assertEqual(resp_large.status_code, 200)
+
+        # 18 more keg items (20 - 2) — the OLD redundant .filter() bug
+        # would add ~1 extra query per item on top of whatever per-item
+        # Python/serialization cost already scales anyway.
+        per_item_queries = (
+            len(ctx_large.captured_queries) - len(ctx_small.captured_queries)
+        ) / 18
+        self.assertLess(
+            per_item_queries, 0.5,
+            f"query count scaled by {per_item_queries:.2f} queries per extra keg "
+            f"item ({len(ctx_small.captured_queries)} -> {len(ctx_large.captured_queries)} "
+            "for +18 items) — .all() on the prefetched keg_barrels manager must reuse "
+            "the prefetch cache, not re-query once per item.",
+        )
+        data = resp_large.json()
+        self.assertEqual(len(data['kegs']), 22)
+        for keg in data['kegs']:
+            self.assertEqual(keg['open_barrels'], 1)
+            self.assertEqual(keg['sealed_barrels'], 1)
+
+
+class CloseExpiredProcurementScopingTest(TestCase):
+    """2026-09-05 navigation-speed audit: _close_expired_procurement() had
+    no business filter at all — visiting /procurement/ as ANY business's
+    owner bulk-closed every OTHER business's expired-but-open procurement
+    requests too, an unscoped cross-tenant write violating this app's own
+    core "always scope by business" rule, on every single page view."""
+
+    def setUp(self):
+        self.biz_a = Business.objects.create(name='Procurement Biz A')
+        self.biz_b = Business.objects.create(name='Procurement Biz B')
+        self.owner_a = User.objects.create_user(username='proc_owner_a', password='x')
+        UserProfile.objects.create(user=self.owner_a, business=self.biz_a, role='owner')
+
+    def test_expired_procurement_from_another_business_is_not_touched(self):
+        from core.models import ProcurementRequest
+        yesterday = timezone.localdate() - timedelta(days=1)
+        other_req = ProcurementRequest.objects.create(
+            business=self.biz_b, title='Other biz request',
+            description='x', deadline=yesterday, status='open',
+        )
+        self.client.force_login(self.owner_a)
+        resp = self.client.get('/procurement/')
+        self.assertEqual(resp.status_code, 200)
+        other_req.refresh_from_db()
+        self.assertEqual(other_req.status, 'open')
+
+    def test_expired_procurement_for_current_business_still_auto_closes(self):
+        from core.models import ProcurementRequest
+        yesterday = timezone.localdate() - timedelta(days=1)
+        own_req = ProcurementRequest.objects.create(
+            business=self.biz_a, title='Own request',
+            description='x', deadline=yesterday, status='open',
+        )
+        self.client.force_login(self.owner_a)
+        resp = self.client.get('/procurement/')
+        self.assertEqual(resp.status_code, 200)
+        own_req.refresh_from_db()
+        self.assertEqual(own_req.status, 'closed')
+
+
 class TransactionDateCreatedAtSyncTest(TestCase):
     """2026-08-12 live report (Roy): "I backdated everything from 7th to
     11th... kitchen staff has not yet made sales but the system is showing

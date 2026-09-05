@@ -37,18 +37,29 @@ def payables_aging_summary(business, window_days=30):
 
 
 def total_receivables(business):
-    """Business-wide outstanding customer credit — reuses the same
-    per-customer aggregation debt_dashboard() already does, just summed
-    without a per-row breakdown (this is a single dashboard number, not a
-    listing)."""
-    from .debt_views import _get_customer_debt_data
-    from .models import Customer
+    """Business-wide outstanding customer credit.
 
-    total = 0.0
-    for customer in Customer.objects.filter(business=business):
-        data = _get_customer_debt_data(customer, business)
-        total += data['outstanding']
-    return round(total, 2)
+    2026-09-05 navigation-speed audit ("scrutinize each and every flow" —
+    analytics feeling "hectic, not instant"): this used to loop
+    _get_customer_debt_data() once per EVERY Customer row a business has
+    ever recorded, unconditionally, on every single analytics page load
+    (via cash_position() below) — the single heaviest query pattern found
+    on that page, scaling with lifetime customer count rather than
+    activity. It was ALSO, independently, already wrong on its own terms:
+    it summed every Customer row's outstanding with zero dedup, so two
+    rows sharing a name (or differing only by case/spacing — the same
+    "same person, different capitalization" bug class this app has fixed
+    for elsewhere) silently double-counted one real debt into "the most
+    honest number in the app." Reusing debt_views' bulk, deduped
+    aggregation (built 2026-08-27 for debtors_list_api, extracted
+    2026-09-05 into _bulk_outstanding_by_customer for this exact reuse)
+    closes both gaps at once with the same already-tested formula, in a
+    handful of queries total instead of one per customer.
+    """
+    from .debt_views import _bulk_outstanding_by_customer
+
+    debtors = _bulk_outstanding_by_customer(business, scope='all')
+    return round(sum(d['outstanding'] for d in debtors), 2)
 
 
 def cash_position(business):

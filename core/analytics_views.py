@@ -103,18 +103,29 @@ def analytics_dashboard(request):
     # one extra synchronous DB round-trip per affected transaction on first
     # access — genuine N+1, growing directly with period length (more days
     # = more transactions), matching the report exactly.
+    # 2026-09-05 navigation-speed audit ("scrutinize each and every flow"):
+    # 'item' was already select_related, but 'item__store' was not — the
+    # Store Performance section below (store_stats, reading t.item.store.
+    # name) triggers a LAZY per-row query for it, since select_related('item')
+    # gives each Transaction row its own freshly-built Item instance (Django
+    # does not dedupe/cache same-PK related objects across rows in one
+    # queryset), so `.store` re-queries once per TRANSACTION, not once per
+    # distinct item — a genuine, real N+1 scaling with the period's
+    # transaction volume, independent of and in addition to the Staff
+    # Pouring League fix elsewhere on this page. One extra relation added
+    # to an already-existing select_related closes it with zero new queries.
     current_sales = Transaction.objects.filter(
         business=business, type='Issue',
         date__gte=start_date, date__lte=today,
     ).exclude(payment_method='void').select_related(
-        'item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
+        'item', 'item__store', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
     )
 
     prev_sales = Transaction.objects.filter(
         business=business, type='Issue',
         date__gte=prev_start, date__lte=prev_end,
     ).exclude(payment_method='void').select_related(
-        'item', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
+        'item', 'item__store', 'keg_barrel', 'produce_bunch', 'kitchen_batch', 'preset',
     )
 
     if selected_product:
@@ -927,32 +938,61 @@ def analytics_dashboard(request):
         ).filter(_station_q(is_kitchen=False)).select_related('staff')
     )
 
+    # 2026-09-05 navigation-speed audit ("scrutinize each and every flow" —
+    # live report, analytics feeling "hectic, not instant"): this used to
+    # run ONE separate .aggregate() query PER SHIFT in the period — a real,
+    # classic N+1, not just redundant Python work. A busy bar+kitchen combo
+    # doing 2+ shifts/day easily has 60-200+ bar shifts in a 30-90 day
+    # window, meaning 60-200+ extra database round trips on every single
+    # analytics page load. Fixed by fetching every candidate transaction
+    # for the WHOLE span ONCE (same filter, same _rev_expr), then bucketing
+    # into shifts via bisect over a created_at-sorted list — O(log n + k)
+    # per shift instead of a fresh query per shift. Deliberately preserves
+    # the exact original semantics, overlap quirk included: two shifts
+    # whose windows overlap (a real, allowed scenario elsewhere in this
+    # app — a handover, a manager joining an active bartender) still each
+    # independently sum whatever falls in THEIR OWN window, so a
+    # transaction inside both can still be attributed to both, exactly as
+    # N separate independent .aggregate() calls already did.
     _staff_acc = {}
-    for _shift in bar_shifts:
-        _shift_end = _shift.ended_at or timezone.now()
+    if bar_shifts:
+        _now_snapshot = timezone.now()
+        _shift_ends = {s.id: (s.ended_at or _now_snapshot) for s in bar_shifts}
+        _span_start = min(s.started_at for s in bar_shifts)
+        _span_end = max(_shift_ends.values())
         # UBA §5.2: a stock transfer's dispatch leg is type='Transfer', never
         # type='Issue' — excluded from this shift-window revenue attribution
         # by construction, with no explicit transfer_id filter needed here.
-        _agg = Transaction.objects.filter(
-            business=business,
-            type='Issue',
-            created_at__gte=_shift.started_at,
-            created_at__lte=_shift_end,
-            item__store__is_kitchen=False,
-        ).exclude(payment_method='void').aggregate(
-            rev=Sum(_rev_expr),
-            cnt=Count('id'),
+        _keg_txn_rows = list(
+            Transaction.objects.filter(
+                business=business,
+                type='Issue',
+                created_at__gte=_span_start,
+                created_at__lte=_span_end,
+                item__store__is_kitchen=False,
+            ).exclude(payment_method='void')
+            .annotate(_r=_rev_expr)
+            .order_by('created_at')
+            .values_list('created_at', '_r')
         )
-        _rev = float(_agg['rev'] or 0)
-        _cnt = _agg['cnt'] or 0
-        if _cnt == 0:
-            continue
-        _sid = _shift.staff_id
-        _sname = _shift.staff.get_full_name() or _shift.staff.username
-        if _sid not in _staff_acc:
-            _staff_acc[_sid] = {'name': _sname, 'revenue': 0.0, 'servings': 0}
-        _staff_acc[_sid]['revenue'] += _rev
-        _staff_acc[_sid]['servings'] += _cnt
+        _keg_txn_times = [row[0] for row in _keg_txn_rows]
+        _keg_txn_revs = [float(row[1] or 0) for row in _keg_txn_rows]
+
+        from bisect import bisect_left, bisect_right
+        for _shift in bar_shifts:
+            _shift_end = _shift_ends[_shift.id]
+            lo = bisect_left(_keg_txn_times, _shift.started_at)
+            hi = bisect_right(_keg_txn_times, _shift_end)
+            _cnt = hi - lo
+            if _cnt == 0:
+                continue
+            _rev = sum(_keg_txn_revs[lo:hi])
+            _sid = _shift.staff_id
+            _sname = _shift.staff.get_full_name() or _shift.staff.username
+            if _sid not in _staff_acc:
+                _staff_acc[_sid] = {'name': _sname, 'revenue': 0.0, 'servings': 0}
+            _staff_acc[_sid]['revenue'] += _rev
+            _staff_acc[_sid]['servings'] += _cnt
 
     staff_keg_rows = sorted(
         [

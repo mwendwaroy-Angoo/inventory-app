@@ -516,8 +516,37 @@ def debt_dashboard(request):
     window = business.credit_window_days or 30
     scope = _debt_scope(user_profile, business)
 
+    # 2026-09-05 navigation-speed audit ("scrutinize each and every flow" —
+    # live report, "debt tracker to analytics... is not instant"):
+    # customers_with_credit used to be EVERY Customer row a business has
+    # ever recorded — most named customers have long since paid off or
+    # never carried credit at all, so _get_customer_debt_data() below
+    # deterministically returns outstanding=0, txn_count=0 for them (and
+    # the `if data['outstanding'] > 0 or data['txn_count'] > 0` gate right
+    # after the loop already excludes them from the output either way) —
+    # wasted work, at ~4+ queries each (see that function's own docstring:
+    # scope='all' recurses into 'bar'+'kitchen', each running its own
+    # Transaction + CustomerDebtPayment query), scaling with LIFETIME
+    # customer count rather than real debt. Pre-filtering to only
+    # customers whose exact name matches at least one credit Transaction
+    # EVER (the identical exact-string condition _get_customer_debt_data's
+    # own credit_qs uses, recipient=customer.name) provably changes
+    # nothing about the output — it only skips customers that function
+    # would have returned zero for anyway. A deeper batch rewrite of
+    # _get_customer_debt_data ITSELF (its per-row score/aged-bucket logic)
+    # is deliberately still not attempted — same caution as the comment
+    # below this one already established; this pre-filter needs no such
+    # risk, since it never touches what gets computed for a customer who
+    # actually has history, only which customers are asked about at all.
+    credit_recipient_names = set(
+        Transaction.objects.filter(
+            business=business, type='Issue',
+        ).filter(Q(payment_method='credit') | Q(was_credit=True))
+        .exclude(tab_entry__tab__status='OPEN')
+        .values_list('recipient', flat=True)
+    )
     customers_with_credit = Customer.objects.filter(
-        business=business,
+        business=business, name__in=credit_recipient_names,
     ).prefetch_related('debt_payments').order_by('id')
 
     dashboard_rows = []
@@ -1923,66 +1952,46 @@ def owner_alias_debt_search(request):
     })
 
 
-@login_required
-def debtors_list_api(request):
-    """AJAX GET — every customer with outstanding debt right now, station-
-    scoped, for the "💳 Wateja wenye Deni" panel on Bar Board / Kitchen
-    Board / Quick Sell (2026-08-02 live request, Monsoon Inn). Roy's own
-    framing: a customer paying upfront (cash/mpesa/split) might still owe
-    money from an earlier tab — a busy staffer has no reason to think to
-    check the debt ledger before ringing up a "clean" upfront sale, so put
-    the answer where they're already looking instead. Open with no query
-    for the full station-scoped list; ?q= narrows it to a name search —
-    both share this one endpoint so the panel and the optional search box
-    stay in sync automatically.
+def _bulk_outstanding_by_customer(business, scope='all'):
+    """Business-wide outstanding customer credit, computed in a handful of
+    queries total — NOT a per-customer loop over _get_customer_debt_data()
+    (2026-09-05 "scrutinize each and every flow" navigation-speed audit).
+    That per-customer engine is the correct, carefully-tested one for a
+    SINGLE customer's own profile (FIFO reconciliation, aged buckets,
+    credit score) — but it is genuinely not cheap (recursing into 'bar'+
+    'kitchen' sub-computations for scope='all', each running its own
+    Transaction + CustomerDebtPayment query), and both debt_dashboard()
+    and payables.total_receivables() used to call it once per EVERY
+    Customer row a business has ever recorded, unconditionally, on every
+    single page load — scaling directly with LIFETIME customer count, not
+    real debt or recent activity. Extracted from debtors_list_api() (built
+    2026-08-27 for exactly this bulk shape already, just for a different
+    caller) rather than duplicating its dedup logic a second time.
 
-    Deliberately open to ALL staff (not owner/manager-only like
-    customer_search_api) — the whole point is any staff member checking a
-    customer before completing a sale, not an owner-side admin tool.
+    Reuses the exact same source tables and formula
+    (Transaction.revenue() for a credit txn, minus CustomerDebtPayment.
+    amount_paid) the per-customer engine reads — never a raw
+    Sum('sale_amount'), per this app's own hard rule that keg/produce/
+    preset sales don't always set sale_amount — grouped by the same
+    case/whitespace-insensitive name key _find_duplicate_customer_
+    groups() already treats as "the same customer" (2026-08-27), so two
+    Customer rows sharing a name (or differing only by case/spacing) are
+    combined into ONE real outstanding figure, never double-counted.
 
-    Reuses the exact same outstanding-balance math as
-    _get_customer_debt_data (Transaction.revenue() per credit txn minus
-    CustomerDebtPayment.amount_paid, grouped this time across every
-    customer in one pass instead of one customer at a time) rather than
-    a raw Sum('sale_amount') — see this app's own hard rule on why revenue
-    must never be aggregated that way (keg/produce/preset sales don't
-    always set sale_amount).
-
-    2026-08-27 live report (Roy): "certain debts show different debts from
-    the staff's side compared to the owner's side ... excess entries or
-    exaggerations of debt items and amounts out of the control of the
-    user." Root-caused to the exact same duplicate-Customer-row mechanism
-    _find_duplicate_customer_groups() already documents and flags on the
-    owner's debt_dashboard() ("two Eugenes with the same amount and same
-    items", 2026-08-09) — Transaction.recipient/CustomerDebtPayment.
-    customer_id match differently (a plain name string vs a real FK), so
-    two Customer rows sharing one name each independently compute the SAME
-    full total_credit while a payment recorded against only ONE of them
-    reduced only that row's own paid bucket. debt_dashboard() at least
-    WARNS about this (duplicate_groups); this staff-facing panel had no
-    such awareness at all — it would show a duplicate name as two separate
-    list entries, each quoting the FULL (undivided) outstanding amount,
-    which reads as "excess"/"exaggerated" debt that's structurally not the
-    customer's fault. Fixed by aggregating `paid` PER NAME (summing every
-    Customer id that shares it, not just one) and de-duplicating the
-    listing to one row per distinct name — mirrors _find_duplicate_
-    customer_groups' own case/whitespace-insensitive key exactly, so this
-    can never disagree with what that detector considers "the same
-    customer." The underlying duplicate ROWS are still not merged here —
-    that stays the owner's explicit "🔀 Sahihisha Jina la Mteja" action —
-    this just stops the staff-facing figure from double-counting them.
+    Returns a list of {customer_id, name, recipient_name, outstanding,
+    is_defaulter} dicts for every distinct name with a nonzero
+    outstanding balance, sorted by outstanding descending — unfiltered,
+    untrimmed; callers search/slice as needed. `recipient_name` is the
+    spelling actually recorded on the credit transactions (may differ
+    from the current Customer.name if renamed since) — kept only for a
+    caller's own search matching, not meant for display.
     """
-    up = get_user_profile(request)
-    business = up.business
-    scope = _debt_scope(up, business)
-    q = (request.GET.get('q') or '').strip()
-
     # 2026-08-15: widened to was_credit=True alongside the live payment_method
     # check — same fix, same reasoning as _get_customer_debt_data's own
     # credit_qs (see Transaction.was_credit's docstring). Without this, a
     # customer whose credit got resolved via a settle path (rather than a
-    # recorded CustomerDebtPayment) would be silently under-counted here too,
-    # potentially hiding real outstanding debt from this staff-facing panel.
+    # recorded CustomerDebtPayment) would be silently under-counted too,
+    # potentially hiding real outstanding debt.
     credit_qs = Transaction.objects.filter(
         Q(payment_method='credit') | Q(was_credit=True),
         business=business, type='Issue',
@@ -1996,9 +2005,8 @@ def debtors_list_api(request):
     # _find_duplicate_customer_groups() uses — a real person's credit can
     # be split across two Transaction.recipient spellings just as easily as
     # across two Customer rows (both are plain strings, not FKs), so this
-    # panel's own "how much does this person owe" figure must combine them
-    # the same way that detector already considers "the same customer",
-    # never the raw exact-string dict keying this used before.
+    # figure must combine them the same way that detector already
+    # considers "the same customer", never a raw exact-string dict key.
     credit_by_name_key = defaultdict(float)
     display_name_by_key = {}
     for t in credit_qs:
@@ -2036,9 +2044,6 @@ def debtors_list_api(request):
 
     debtors = []
     for key, cust in representative_by_key.items():
-        display_name = display_name_by_key.get(key, cust.name)
-        if q and q.lower() not in display_name.lower() and q.lower() not in (cust.name or '').lower():
-            continue
         total_credit = credit_by_name_key.get(key, 0.0)
         paid = paid_by_name_key.get(key, 0.0)
         outstanding = max(0.0, total_credit - paid)
@@ -2046,12 +2051,80 @@ def debtors_list_api(request):
             debtors.append({
                 'customer_id': cust.id,
                 'name': cust.name,
+                'recipient_name': display_name_by_key.get(key, cust.name),
                 'outstanding': round(outstanding, 2),
                 'is_defaulter': bool(cust.is_defaulter),
             })
     debtors.sort(key=lambda d: -d['outstanding'])
+    return debtors
 
-    return JsonResponse({'debtors': debtors[:30]})
+
+@login_required
+def debtors_list_api(request):
+    """AJAX GET — every customer with outstanding debt right now, station-
+    scoped, for the "💳 Wateja wenye Deni" panel on Bar Board / Kitchen
+    Board / Quick Sell (2026-08-02 live request, Monsoon Inn). Roy's own
+    framing: a customer paying upfront (cash/mpesa/split) might still owe
+    money from an earlier tab — a busy staffer has no reason to think to
+    check the debt ledger before ringing up a "clean" upfront sale, so put
+    the answer where they're already looking instead. Open with no query
+    for the full station-scoped list; ?q= narrows it to a name search —
+    both share this one endpoint so the panel and the optional search box
+    stay in sync automatically.
+
+    Deliberately open to ALL staff (not owner/manager-only like
+    customer_search_api) — the whole point is any staff member checking a
+    customer before completing a sale, not an owner-side admin tool.
+
+    2026-09-05: now a thin wrapper over _bulk_outstanding_by_customer()
+    (extracted verbatim from this view's own prior body, zero formula
+    change) doing only the q-filter and [:30] limit this endpoint has
+    always applied — see that function's own docstring for the bulk
+    aggregation this replaced a per-customer loop with.
+
+    2026-08-27 live report (Roy): "certain debts show different debts from
+    the staff's side compared to the owner's side ... excess entries or
+    exaggerations of debt items and amounts out of the control of the
+    user." Root-caused to the exact same duplicate-Customer-row mechanism
+    _find_duplicate_customer_groups() already documents and flags on the
+    owner's debt_dashboard() ("two Eugenes with the same amount and same
+    items", 2026-08-09) — Transaction.recipient/CustomerDebtPayment.
+    customer_id match differently (a plain name string vs a real FK), so
+    two Customer rows sharing one name each independently compute the SAME
+    full total_credit while a payment recorded against only ONE of them
+    reduced only that row's own paid bucket. debt_dashboard() at least
+    WARNS about this (duplicate_groups); this staff-facing panel had no
+    such awareness at all — it would show a duplicate name as two separate
+    list entries, each quoting the FULL (undivided) outstanding amount,
+    which reads as "excess"/"exaggerated" debt that's structurally not the
+    customer's fault. Fixed by aggregating `paid` PER NAME (summing every
+    Customer id that shares it, not just one) and de-duplicating the
+    listing to one row per distinct name — mirrors _find_duplicate_
+    customer_groups' own case/whitespace-insensitive key exactly, so this
+    can never disagree with what that detector considers "the same
+    customer." The underlying duplicate ROWS are still not merged here —
+    that stays the owner's explicit "🔀 Sahihisha Jina la Mteja" action —
+    this just stops the staff-facing figure from double-counting them.
+    """
+    up = get_user_profile(request)
+    business = up.business
+    scope = _debt_scope(up, business)
+    q = (request.GET.get('q') or '').strip()
+
+    debtors = _bulk_outstanding_by_customer(business, scope)
+    if q:
+        ql = q.lower()
+        debtors = [
+            d for d in debtors
+            if ql in d['recipient_name'].lower() or ql in (d['name'] or '').lower()
+        ]
+    # recipient_name is an internal-only matching aid — never exposed.
+    debtors = [
+        {k: v for k, v in d.items() if k != 'recipient_name'}
+        for d in debtors[:30]
+    ]
+
+    return JsonResponse({'debtors': debtors})
 
 
 @owner_or_manager_required
